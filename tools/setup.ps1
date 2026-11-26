@@ -85,7 +85,9 @@ if (-not (Test-Path $sdkManager)) {
     Remove-Item $zip, $staging -Recurse
 }
 Step 'Installing Android SDK packages'
-$packages = 'platform-tools', 'platforms;android-36', 'build-tools;36.0.0', 'ndk;28.2.13676358'
+# sdkmanager is a batch file, and cmd splits unquoted arguments at semicolons.
+$packages = 'platform-tools', 'platforms;android-36', 'build-tools;36.0.0', 'ndk;28.2.13676358' |
+    ForEach-Object { "`"$_`"" }
 (1..20 | ForEach-Object { 'y' }) | & $sdkManager --licenses | Out-Null
 & $sdkManager --install @packages
 if ($LASTEXITCODE -ne 0) { throw 'Installing Android SDK packages failed' }

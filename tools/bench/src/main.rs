@@ -14,8 +14,8 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use futures::FutureExt;
 use nearvolt_core::{
-    human_bytes, send, Approver, Event, Identity, IncomingOffer, ReceiveOptions, Receiver, SendOptions, Stats,
-    Summary, Ticket,
+    human_bytes, send, Approver, Event, FileSet, Identity, IncomingOffer, Peer, ReceiveOptions, Receiver,
+    SendOptions, Stats, Summary, Ticket,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
@@ -113,7 +113,13 @@ async fn main() -> Result<()> {
 
 async fn receive(dir: PathBuf, port: u16, yes: bool, verify_on_disk: bool) -> Result<()> {
     let identity = Identity::load_or_create(Path::new(IDENTITY_PATH))?;
-    let options = ReceiveOptions { dir: dir.clone(), journal_dir: None, device_name: device_name(), verify_on_disk };
+    let options = ReceiveOptions {
+        dir: dir.clone(),
+        journal_dir: None,
+        device_name: device_name(),
+        verify_on_disk,
+        allow_code_pairing: false,
+    };
     let receiver = Receiver::bind(&identity, SocketAddr::from(([0, 0, 0, 0], port)), options)?;
     println!("Ready to receive into {}", dir.display());
     for addr in &receiver.ticket().addrs {
@@ -156,7 +162,8 @@ async fn send_files(ticket: &str, paths: Vec<PathBuf>, connections: usize) -> Re
     let stats = Arc::new(Stats::default());
     let (tx, rx) = mpsc::unbounded_channel();
     println!("Sending to {}", ticket.name);
-    let task = send(&identity, &ticket, &paths, &options, stats.clone(), Some(tx));
+    let peer = Peer::from_ticket(&ticket);
+    let task = send(&identity, &peer, FileSet::Paths(paths), &options, stats.clone(), Some(tx));
     let summary = with_progress("Sending", stats, rx, task).await?;
     print_summary("Sent", &summary);
     Ok(())
@@ -196,12 +203,13 @@ async fn local(
                 journal_dir: None,
                 device_name: "Receiver".into(),
                 verify_on_disk: true,
+                allow_code_pairing: false,
             },
         )?;
-        let mut ticket = receiver.ticket().clone();
+        let mut ticket = receiver.ticket();
         let _proxy = match drop_link_at_mb {
             Some(_) if !dropped => {
-                let (addr, proxy) = start_proxy(receiver.local_addr()?, blackout.clone()).await?;
+                let (addr, proxy) = start_proxy(receiver.local_addr(), blackout.clone()).await?;
                 ticket.addrs = vec![addr];
                 Some(proxy)
             }
@@ -215,7 +223,7 @@ async fn local(
         let mut send_task = AbortOnDrop(tokio::spawn({
             let (id, stats, options, events) = (sender_id.clone(), tx_stats.clone(), options.clone(), events_tx.clone());
             let paths = vec![source.clone()];
-            async move { send(&id, &ticket, &paths, &options, stats, Some(events)).await }
+            async move { send(&id, &Peer::from_ticket(&ticket), FileSet::Paths(paths), &options, stats, Some(events)).await }
         }));
 
         let mut meter = Meter::default();
@@ -336,6 +344,7 @@ impl Meter {
 fn print_event(event: Event) {
     match event {
         Event::Connected { peer } => note(&format!("Connected to {peer}")),
+        Event::Code { code } => note(&format!("Pairing code {code}: check the receiver shows the same")),
         Event::ConnectionLost { reason } => note(&format!("Connection lost ({reason}). Reconnecting")),
         Event::Resumed { done_bytes } => note(&format!("Resumed with {} already transferred", human_bytes(done_bytes))),
         Event::Completed(_) => {}

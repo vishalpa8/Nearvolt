@@ -10,7 +10,9 @@ pub mod transport;
 pub mod util;
 
 pub use identity::{Fingerprint, Identity};
-pub use pairing::Ticket;
+pub use pairing::{Ticket, WifiDirect};
+pub use transfer::manifest::{FileSet, SourceOpener};
 pub use transfer::receiver::{Approver, IncomingOffer, ReceiveOptions, Receiver};
-pub use transfer::sender::{send, SendOptions};
+pub use transfer::sender::{send, Peer, SendOptions};
+pub use transport::{Link, RawStream, TcpLink};
 pub use transfer::{human_bytes, Event, EventSender, Fatal, Progress, Stats, Summary};

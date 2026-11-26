@@ -66,15 +66,27 @@ pub struct ChunkRef {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Control {
     /// First message on every connection. `session` is absent on the control
-    /// connection and names the session on data connections.
+    /// connection and names the session on data connections. Without a ticket
+    /// secret, the control connection carries a commitment to the sender's nonce
+    /// and both devices confirm a code (see `pairing::pairing_code`).
     Hello {
         version: u32,
-        secret: [u8; 16],
+        #[serde(default)]
+        secret: Option<[u8; 16]>,
         device_name: String,
         #[serde(default)]
         session: Option<SessionId>,
+        #[serde(default)]
+        commitment: Option<[u8; 32]>,
     },
-    Welcome { device_name: String, session: SessionId },
+    Welcome {
+        device_name: String,
+        session: SessionId,
+        #[serde(default)]
+        nonce: Option<[u8; 16]>,
+    },
+    /// The sender's nonce, revealed only after the receiver sent its own.
+    Reveal { nonce: [u8; 16] },
     Reject { reason: String },
     Offer(Offer),
     Accept { have: Vec<FileHave> },

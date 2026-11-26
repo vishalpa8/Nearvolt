@@ -1,0 +1,23 @@
+[package]
+name = "nearvolt-ffi"
+description = "The Nearvolt engine as the app sees it, through flutter_rust_bridge"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+anyhow = "1"
+flutter_rust_bridge = "=2.13.0"
+futures = "0.3"
+nearvolt-core = { path = "../core" }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(frb_expand)"] }

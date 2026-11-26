@@ -1,70 +1,102 @@
-//! Builds the list of files to send from the paths a user picked.
+//! The list of files to send and where to read each one from.
 
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::fs::{self, File};
+use std::io;
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{ensure, Context, Result};
 
 use crate::protocol::{FileEntry, Offer, MAX_FILES};
+use crate::transfer::Fatal;
+
+/// Opens files the platform gave access to, such as Android picker results. Each
+/// file is opened only when the sender reaches it, so even huge selections never
+/// run into the open-file limit.
+pub trait SourceOpener: Send + Sync {
+    fn open(&self, index: u32) -> io::Result<File>;
+}
+
+/// What to send.
+pub enum FileSet {
+    /// Files and folders on disk. Folders keep their name as the top-level folder.
+    Paths(Vec<PathBuf>),
+    /// Files described by the platform and opened through `opener`.
+    Opened { files: Vec<FileEntry>, opener: Arc<dyn SourceOpener> },
+}
+
+enum Sources {
+    Paths(Vec<PathBuf>),
+    Opener(Arc<dyn SourceOpener>),
+}
 
 pub struct Manifest {
     pub offer: Offer,
-    /// Source path for each entry in `offer.files`.
-    pub sources: Vec<PathBuf>,
+    sources: Sources,
 }
 
 impl Manifest {
-    /// Folders are sent with their name as the top-level folder. Symbolic links are
-    /// not followed.
-    pub fn build(paths: &[PathBuf], chunk_size: u32) -> Result<Self> {
-        let mut files = Vec::new();
-        let mut sources = Vec::new();
-        for path in paths {
-            let path = fs::canonicalize(path).with_context(|| format!("can't find {}", path.display()))?;
-            let name = path
-                .file_name()
-                .with_context(|| format!("can't send {}", path.display()))?
-                .to_string_lossy()
-                .into_owned();
-            let meta = fs::symlink_metadata(&path)?;
-            if meta.is_dir() {
-                walk(&path, &name, &mut files, &mut sources)?;
-            } else if meta.is_file() {
-                push(&path, name, &mut files, &mut sources)?;
+    pub fn build(set: FileSet, chunk_size: u32) -> Result<Self> {
+        let (files, sources) = match set {
+            FileSet::Paths(paths) => {
+                let (files, paths) = scan(&paths)?;
+                (files, Sources::Paths(paths))
             }
-        }
+            FileSet::Opened { files, opener } => (files, Sources::Opener(opener)),
+        };
         ensure!(!files.is_empty(), "there are no files to send");
         ensure!(files.len() <= MAX_FILES, "too many files (limit {MAX_FILES})");
         Ok(Self { offer: Offer { chunk_size, files }, sources })
     }
+
+    /// Opens file `index` and checks it hasn't changed since it was offered.
+    pub fn open(&self, index: u32) -> Result<File> {
+        let entry = &self.offer.files[index as usize];
+        let unreadable = |e: io::Error| Fatal(format!("can't read {}: {e}", entry.path));
+        let (file, check_time) = match &self.sources {
+            Sources::Paths(paths) => (File::open(&paths[index as usize]).map_err(unreadable)?, true),
+            Sources::Opener(opener) => (opener.open(index).map_err(unreadable)?, false),
+        };
+        let meta = file.metadata().map_err(unreadable)?;
+        let changed = meta.len() != entry.size
+            || (check_time && meta.modified().ok().and_then(unix_millis) != entry.modified);
+        if changed {
+            return Err(Fatal(format!("{} changed while it was being sent", entry.path)).into());
+        }
+        Ok(file)
+    }
 }
 
-fn walk(root: &Path, prefix: &str, files: &mut Vec<FileEntry>, sources: &mut Vec<PathBuf>) -> Result<()> {
-    let mut stack = vec![(root.to_path_buf(), prefix.to_string())];
-    while let Some((dir, rel)) = stack.pop() {
-        let mut entries = fs::read_dir(&dir)
-            .with_context(|| format!("can't read {}", dir.display()))?
-            .collect::<Result<Vec<_>, _>>()?;
-        entries.sort_by_key(|e| e.file_name());
-        for entry in entries {
-            let kind = entry.file_type()?;
-            let child = format!("{rel}/{}", entry.file_name().to_string_lossy());
-            if kind.is_dir() {
-                stack.push((entry.path(), child));
-            } else if kind.is_file() {
-                push(&entry.path(), child, files, sources)?;
+/// Walks the picked paths. Symbolic links are not followed.
+fn scan(paths: &[PathBuf]) -> Result<(Vec<FileEntry>, Vec<PathBuf>)> {
+    let mut files = Vec::new();
+    let mut sources = Vec::new();
+    for path in paths {
+        let path = fs::canonicalize(path).with_context(|| format!("can't find {}", path.display()))?;
+        let name = path
+            .file_name()
+            .with_context(|| format!("can't send {}", path.display()))?
+            .to_string_lossy()
+            .into_owned();
+        let mut stack = vec![(path, name)];
+        while let Some((path, rel)) = stack.pop() {
+            let meta = fs::symlink_metadata(&path)?;
+            if meta.is_file() {
+                files.push(FileEntry { path: rel, size: meta.len(), modified: meta.modified().ok().and_then(unix_millis) });
+                sources.push(path);
+            } else if meta.is_dir() {
+                let mut entries = fs::read_dir(&path)
+                    .with_context(|| format!("can't read {}", path.display()))?
+                    .collect::<Result<Vec<_>, _>>()?;
+                entries.sort_by_key(|e| std::cmp::Reverse(e.file_name()));
+                for entry in entries {
+                    stack.push((entry.path(), format!("{rel}/{}", entry.file_name().to_string_lossy())));
+                }
             }
         }
     }
-    Ok(())
-}
-
-fn push(path: &Path, rel: String, files: &mut Vec<FileEntry>, sources: &mut Vec<PathBuf>) -> Result<()> {
-    let meta = fs::metadata(path).with_context(|| format!("can't read {}", path.display()))?;
-    files.push(FileEntry { path: rel, size: meta.len(), modified: meta.modified().ok().and_then(unix_millis) });
-    sources.push(path.to_path_buf());
-    Ok(())
+    Ok((files, sources))
 }
 
 pub fn unix_millis(time: SystemTime) -> Option<u64> {

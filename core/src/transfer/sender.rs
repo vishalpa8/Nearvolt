@@ -1,30 +1,27 @@
 //! Sending side: offers files, then streams only the chunks the receiver is missing
-//! over several parallel connections, reconnecting automatically when the link drops.
+//! over several parallel streams, reconnecting automatically when the link drops.
 
 use std::fs::File;
-use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, bail, ensure, Result};
+use anyhow::{anyhow, bail, ensure, Context, Result};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 
 use super::disk;
-use super::manifest::{unix_millis, Manifest};
+use super::manifest::{FileSet, Manifest};
 use super::{emit, is_fatal, Event, EventSender, Fatal, Stats, Summary};
-use crate::identity::Identity;
-use crate::pairing::{Secret, Ticket};
+use crate::identity::{Fingerprint, Identity};
+use crate::pairing::{self, Secret, Ticket};
 use crate::protocol::{
     bit_get, chunk_range, read_msg, write_msg, ChunkHeader, ChunkRef, Control, FileHave, SessionId,
     DEFAULT_CHUNK_SIZE, HEARTBEAT_INTERVAL, HEARTBEAT_TIMEOUT, PROTOCOL_VERSION,
 };
-use crate::transport::{Connector, TlsStream};
+use crate::transport::{peer_fingerprint, Connector, Link, TcpLink, TlsStream};
 use crate::util::AbortOnDrop;
 
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 /// With nothing left to send and no verified progress for this long, the session
 /// is restarted so the receiver can report exactly what it is still missing.
 const STALL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -32,7 +29,7 @@ const STALL_TIMEOUT: Duration = Duration::from_secs(30);
 #[derive(Clone, Debug)]
 pub struct SendOptions {
     pub device_name: String,
-    /// Parallel data connections.
+    /// Parallel data streams.
     pub connections: usize,
     pub chunk_size: u32,
     /// How long to keep trying to reconnect after the link drops.
@@ -50,35 +47,52 @@ impl Default for SendOptions {
     }
 }
 
-/// Sends files and folders to the receiver in `ticket`, resuming across as many
-/// reconnects as it takes. Progress in `stats` is what the receiver has verified.
-pub async fn send(
+/// Who to send to and how to reach them.
+pub struct Peer<L> {
+    pub link: L,
+    pub name: String,
+    /// Pins the receiver's certificate. Every ticket carries it; USB has none.
+    pub fingerprint: Option<Fingerprint>,
+    /// From a scanned or tapped ticket. Without it, both devices confirm a code.
+    pub secret: Option<Secret>,
+}
+
+impl Peer<TcpLink> {
+    pub fn from_ticket(ticket: &Ticket) -> Self {
+        Self {
+            link: TcpLink::new(ticket.addrs.clone()),
+            name: ticket.name.clone(),
+            fingerprint: Some(ticket.fingerprint),
+            secret: ticket.secret,
+        }
+    }
+}
+
+/// Sends `files` to `peer`, resuming across as many reconnects as it takes.
+/// Progress in `stats` is what the receiver has verified.
+pub async fn send<L: Link>(
     identity: &Identity,
-    ticket: &Ticket,
-    paths: &[PathBuf],
+    peer: &Peer<L>,
+    files: FileSet,
     options: &SendOptions,
     stats: Arc<Stats>,
     events: Option<EventSender>,
 ) -> Result<Summary> {
     let started = Instant::now();
-    let manifest = {
-        let paths = paths.to_vec();
-        let chunk_size = options.chunk_size;
-        Arc::new(tokio::task::spawn_blocking(move || Manifest::build(&paths, chunk_size)).await??)
-    };
+    let chunk_size = options.chunk_size;
+    let manifest = Arc::new(tokio::task::spawn_blocking(move || Manifest::build(files, chunk_size)).await??);
     let (total_files, total_bytes) = (manifest.offer.files.len() as u64, manifest.offer.total_bytes());
     stats.set_totals(total_files, total_bytes);
 
-    let connector = Connector::new(identity, &ticket.fingerprint)?;
+    let connector = Connector::new(identity, peer.fingerprint)?;
     let mut failing_since: Option<Instant> = None;
     let mut attempt = 0;
     loop {
-        match connector.connect_any(&ticket.addrs, CONNECT_TIMEOUT).await {
-            Ok((control, addr)) => {
+        match open(&peer.link, &connector).await {
+            Ok(control) => {
                 attempt = 0;
-                emit(&events, Event::Connected { peer: ticket.name.clone() });
-                let result = session(&connector, addr, control, ticket, &manifest, options, &stats, &events).await;
-                match result {
+                emit(&events, Event::Connected { peer: peer.name.clone() });
+                match session(identity, &connector, peer, control, &manifest, options, &stats, &events).await {
                     Ok(()) => {
                         let summary = Summary { files: total_files, bytes: total_bytes, elapsed: started.elapsed() };
                         emit(&events, Event::Completed(summary));
@@ -103,6 +117,10 @@ pub async fn send(
     }
 }
 
+async fn open<L: Link>(link: &L, connector: &Connector) -> Result<TlsStream> {
+    connector.connect(link.open_stream().await?).await
+}
+
 fn backoff(attempt: u32) -> Duration {
     Duration::from_millis(match attempt {
         1 => 100,
@@ -114,30 +132,39 @@ fn backoff(attempt: u32) -> Duration {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn session(
+async fn session<L: Link>(
+    identity: &Identity,
     connector: &Connector,
-    addr: SocketAddr,
+    peer: &Peer<L>,
     control: TlsStream,
-    ticket: &Ticket,
     manifest: &Arc<Manifest>,
     options: &SendOptions,
     stats: &Arc<Stats>,
     events: &Option<EventSender>,
 ) -> Result<()> {
     let offer = &manifest.offer;
+    let receiver = peer_fingerprint(&control).context("the receiver sent no certificate")?;
     let (mut rd, mut wr) = tokio::io::split(control);
+    let nonce = peer.secret.is_none().then(pairing::new_secret);
     let hello = Control::Hello {
         version: PROTOCOL_VERSION,
-        secret: ticket.secret,
+        secret: peer.secret,
         device_name: options.device_name.clone(),
         session: None,
+        commitment: nonce.as_ref().map(pairing::commitment),
     };
     write_msg(&mut wr, &hello).await?;
-    let session_id = match read_msg(&mut rd).await? {
-        Control::Welcome { session, .. } => session,
+    let (session_id, receiver_nonce) = match read_msg(&mut rd).await? {
+        Control::Welcome { session, nonce, .. } => (session, nonce),
         Control::Reject { reason } => return Err(Fatal(reason).into()),
         other => bail!("unexpected reply: {other:?}"),
     };
+    if let Some(ours) = nonce {
+        let theirs = receiver_nonce.context("the receiver did not send its pairing nonce")?;
+        write_msg(&mut wr, &Control::Reveal { nonce: ours }).await?;
+        let code = pairing::pairing_code(&receiver, identity.fingerprint(), &ours, &theirs);
+        emit(events, Event::Code { code });
+    }
     write_msg(&mut wr, &Control::Offer(offer.clone())).await?;
     let have = match read_msg(&mut rd).await? {
         Control::Accept { have } => have,
@@ -202,21 +229,12 @@ async fn session(
         }
     }));
 
-    let streams = futures::future::try_join_all(
-        (0..options.connections.max(1)).map(|_| connector.connect(addr, CONNECT_TIMEOUT)),
-    )
-    .await?;
+    let streams =
+        futures::future::try_join_all((0..options.connections.max(1)).map(|_| open(&peer.link, connector))).await?;
     let (stop_tx, stop_rx) = watch::channel(false);
     let mut workers = JoinSet::new();
     for stream in streams {
-        workers.spawn(worker(
-            stream,
-            session_id,
-            ticket.secret,
-            manifest.clone(),
-            queue_rx.clone(),
-            stop_rx.clone(),
-        ));
+        workers.spawn(worker(stream, session_id, peer.secret, manifest.clone(), queue_rx.clone(), stop_rx.clone()));
     }
 
     let mut last_progress = (done_bytes, Instant::now());
@@ -263,16 +281,22 @@ async fn session(
     result
 }
 
-/// Pulls chunks off the shared queue and writes them to one data connection.
+/// Pulls chunks off the shared queue and writes them to one data stream.
 async fn worker(
     mut stream: TlsStream,
     session: SessionId,
-    secret: Secret,
+    secret: Option<Secret>,
     manifest: Arc<Manifest>,
     queue: async_channel::Receiver<ChunkRef>,
     mut stop: watch::Receiver<bool>,
 ) -> Result<()> {
-    let hello = Control::Hello { version: PROTOCOL_VERSION, secret, device_name: String::new(), session: Some(session) };
+    let hello = Control::Hello {
+        version: PROTOCOL_VERSION,
+        secret,
+        device_name: String::new(),
+        session: Some(session),
+        commitment: None,
+    };
     write_msg(&mut stream, &hello).await?;
     let mut buf = Vec::new();
     let mut cache: Option<(u32, File)> = None;
@@ -308,20 +332,14 @@ fn read_chunk(
     cache: &mut Option<(u32, File)>,
     buf: &mut Vec<u8>,
 ) -> Result<[u8; 32]> {
-    let entry = &manifest.offer.files[job.file as usize];
-    let path = &manifest.sources[job.file as usize];
-    let unreadable = |e: std::io::Error| Fatal(format!("can't read {}: {e}", path.display()));
     if cache.as_ref().map(|(i, _)| *i) != Some(job.file) {
-        let file = File::open(path).map_err(unreadable)?;
-        let meta = file.metadata().map_err(unreadable)?;
-        if meta.len() != entry.size || meta.modified().ok().and_then(unix_millis) != entry.modified {
-            return Err(Fatal(format!("{} changed while it was being sent", path.display())).into());
-        }
-        *cache = Some((job.file, file));
+        *cache = Some((job.file, manifest.open(job.file)?));
     }
     let (_, file) = cache.as_ref().expect("cached above");
+    let entry = &manifest.offer.files[job.file as usize];
     let (offset, len) = chunk_range(entry.size, manifest.offer.chunk_size, job.chunk);
     buf.resize(len as usize, 0);
-    disk::read_exact_at(file, buf, offset).map_err(unreadable)?;
+    disk::read_exact_at(file, buf, offset)
+        .map_err(|e| Fatal(format!("can't read {}: {e}", entry.path)))?;
     Ok(*blake3::hash(buf).as_bytes())
 }

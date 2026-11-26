@@ -2,15 +2,14 @@
 //! journals progress so interrupted transfers resume where they stopped.
 
 use std::fs;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, bail, ensure, Context, Result};
 use futures::future::BoxFuture;
 use tokio::io::AsyncReadExt;
-use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 
@@ -22,7 +21,7 @@ use crate::protocol::{
     read_header, read_msg, write_msg, ChunkHeader, ChunkRef, Control, SessionId, CHUNK_HEADER_LEN,
     HEARTBEAT_INTERVAL, HEARTBEAT_TIMEOUT, PROTOCOL_VERSION,
 };
-use crate::transport::{Acceptor, Listener, TlsStream};
+use crate::transport::{listen_tcp, Acceptor, RawStream, TlsStream};
 use crate::util::AbortOnDrop;
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -38,6 +37,8 @@ pub struct ReceiveOptions {
     pub device_name: String,
     /// Re-read every finished file from disk and check it against the chunk hashes.
     pub verify_on_disk: bool,
+    /// Accept senders without the ticket secret once the user confirms a code.
+    pub allow_code_pairing: bool,
 }
 
 impl ReceiveOptions {
@@ -53,41 +54,68 @@ pub struct IncomingOffer {
     pub bytes: u64,
     /// The first few paths, for an approval prompt.
     pub sample: Vec<String>,
+    /// Present when the sender paired without the ticket secret; the user should
+    /// check the sender shows the same code before accepting.
+    pub code: Option<String>,
 }
 
 /// Decides whether to accept an offer, for example by asking the user.
 pub type Approver = Arc<dyn Fn(IncomingOffer) -> BoxFuture<'static, bool> + Send + Sync>;
 
 pub struct Receiver {
-    listener: Listener,
-    ticket: Ticket,
+    acceptor: Acceptor,
+    fingerprint: Fingerprint,
+    secret: Secret,
+    bind_ip: IpAddr,
+    port: u16,
     options: Arc<ReceiveOptions>,
+    streams_tx: mpsc::Sender<RawStream>,
+    streams_rx: tokio::sync::Mutex<mpsc::Receiver<RawStream>>,
+    _tcp: AbortOnDrop<()>,
 }
 
 impl Receiver {
+    /// Listens for TCP on `bind`. Other links (USB) can add streams through
+    /// [`Receiver::streams`].
     pub fn bind(identity: &Identity, bind: SocketAddr, options: ReceiveOptions) -> Result<Self> {
-        let listener = Listener::bind(identity, bind)?;
-        let port = listener.local_addr()?.port();
-        let addrs = if bind.ip().is_unspecified() {
-            pairing::local_addrs(port)
-        } else {
-            vec![SocketAddr::new(bind.ip(), port)]
-        };
-        let ticket = Ticket {
+        let (streams_tx, streams_rx) = mpsc::channel(64);
+        let (local, tcp) = listen_tcp(bind, streams_tx.clone())?;
+        Ok(Self {
+            acceptor: Acceptor::new(identity)?,
             fingerprint: *identity.fingerprint(),
             secret: pairing::new_secret(),
-            addrs,
-            name: options.device_name.clone(),
+            bind_ip: bind.ip(),
+            port: local.port(),
+            options: Arc::new(options),
+            streams_tx,
+            streams_rx: tokio::sync::Mutex::new(streams_rx),
+            _tcp: tcp,
+        })
+    }
+
+    /// A ticket with this device's current addresses and the secret.
+    pub fn ticket(&self) -> Ticket {
+        let addrs = if self.bind_ip.is_unspecified() {
+            pairing::local_addrs(self.port)
+        } else {
+            vec![SocketAddr::new(self.bind_ip, self.port)]
         };
-        Ok(Self { listener, ticket, options: Arc::new(options) })
+        Ticket {
+            fingerprint: self.fingerprint,
+            secret: Some(self.secret),
+            addrs,
+            name: self.options.device_name.clone(),
+            wifi: None,
+        }
     }
 
-    pub fn ticket(&self) -> &Ticket {
-        &self.ticket
+    pub fn local_addr(&self) -> SocketAddr {
+        SocketAddr::new(self.bind_ip, self.port)
     }
 
-    pub fn local_addr(&self) -> Result<SocketAddr> {
-        self.listener.local_addr()
+    /// Feeds raw streams from another link, such as a USB cable.
+    pub fn streams(&self) -> mpsc::Sender<RawStream> {
+        self.streams_tx.clone()
     }
 
     /// Receives one transfer, across as many reconnects as it takes.
@@ -96,27 +124,29 @@ impl Receiver {
             .with_context(|| format!("can't create {}", self.options.dir.display()))?;
         let shared = Arc::new(Shared {
             options: self.options.clone(),
+            fingerprint: self.fingerprint,
             approve,
             stats,
             transfer: tokio::sync::Mutex::new(None),
         });
+        let mut incoming = self.streams_rx.lock().await;
         let (auth_tx, mut auth_rx) = mpsc::channel::<Option<Authed>>(32);
         let mut current: Option<Current> = None;
         let mut failures = 0;
         loop {
             tokio::select! {
-                accepted = self.listener.accept() => {
-                    let Ok((tcp, acceptor)) = accepted else { continue };
-                    let (tx, secret) = (auth_tx.clone(), self.ticket.secret);
+                Some(raw) = incoming.recv() => {
+                    let tx = auth_tx.clone();
+                    let (acceptor, secret, code) = (self.acceptor.clone(), self.secret, self.options.allow_code_pairing);
                     tokio::spawn(async move {
-                        let _ = tx.send(authenticate(tcp, acceptor, secret).await.ok()).await;
+                        let _ = tx.send(authenticate(raw, acceptor, secret, code).await.ok()).await;
                     });
                 }
                 Some(authed) = auth_rx.recv() => {
                     let Some(authed) = authed else {
                         failures += 1;
                         if failures >= MAX_AUTH_FAILURES {
-                            return Err(Fatal("Too many failed pairing attempts. Start a new receive session.".into()).into());
+                            return Err(Fatal("Too many failed pairing attempts. Open Receive again.".into()).into());
                         }
                         continue;
                     };
@@ -158,6 +188,7 @@ impl Receiver {
 
 struct Shared {
     options: Arc<ReceiveOptions>,
+    fingerprint: Fingerprint,
     approve: Approver,
     stats: Arc<Stats>,
     transfer: tokio::sync::Mutex<Option<Arc<TransferState>>>,
@@ -173,11 +204,13 @@ struct Authed {
     stream: TlsStream,
     sender: Fingerprint,
     sender_name: String,
-    /// `None` for a control connection; the session it belongs to for a data connection.
+    /// `None` for a control stream; the session it belongs to for a data stream.
     session: Option<SessionId>,
+    /// Present when the sender pairs by code instead of the ticket secret.
+    commitment: Option<[u8; 32]>,
 }
 
-/// The session currently being served. Data connections join it by session ID.
+/// The session currently being served. Data streams join it by session ID.
 struct Current {
     session: SessionId,
     sender: Fingerprint,
@@ -192,22 +225,29 @@ async fn join(current: &mut Option<Current>) -> Result<Outcome> {
     }
 }
 
-async fn authenticate(tcp: TcpStream, acceptor: Acceptor, secret: Secret) -> Result<Authed> {
-    let (mut stream, sender) = acceptor.handshake(tcp).await?;
+async fn authenticate(raw: RawStream, acceptor: Acceptor, secret: Secret, allow_code: bool) -> Result<Authed> {
+    let (mut stream, sender) = acceptor.handshake(raw).await?;
     let hello = tokio::time::timeout(HANDSHAKE_TIMEOUT, read_msg(&mut stream)).await??;
-    let Control::Hello { version, secret: offered, device_name, session } = hello else {
+    let Control::Hello { version, secret: offered, device_name, session, commitment } = hello else {
         bail!("expected hello");
     };
-    if !constant_time_eq(&offered, &secret) {
-        let _ = write_msg(&mut stream, &reject("This code is not valid. Scan the receiver's code again.")).await;
-        bail!("invalid ticket secret");
-    }
     if version != PROTOCOL_VERSION {
         let _ = write_msg(&mut stream, &reject("Update Nearvolt on both devices.")).await;
         bail!("unsupported protocol version {version}");
     }
+    let allowed = match (offered, session) {
+        (Some(offered), _) => constant_time_eq(&offered, &secret),
+        // A data stream; the caller checks its session ID and certificate.
+        (None, Some(_)) => true,
+        (None, None) => allow_code && commitment.is_some(),
+    };
+    if !allowed {
+        let _ = write_msg(&mut stream, &reject("This code is not valid. Scan the receiver's code again.")).await;
+        bail!("unauthorized sender");
+    }
     let sender_name = truncate_utf8(device_name.trim(), MAX_NAME_LEN).to_string();
-    Ok(Authed { stream, sender, sender_name, session })
+    let commitment = if offered.is_none() { commitment } else { None };
+    Ok(Authed { stream, sender, sender_name, session, commitment })
 }
 
 fn reject(reason: &str) -> Control {
@@ -220,10 +260,24 @@ async fn serve(
     session: SessionId,
     mut data_rx: mpsc::Receiver<TlsStream>,
 ) -> Result<Outcome> {
-    let Authed { stream, sender, sender_name, .. } = authed;
+    let Authed { stream, sender, sender_name, commitment, .. } = authed;
     let (mut recv, mut send) = tokio::io::split(stream);
-    let welcome = Control::Welcome { device_name: shared.options.device_name.clone(), session };
+    let nonce = commitment.map(|_| pairing::new_secret());
+    let welcome = Control::Welcome { device_name: shared.options.device_name.clone(), session, nonce };
     write_msg(&mut send, &welcome).await?;
+    let code = match (commitment, nonce) {
+        (Some(commitment), Some(ours)) => {
+            let Control::Reveal { nonce: theirs } = read_msg(&mut recv).await? else {
+                bail!("expected the sender's pairing nonce");
+            };
+            ensure!(
+                constant_time_eq(&pairing::commitment(&theirs), &commitment),
+                "the sender's pairing nonce does not match its commitment"
+            );
+            Some(pairing::pairing_code(&shared.fingerprint, &sender, &theirs, &ours))
+        }
+        _ => None,
+    };
     let offer = match read_msg(&mut recv).await? {
         Control::Offer(offer) => offer,
         other => bail!("expected an offer, got {other:?}"),
@@ -250,6 +304,7 @@ async fn serve(
                 files: offer.files.len() as u64,
                 bytes: offer.total_bytes(),
                 sample: offer.files.iter().take(5).map(|f| f.path.clone()).collect(),
+                code,
             };
             if !(shared.approve)(incoming).await {
                 let _ = write_msg(&mut send, &reject("The receiver declined.")).await;
