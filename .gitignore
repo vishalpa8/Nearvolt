@@ -1,0 +1,15 @@
+# Project-local toolchain (created by tools\setup.ps1)
+.toolchain/
+
+# Rust
+/target/
+
+# Test data created by the benchmark tool
+/.bench/
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+.DS_Store

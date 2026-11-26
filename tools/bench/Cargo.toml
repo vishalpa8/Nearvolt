@@ -1,0 +1,15 @@
+[package]
+name = "proxima-bench"
+description = "Send, receive and stress-test Proxima transfers from the command line"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+anyhow = "1"
+blake3 = "1"
+clap = { version = "4", features = ["derive"] }
+futures = "0.3"
+proxima-core = { path = "../../core" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "io-util"] }
