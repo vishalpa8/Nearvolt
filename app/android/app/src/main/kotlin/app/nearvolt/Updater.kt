@@ -71,7 +71,7 @@ class Updater(private val activity: MainActivity, private val emit: (PlatformEve
 
     /** Installing restarts the app, so it never happens during a transfer. */
     private fun requireIdle() {
-        if (TransferService.active) throw FlutterError("busy", "Finish the transfer first, then check again.")
+        if (TransferService.active) throw FlutterError("busy", "Disconnect first, then check again.")
     }
 
     private fun download(update: UpdateInfo): File {

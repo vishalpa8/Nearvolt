@@ -9,195 +9,302 @@ import '../theme.dart';
 import '../ui/molecules.dart';
 import '../ui/organisms.dart';
 import '../ui/templates.dart';
-import 'transfer_page.dart';
+import 'connection_page.dart';
 
-/// Finds phones with Receive open while it's visible. Choose what to send and
-/// who to send it to, in either order.
-class SendPage extends StatefulWidget {
+/// The ways to reach a phone with Receive open. Only the one chosen runs, and
+/// it asks only for what it needs.
+class SendPage extends StatelessWidget {
   const SendPage({super.key, required this.engine, required this.profile});
 
   final TransferEngine engine;
   final DeviceProfile profile;
 
+  void _open(BuildContext context, Widget page) =>
+      Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => page));
+
+  Future<void> _scan(BuildContext context) async {
+    void tell(String message) {
+      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    }
+
+    if ((await engine.needs(Purpose.scan)).contains(Need.wifi)) await engine.fix(Need.wifi);
+    final String? ticket;
+    try {
+      ticket = await engine.scanCode();
+    } on PlatformException catch (e) {
+      return tell(e.message ?? "Couldn't open the code scanner.");
+    }
+    if (ticket == null) return;
+    final NearbyDevice device;
+    try {
+      device = engine.deviceFor(ticket);
+    } on Object {
+      return tell("That isn't a Nearvolt code.");
+    }
+    if (context.mounted) await openConnection(context, engine, device);
+  }
+
   @override
-  State<SendPage> createState() => _SendPageState();
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return PageScaffold(
+      title: 'Send',
+      onBack: () => Navigator.of(context).maybePop(),
+      body: ListView(
+        padding: const EdgeInsets.only(top: Space.l, bottom: Space.xl),
+        children: [
+          Text('How do you want to connect?', style: text.titleLarge),
+          const SizedBox(height: Space.xs),
+          Text(
+            'Open Receive on the other phone first.',
+            style: text.bodyMedium?.copyWith(color: AppColors.textSecondary),
+          ),
+          const SizedBox(height: Space.xl),
+          if (profile.hasNfc)
+            ChoiceTile(
+              icon: Icons.nfc_rounded,
+              title: 'Tap phones',
+              detail: 'Hold the backs together. Connects at once, nothing to approve.',
+              onTap: () => _open(context, _TapPage(engine: engine)),
+            ),
+          ChoiceTile(
+            icon: Icons.qr_code_scanner_rounded,
+            title: 'Scan code',
+            detail: "Point the camera at the code on the other phone's screen.",
+            onTap: () => _scan(context),
+          ),
+          ChoiceTile(
+            icon: Icons.radar_rounded,
+            title: 'Nearby phones',
+            detail: 'Pick it from a list. The other phone approves with a code.',
+            onTap: () => _open(context, _NearbyPage(engine: engine)),
+          ),
+          ChoiceTile(
+            icon: Icons.usb_rounded,
+            title: 'USB cable',
+            detail: 'Plug the phones into each other. No Wi-Fi needed.',
+            onTap: () => _open(context, _UsbPage(engine: engine)),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
-class _SendPageState extends State<SendPage> with NeedsMixin {
+/// Connects to [device] and shows the connection until the user leaves it.
+Future<void> openConnection(BuildContext context, TransferEngine engine, NearbyDevice device) {
+  final updates = engine.connect(device);
+  return Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) => ConnectionPage(
+        engine: engine,
+        updates: updates,
+        initial: Connection(peer: device.name, link: device.link),
+        sending: true,
+      ),
+    ),
+  );
+}
+
+/// Shared by the method pages: listens for receivers while the page is on top,
+/// and stops listening while a connection it opened is showing.
+mixin _MethodMixin<T extends StatefulWidget, F> on State<T>, NeedsMixin<T> {
+  StreamSubscription<F>? _sub;
+
+  Stream<F> find();
+
+  void found(F value);
+
+  @override
+  void restart() {
+    _sub?.cancel();
+    _sub = find().listen(found);
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
+  }
+
+  Future<void> connectTo(NearbyDevice device) async {
+    _sub?.cancel();
+    _sub = null;
+    await openConnection(context, engine, device);
+    if (mounted) restart();
+  }
+}
+
+class _TapPage extends StatefulWidget {
+  const _TapPage({required this.engine});
+
+  final TransferEngine engine;
+
+  @override
+  State<_TapPage> createState() => _TapPageState();
+}
+
+class _TapPageState extends State<_TapPage> with NeedsMixin, _MethodMixin<_TapPage, String> {
+  @override
+  TransferEngine get engine => widget.engine;
+
+  @override
+  Purpose get purpose => Purpose.tap;
+
+  @override
+  Stream<String> find() => engine.taps();
+
+  @override
+  void found(String ticket) {
+    final NearbyDevice device;
+    try {
+      device = engine.deviceFor(ticket);
+    } on Object {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text("That phone didn't share a Nearvolt code.")));
+      return;
+    }
+    connectTo(device);
+  }
+
+  @override
+  Widget build(BuildContext context) => _Waiting(
+    title: 'Tap phones',
+    notice: needNotice,
+    icon: Icons.nfc_rounded,
+    headline: 'Hold the backs of the phones together',
+    detail: 'Keep them still for a moment. The other phone needs Receive open.',
+  );
+}
+
+class _UsbPage extends StatefulWidget {
+  const _UsbPage({required this.engine});
+
+  final TransferEngine engine;
+
+  @override
+  State<_UsbPage> createState() => _UsbPageState();
+}
+
+class _UsbPageState extends State<_UsbPage> with NeedsMixin, _MethodMixin<_UsbPage, NearbyDevice?> {
+  @override
+  TransferEngine get engine => widget.engine;
+
+  @override
+  Purpose get purpose => Purpose.usb;
+
+  @override
+  Stream<NearbyDevice?> find() => engine.usbPeer();
+
+  @override
+  void found(NearbyDevice? device) {
+    if (device != null) connectTo(device);
+  }
+
+  @override
+  Widget build(BuildContext context) => _Waiting(
+    title: 'USB cable',
+    notice: needNotice,
+    icon: Icons.usb_rounded,
+    headline: 'Connect the phones with a USB cable',
+    detail: 'A USB-C to USB-C cable, or an adapter. The other phone needs Receive open and asks once to allow it.',
+  );
+}
+
+class _NearbyPage extends StatefulWidget {
+  const _NearbyPage({required this.engine});
+
+  final TransferEngine engine;
+
+  @override
+  State<_NearbyPage> createState() => _NearbyPageState();
+}
+
+class _NearbyPageState extends State<_NearbyPage> with NeedsMixin, _MethodMixin<_NearbyPage, List<NearbyDevice>> {
   List<NearbyDevice> _devices = const [];
-  Selection? _selection;
-  NearbyDevice? _target;
-  StreamSubscription<List<NearbyDevice>>? _nearby;
-  StreamSubscription<String>? _taps;
 
   @override
   TransferEngine get engine => widget.engine;
 
   @override
-  void restart() {
-    _pause();
-    _listen();
-  }
-
-  void _listen() {
-    _nearby = engine.nearby().listen((devices) => setState(() => _devices = devices));
-    _taps = engine.taps().listen((ticket) => _connect(engine.deviceFor(ticket)));
-  }
-
-  void _pause() {
-    _nearby?.cancel();
-    _taps?.cancel();
-  }
+  Purpose get purpose => Purpose.nearby;
 
   @override
-  void dispose() {
-    _pause();
-    super.dispose();
-  }
+  Stream<List<NearbyDevice>> find() => engine.nearby();
 
-  Future<void> _pick() async {
-    final kind = await showPickMenu(context);
-    if (kind == null) return;
-    final selection = kind == PickKind.folder ? await engine.pickFolder() : await engine.pickFiles();
-    if (selection != null && mounted) setState(() => _selection = selection);
-  }
-
-  /// Choosing a receiver before anything is picked opens the picker first.
-  Future<void> _choose(NearbyDevice device) async {
-    setState(() => _target = device);
-    if (_selection == null) await _pick();
-  }
-
-  /// A scanned or tapped code already proves who the receiver is, so sending
-  /// starts right away once files are chosen.
-  Future<void> _connect(NearbyDevice device) async {
-    await _choose(device);
-    if (_selection != null && mounted) await _send();
-  }
-
-  Future<void> _scan() async {
-    final String? ticket;
-    try {
-      ticket = await engine.scanCode();
-    } on PlatformException catch (e) {
-      return _tell(e.message ?? "Couldn't open the code scanner.");
-    }
-    if (ticket == null || !mounted) return;
-    final NearbyDevice device;
-    try {
-      device = engine.deviceFor(ticket);
-    } on Object {
-      return _tell("That isn't a Nearvolt code.");
-    }
-    await _connect(device);
-  }
-
-  void _tell(String message) {
-    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
-  }
-
-  Future<void> _send() async {
-    final (target, selection) = (_target, _selection);
-    if (target == null || selection == null) return;
-    _pause();
-    final sent = await Navigator.of(context).push(MaterialPageRoute<bool>(
-      builder: (_) => TransferPage(
-        progress: engine.send(target, selection),
-        peerName: target.name,
-        link: target.link,
-        incoming: false,
-        onStop: engine.stopTransfer,
-      ),
-    ));
-    if (!mounted) return;
-    // A stopped transfer keeps its selection so sending again resumes it.
-    if (sent ?? false) {
-      setState(() {
-        _selection = null;
-        _target = null;
-      });
-    }
-    _listen();
-  }
+  @override
+  void found(List<NearbyDevice> devices) => setState(() => _devices = devices);
 
   @override
   Widget build(BuildContext context) {
-    final selection = _selection;
-    return PopScope(
-      canPop: selection == null,
-      onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) setState(() => _selection = null);
-      },
-      child: selection == null ? _start(context) : _ready(context, selection),
-    );
-  }
-
-  List<Widget> get _notice => [
-        if (needNotice case final notice?) ...[const SizedBox(height: Space.l), notice],
-      ];
-
-  Widget _start(BuildContext context) {
     final text = Theme.of(context).textTheme;
     return PageScaffold(
-      title: 'Send',
+      title: 'Nearby phones',
       onBack: () => Navigator.of(context).maybePop(),
-      body: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ..._notice,
-            const SizedBox(height: Space.xl),
-            Text('Nearby', style: text.titleMedium),
-            const SizedBox(height: Space.m),
-            DeviceList(devices: _devices, onTap: _choose),
-            const SizedBox(height: Space.l),
-            ConnectOptions(onScan: _scan, hasNfc: widget.profile.hasNfc),
-          ],
-        ),
-      ),
-      bottom: FilledButton.icon(
-        onPressed: _pick,
-        icon: const Icon(Icons.add_rounded),
-        label: const Text('Choose files'),
-      ),
-    );
-  }
-
-  Widget _ready(BuildContext context, Selection selection) {
-    final text = Theme.of(context).textTheme;
-    final target = _target;
-    return PageScaffold(
-      title: 'Ready to send',
-      onBack: () => setState(() => _selection = null),
       body: ListView(
         padding: const EdgeInsets.only(bottom: Space.xl),
         children: [
-          ..._notice,
-          const SizedBox(height: Space.l),
-          SummaryCard(files: selection.files.length, bytes: selection.bytes),
-          const SizedBox(height: Space.xxl),
-          Text('Send to', style: text.titleMedium),
-          const SizedBox(height: Space.s),
-          DeviceList(devices: _withTarget(), selectedId: target?.id, onTap: (d) => setState(() => _target = d)),
-          const SizedBox(height: Space.l),
-          ConnectOptions(onScan: _scan, hasNfc: widget.profile.hasNfc),
-          const SizedBox(height: Space.xxl),
-          Text('Files', style: text.titleMedium),
-          const SizedBox(height: Space.xs),
-          for (final item in selection.items) FileRow(item: item),
+          if (needNotice case final notice?) ...[const SizedBox(height: Space.l), notice],
+          const SizedBox(height: Space.xl),
+          Text('Nearby', style: text.titleMedium),
+          const SizedBox(height: Space.m),
+          DeviceList(devices: _devices, onTap: connectTo),
         ],
-      ),
-      bottom: FilledButton(
-        onPressed: target == null ? null : _send,
-        child: Text(target == null ? 'Choose who to send to' : 'Send to ${target.name}'),
       ),
     );
   }
+}
 
-  /// A receiver chosen by QR code or tap stays visible even if discovery hasn't found it.
-  List<NearbyDevice> _withTarget() {
-    final target = _target;
-    if (target == null || _devices.any((d) => d.id == target.id)) return _devices;
-    return [target, ..._devices];
+/// A method page with nothing to choose: one picture and what to do.
+class _Waiting extends StatelessWidget {
+  const _Waiting({
+    required this.title,
+    required this.notice,
+    required this.icon,
+    required this.headline,
+    required this.detail,
+  });
+
+  final String title;
+  final Widget? notice;
+  final IconData icon;
+  final String headline;
+  final String detail;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return PageScaffold(
+      title: title,
+      onBack: () => Navigator.of(context).maybePop(),
+      body: Column(
+        children: [
+          if (notice case final notice?) ...[const SizedBox(height: Space.l), notice],
+          Expanded(
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 120,
+                    height: 120,
+                    decoration: const BoxDecoration(shape: BoxShape.circle, color: AppColors.accentSoft),
+                    child: Icon(icon, size: 56, color: AppColors.accent),
+                  ),
+                  const SizedBox(height: Space.xl),
+                  Text(headline, style: text.titleLarge, textAlign: TextAlign.center),
+                  const SizedBox(height: Space.s),
+                  Text(
+                    detail,
+                    style: text.bodyMedium?.copyWith(color: AppColors.textSecondary),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

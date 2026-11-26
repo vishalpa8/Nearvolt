@@ -115,7 +115,8 @@ enum Requirement {
   appSettings,
   bluetooth,
   wifi,
-  location;
+  location,
+  nfc;
 }
 
 enum PlatformEventKind {
@@ -385,6 +386,7 @@ class Readiness {
     required this.bluetooth,
     required this.wifi,
     required this.location,
+    required this.nfc,
   });
 
   /// The Nearby devices permissions are granted.
@@ -401,6 +403,9 @@ class Readiness {
   /// Location is on, or not needed (Android 13 and later).
   bool location;
 
+  /// On, or the device has no NFC.
+  bool nfc;
+
   List<Object?> _toList() {
     return <Object?>[
       permission,
@@ -408,6 +413,7 @@ class Readiness {
       bluetooth,
       wifi,
       location,
+      nfc,
     ];
   }
 
@@ -422,6 +428,7 @@ class Readiness {
       bluetooth: result[2]! as bool,
       wifi: result[3]! as bool,
       location: result[4]! as bool,
+      nfc: result[5]! as bool,
     );
   }
 
@@ -434,7 +441,7 @@ class Readiness {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(permission, other.permission) && _deepEquals(permissionInSettings, other.permissionInSettings) && _deepEquals(bluetooth, other.bluetooth) && _deepEquals(wifi, other.wifi) && _deepEquals(location, other.location);
+    return _deepEquals(permission, other.permission) && _deepEquals(permissionInSettings, other.permissionInSettings) && _deepEquals(bluetooth, other.bluetooth) && _deepEquals(wifi, other.wifi) && _deepEquals(location, other.location) && _deepEquals(nfc, other.nfc);
   }
 
   @override
@@ -443,7 +450,7 @@ class Readiness {
 
   @override
   String toString() {
-    return 'Readiness(permission: $permission, permissionInSettings: $permissionInSettings, bluetooth: $bluetooth, wifi: $wifi, location: $location)';
+    return 'Readiness(permission: $permission, permissionInSettings: $permissionInSettings, bluetooth: $bluetooth, wifi: $wifi, location: $location, nfc: $nfc)';
   }
 }
 
@@ -806,16 +813,16 @@ class NearvoltPlatform {
     return pigeonVar_replyValue as String?;
   }
 
-  /// Opens Receive: advertises the tickets over NFC (private) and the local
-  /// network and Bluetooth (public), then creates the Wi-Fi Direct group.
-  Future<WifiGroup?> startReceiving(String privateTicket, String publicTicket, int port) async {
+  /// Opens Receive: serves the tap ticket over NFC and advertises the public one
+  /// on the local network and Bluetooth, then creates the Wi-Fi Direct group.
+  Future<WifiGroup?> startReceiving(String tapTicket, String publicTicket, int port) async {
     final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.startReceiving$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
       binaryMessenger: pigeonVar_binaryMessenger,
     );
-    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[privateTicket, publicTicket, port]);
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[tapTicket, publicTicket, port]);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
     final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
         pigeonVar_replyList,
@@ -826,14 +833,14 @@ class NearvoltPlatform {
     return pigeonVar_replyValue as WifiGroup?;
   }
 
-  Future<void> updateTickets(String privateTicket, String publicTicket, int port) async {
+  Future<void> updateTickets(String tapTicket, String publicTicket, int port) async {
     final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.updateTickets$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
       binaryMessenger: pigeonVar_binaryMessenger,
     );
-    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[privateTicket, publicTicket, port]);
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[tapTicket, publicTicket, port]);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
     _extractReplyValueOrThrow(
         pigeonVar_replyList,
@@ -880,9 +887,9 @@ class NearvoltPlatform {
     ;
   }
 
-  /// Looks for receivers and listens for NFC taps while the send page is open.
-  Future<void> startDiscovery() async {
-    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.startDiscovery$pigeonVar_messageChannelSuffix';
+  /// Looks for receivers on the local network and over Bluetooth.
+  Future<void> startNearby() async {
+    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.startNearby$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
@@ -898,8 +905,43 @@ class NearvoltPlatform {
     ;
   }
 
-  Future<void> stopDiscovery() async {
-    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.stopDiscovery$pigeonVar_messageChannelSuffix';
+  Future<void> stopNearby() async {
+    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.stopNearby$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channel = BasicMessageChannel<Object?>(
+      pigeonVar_channelName,
+      pigeonChannelCodec,
+      binaryMessenger: pigeonVar_binaryMessenger,
+    );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(null);
+    final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
+    _extractReplyValueOrThrow(
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: true,
+    )
+    ;
+  }
+
+  /// Reads a receiver's ticket when the phones are tapped together.
+  Future<void> startTapReading() async {
+    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.startTapReading$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channel = BasicMessageChannel<Object?>(
+      pigeonVar_channelName,
+      pigeonChannelCodec,
+      binaryMessenger: pigeonVar_binaryMessenger,
+    );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(null);
+    final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
+    _extractReplyValueOrThrow(
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: true,
+    )
+    ;
+  }
+
+  Future<void> stopTapReading() async {
+    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.stopTapReading$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,

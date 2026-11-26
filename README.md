@@ -1,11 +1,13 @@
 # Nearvolt
 
 Move files directly between nearby Android phones at the full speed of the link.
-No server, no account, no internet. Every byte is verified, and interrupted
-transfers resume from the last verified chunk.
+No server, no account, no internet. Every file is verified on disk, and
+interrupted transfers resume where they stopped.
 
-Connect from the Nearby list (same Wi-Fi or Bluetooth, then Wi-Fi Direct), by
-scanning a QR code, by tapping phones together, or with a USB cable.
+Connect by tapping phones together, by scanning a QR code, from the Nearby list
+(same Wi-Fi or Bluetooth, then Wi-Fi Direct), or with a USB cable. The phones
+stay connected until either one taps Disconnect, and the sender can keep adding
+files.
 
 ## Setup on Windows
 

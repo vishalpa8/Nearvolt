@@ -51,6 +51,61 @@ class DeviceTile extends StatelessWidget {
   }
 }
 
+/// One option in a list of ways to do something: an icon, a title and a line
+/// of detail.
+class ChoiceTile extends StatelessWidget {
+  const ChoiceTile({super.key, required this.icon, required this.title, required this.detail, required this.onTap});
+
+  final IconData icon;
+  final String title;
+  final String detail;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: Space.m),
+      child: Material(
+        color: AppColors.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(Radii.card),
+          side: const BorderSide(color: AppColors.border),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(Space.l),
+            child: Row(
+              children: [
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: const BoxDecoration(shape: BoxShape.circle, color: AppColors.accentSoft),
+                  child: Icon(icon, color: AppColors.accent),
+                ),
+                const SizedBox(width: Space.l),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title, style: text.titleMedium),
+                      const SizedBox(height: 2),
+                      Text(detail, style: text.bodySmall),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.chevron_right_rounded, color: AppColors.textSecondary),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// A large choice on the home page: an icon, a title and one line of detail.
 class ActionCard extends StatelessWidget {
   const ActionCard({
@@ -130,10 +185,7 @@ class FileRow extends StatelessWidget {
           Container(
             width: 44,
             height: 44,
-            decoration: BoxDecoration(
-              color: AppColors.surfaceMuted,
-              borderRadius: BorderRadius.circular(Radii.button),
-            ),
+            decoration: BoxDecoration(color: AppColors.surfaceMuted, borderRadius: BorderRadius.circular(Radii.button)),
             child: Icon(
               item.isFolder ? Icons.folder_rounded : Icons.insert_drive_file_rounded,
               color: AppColors.textSecondary,

@@ -88,6 +88,7 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
             bluetooth = bluetooth?.isEnabled ?: true,
             wifi = wifi.isWifiEnabled,
             location = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU || location.isLocationEnabled,
+            nfc = NfcAdapter.getDefaultAdapter(context)?.isEnabled ?: true,
         )
     }
 
@@ -113,6 +114,7 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
                 settle { wifi.wifiState == WifiManager.WIFI_STATE_ENABLING }
             }
             Requirement.LOCATION -> activity.settings.launch(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+            Requirement.NFC -> activity.settings.launch(Intent(Settings.ACTION_NFC_SETTINGS))
         }
         return readiness().also { AppLog.write("setup", "after $requirement: $it") }
     }
@@ -190,15 +192,15 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
         throw FlutterError("scanner", "The code scanner is still downloading. Try again in a moment.")
     }
 
-    override suspend fun startReceiving(privateTicket: String, publicTicket: String, port: Long): WifiGroup? {
-        updateTickets(privateTicket, publicTicket, port)
+    override suspend fun startReceiving(tapTicket: String, publicTicket: String, port: Long): WifiGroup? {
+        updateTickets(tapTicket, publicTicket, port)
         val group = if (nearbyGranted) wifiDirect.createGroup() else null
         AppLog.write("receive", "listening on port $port, Wi-Fi Direct group ${group?.let { "on ${it.frequency} MHz" } ?: "not created"}")
         return group
     }
 
-    override fun updateTickets(privateTicket: String, publicTicket: String, port: Long) {
-        nfc.serve(privateTicket)
+    override fun updateTickets(tapTicket: String, publicTicket: String, port: Long) {
+        nfc.serve(tapTicket)
         local.advertise(name, kind, publicTicket, port.toInt())
         if (nearbyGranted) ble.advertise(publicTicket)
     }
@@ -217,20 +219,19 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
         wifiDirect.removeGroup()
     }
 
-    override fun startDiscovery() {
+    override fun startNearby() {
         local.browse()
         if (nearbyGranted) ble.scan()
-        nfc.read()
-        // Fetch the code scanner now, so it's ready when the user taps Scan code.
-        runCatching { modules.installModules(ModuleInstallRequest.newBuilder().addApi(scanner).build()) }
-            .onFailure { AppLog.error("scanner", it) }
     }
 
-    override fun stopDiscovery() {
+    override fun stopNearby() {
         local.stopBrowsing()
         ble.stopScan()
-        nfc.stopReading()
     }
+
+    override fun startTapReading() = nfc.read()
+
+    override fun stopTapReading() = nfc.stopReading()
 
     override fun watchUsb() = usb.watch()
 
@@ -257,7 +258,8 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
     fun onNewIntent(intent: Intent) = usb.handle(intent)
 
     fun close() {
-        stopDiscovery()
+        stopNearby()
+        stopTapReading()
         stopReceiving()
         usb.close()
         scope.cancel()

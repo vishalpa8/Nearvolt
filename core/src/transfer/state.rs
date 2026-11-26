@@ -220,7 +220,7 @@ impl TransferState {
             self.handle(i, &mut slot)?
         };
         file.sync_all()?;
-        if hash_file(&file, f.size)? != expected {
+        if hash_file(&file, f.size, &self.stats)? != expected {
             let mut slot = self.slot(i);
             self.stats.sub_bytes(slot.written);
             slot.written = 0;
@@ -358,20 +358,27 @@ fn rel_string(path: &Path) -> String {
 }
 
 /// BLAKE3 of the first `size` bytes of `file`, read back from disk.
-pub(super) fn hash_file(file: &File, size: u64) -> io::Result<[u8; 32]> {
+pub(super) fn hash_file(file: &File, size: u64, stats: &Stats) -> io::Result<[u8; 32]> {
     let mut hasher = blake3::Hasher::new();
-    hash_range(file, 0, size, &mut hasher)?;
+    hash_range(file, 0, size, &mut hasher, stats)?;
     Ok(*hasher.finalize().as_bytes())
 }
 
-/// Feeds bytes `start..end` of `file` into `hasher`.
-pub(super) fn hash_range(file: &File, start: u64, end: u64, hasher: &mut blake3::Hasher) -> io::Result<()> {
+/// Feeds bytes `start..end` of `file` into `hasher`, counting them as checked.
+pub(super) fn hash_range(
+    file: &File,
+    start: u64,
+    end: u64,
+    hasher: &mut blake3::Hasher,
+    stats: &Stats,
+) -> io::Result<()> {
     let mut buf = vec![0u8; READ_BLOCK.min((end - start) as usize)];
     let mut pos = start;
     while pos < end {
         let n = (end - pos).min(READ_BLOCK as u64) as usize;
         disk::read_exact_at(file, &mut buf[..n], pos)?;
         hasher.update(&buf[..n]);
+        stats.add_checked(n as u64);
         pos += n as u64;
     }
     Ok(())

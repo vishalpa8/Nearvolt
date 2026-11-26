@@ -5,10 +5,11 @@ maximum speed the link allows, with no server, no account and no internet.
 
 Goals, in priority order:
 
-1. **No data loss.** Every byte is verified. Interrupted transfers resume from the
-   last verified chunk.
-2. **Connections that don't drop easily.** When a link does drop, the transfer
-   recovers on its own within seconds.
+1. **No data loss.** Every file is verified on disk before it's saved.
+   Interrupted transfers resume where they stopped.
+2. **Connections that stay up.** Two phones stay connected until someone taps
+   Disconnect; when the link drops, it comes back on its own the same way it
+   was made.
 3. **Maximum speed.** The fastest available link, kept full with parallel streams.
 4. **Simple.** Two pages and a prompt, no ads, no sign-up, a clean light design.
 
@@ -17,10 +18,10 @@ Goals, in priority order:
 ```mermaid
 flowchart TB
     subgraph App["Nearvolt app"]
-        UI["Flutter UI (app/lib): Send, Receive, transfer progress"]
+        UI["Flutter UI (app/lib): Send, Receive, the connection"]
         subgraph Core["Rust engine (core/, through ffi/)"]
-            Session["Session: heartbeat, reconnect, resume"]
-            Engine["Transfer: manifest, chunks, parallel streams, journal"]
+            Session["Connection: batches, heartbeat, reconnect, resume"]
+            Engine["Transfer: manifest, whole files on parallel streams, journal"]
             Transport["Transport: TLS 1.3 over TCP or USB streams"]
         end
         Platform["Kotlin (app/android): radios, file picker, foreground service, updates"]
@@ -51,45 +52,52 @@ ticket (or a USB stream) and the engine takes over.
 |---|---|---|
 | Nearby list, same Wi-Fi | The receiver advertises its public ticket over mDNS (`_nearvolt._tcp`) | 4-digit code |
 | Nearby list, Bluetooth | The receiver advertises over Bluetooth LE; the sender reads the public ticket from a GATT characteristic | 4-digit code |
-| QR code | The sender scans the receiver's private ticket with Google's code scanner | Secret in the ticket |
-| NFC tap | The receiver's phone acts as an NFC card (host card emulation) serving its private ticket | Secret in the ticket |
+| QR code | The sender scans the receiver's private ticket with Google's code scanner | Secret in the ticket; the receiver accepts once |
+| NFC tap | The receiver's phone acts as an NFC card (host card emulation) serving its tap ticket | Its own secret; the tap is the consent, no prompt |
 | USB cable | Android Open Accessory, with streams multiplexed by yamux | 4-digit code |
 
 When the two phones don't share a network, the receiver has already created a
 Wi-Fi Direct group on the router's channel, and the ticket carries its name,
 passphrase and frequency. The sender joins it without a pop-up after 2.5 seconds
-without a connection, while the engine keeps trying every address in the ticket.
+without a connection, asking for the Nearby devices permission only then if it's
+missing, while the engine keeps trying every address in the ticket. The first
+address that answers is the one used from then on, including for reconnects.
 
 Finding a phone and moving files are separate jobs. Bluetooth, NFC, the local
 network's service records and QR codes only exchange the ticket; files always
-travel over Wi-Fi (the shared network or Wi-Fi Direct) or the USB cable. Every
-finding method runs at once, only while Send or Receive is open, so the first to
-succeed wins. Once a transfer starts they all stop: the sender stops searching,
-and the receiver stops advertising and closes its Wi-Fi Direct group unless the
-sender joined it.
+travel over Wi-Fi (the shared network or Wi-Fi Direct) or the USB cable. The
+sender picks one way to connect, and only that one runs, asking only for what it
+needs: every way but the cable needs Wi-Fi on, tapping also needs NFC, and the
+Nearby list also needs the Nearby devices permission and Bluetooth. Receive
+offers every way at once, since it can't know
+which the sender picks. Once connected, all of it stops: the sender stops
+searching, and the receiver stops advertising and closes its Wi-Fi Direct group
+unless the sender joined it.
 
 ## Staying connected
 
 | Cause of drops | Fix |
 |---|---|
 | Wi-Fi Direct on a different channel from the home router | The group is created on the router's channel |
-| Background Wi-Fi scans and radio power saving | Low-latency Wi-Fi lock and wake lock during transfers |
+| Background Wi-Fi scans and radio power saving | Low-latency Wi-Fi lock and wake lock while connected |
 | The system killing a background app | `connectedDevice` foreground service with progress in a notification |
 | Silent link loss | Heartbeat every 500 ms; 4 seconds of silence means the link is gone |
 | A cable pulled out | The engine waits for it to be plugged back in and resumes |
 
-The **session** is separate from the **connection**: it has its own ID and a
-journal of verified chunks, and survives any number of connection drops.
+A **connection** outlives any number of link drops. The receiver accepts a
+phone once; while that phone is connected, others are turned away, and the same
+phone reconnecting is let back in without asking. The sender adds batches of
+files whenever it likes, and they're sent one after another.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Connected
+    [*] --> Waiting: Sender connects
+    Waiting --> Connected: Receiver accepts (a tap needs no accept)
     Connected --> LinkLost: No heartbeat for 4 seconds
-    LinkLost --> Reconnecting: Sender retries every address for up to 60 seconds
-    Reconnecting --> Connected: Re-offer, resume from the last verified chunk
-    Reconnecting --> Stopped: No link for 60 seconds
-    Stopped --> Connected: Send again, resumes from the journal
-    Connected --> [*]: All chunks verified
+    LinkLost --> Reconnecting: Sender retries the address that worked
+    Reconnecting --> Connected: Let back in, the batch resumes where it stopped
+    Connected --> [*]: Either phone taps Disconnect
+    Reconnecting --> [*]: Either phone taps Disconnect
 ```
 
 ## Transfer pipeline
@@ -97,27 +105,27 @@ stateDiagram-v2
 ```mermaid
 flowchart LR
     subgraph Sender
-        M["Manifest: every file, size, time"] --> Q["Chunk queue minus chunks the receiver has"]
-        Q --> W["8 workers: read, BLAKE3, send"]
+        M["Batch: every file, size, time"] --> Q["File queue minus what the receiver has"]
+        Q --> W["8 workers: read, hash, send each file whole"]
     end
     W -->|"parallel TLS streams"| R
     subgraph Receiver
-        R["Stream readers: verify BLAKE3"] --> D["Positional write into a .nvpart file"]
-        D --> J["Journal record and checkpoint"]
-        J --> F["File complete: flush, re-read and verify, rename, keep timestamp"]
+        R["Stream readers"] --> D["Sequential write into a .nvpart file"]
+        D --> J["Journal: bytes on disk, every 2 seconds"]
+        J --> F["File complete: flush, re-read, check the sender's hash, rename, keep timestamp"]
     end
 ```
 
-- One session carries every file. There's no handshake per file, so thousands of
-  small files flow back to back on the same streams.
-- Large files are split into 4 MiB chunks, each verified with BLAKE3.
+- One connection carries every batch. There's no handshake per file, so
+  thousands of small files flow back to back on the same streams.
+- Each file goes whole on one stream, never split. Eight streams carry eight
+  files at once; a single file uses one stream.
 - Picked files are opened one at a time, through file descriptors from Android's
   file picker, so the app needs no storage permission.
-- The receiver reserves the full file size up front and writes each chunk directly
-  to its final position.
-- On resume, the receiver reports which chunks it already has, and only the rest
-  are sent. Chunks written after the last checkpoint are re-verified from disk
-  first, so a power cut can't cause silent corruption.
+- A file is saved under its real name only after it has been flushed, read back
+  from disk and matched against the sender's BLAKE3 hash of the whole file.
+- On resume, the receiver reports how many bytes of each file are safely on
+  disk, and the sender continues from there.
 
 ## Code layout
 
@@ -127,7 +135,7 @@ Nearvolt/
 │   ├── src/
 │   │   ├── identity.rs      device key and certificate
 │   │   ├── pairing.rs       tickets and the 4-digit code
-│   │   ├── protocol.rs      wire messages and chunk frames
+│   │   ├── protocol.rs      wire messages and file headers
 │   │   ├── transport.rs     TLS 1.3 over TCP, or over a multiplexed cable
 │   │   ├── safety.rs        file-name cleaning
 │   │   └── transfer/        manifest, sender, receiver, journal, disk I/O
@@ -143,7 +151,7 @@ Nearvolt/
 │   ├── bench/               CLI for sending, receiving, benchmarks and failure tests
 │   ├── setup.ps1            downloads the toolchain into .toolchain/
 │   └── env.ps1              activates the toolchain in one terminal
-├── .github/workflows/       CI, and signed releases from version tags
+├── .github/workflows/       CI, and a signed release on every push to main
 └── docs/
 ```
 
@@ -154,12 +162,12 @@ and receiver share one machine), with every byte verified afterward:
 
 | Test | Result |
 |---|---|
-| One 2 GB file | 357 MB/s |
-| 2,000 files of 250 KB | 51 MB/s (this PC's raw ceiling for creating, flushing and renaming small files is 75 MB/s) |
-| Mixed: 2 GB of large files plus 1,000 photos | 189 MB/s |
-| Link cut for 6 seconds mid-transfer | Detected in 4 s, resumed from the last verified chunk |
+| One 2 GB file | 274 MB/s (one stream; includes reading it back from disk to verify) |
+| 2,000 files of 250 KB | 89 MB/s |
+| Mixed: 2 GB of large files plus 1,000 photos | 233 MB/s |
+| Link cut for 6 seconds mid-transfer | Detected in 4 s, resumed where it stopped |
 | Both apps killed mid-transfer, then restarted | Resumed from the journal |
-| Link cut and apps killed in the same transfer | Completed, byte-for-byte identical |
+| Link cut and apps killed in the same transfer | Completed, byte-for-byte identical (149 MB/s including both outages) |
 
 Raw network ceilings on this PC: 919 MB/s for 8 TCP connections, about 300 MB/s for
 the best QUIC setup. Run `nearvolt-bench local <folder>` to reproduce. Phone

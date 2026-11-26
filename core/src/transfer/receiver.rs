@@ -405,7 +405,7 @@ async fn serve(
             _ = heartbeat.tick() => {
                 let msg = if complete.is_some() {
                     let p = shared.stats.snapshot();
-                    Control::Progress { files: p.done_files, bytes: p.done_bytes }
+                    Control::Progress { files: p.done_files, bytes: p.done_bytes, checked: shared.stats.checked() }
                 } else {
                     Control::Ping
                 };

@@ -209,7 +209,8 @@ enum class Requirement(val raw: Int) {
   APP_SETTINGS(1),
   BLUETOOTH(2),
   WIFI(3),
-  LOCATION(4);
+  LOCATION(4),
+  NFC(5);
 
   companion object {
     private val pigeonValues = values()
@@ -464,7 +465,9 @@ data class Readiness (
   val bluetooth: Boolean,
   val wifi: Boolean,
   /** Location is on, or not needed (Android 13 and later). */
-  val location: Boolean
+  val location: Boolean,
+  /** On, or the device has no NFC. */
+  val nfc: Boolean
 )
  {
   companion object {
@@ -474,7 +477,8 @@ data class Readiness (
       val bluetooth = pigeonVar_list[2] as Boolean
       val wifi = pigeonVar_list[3] as Boolean
       val location = pigeonVar_list[4] as Boolean
-      return Readiness(permission, permissionInSettings, bluetooth, wifi, location)
+      val nfc = pigeonVar_list[5] as Boolean
+      return Readiness(permission, permissionInSettings, bluetooth, wifi, location, nfc)
     }
   }
   fun toList(): List<Any?> {
@@ -484,6 +488,7 @@ data class Readiness (
       bluetooth,
       wifi,
       location,
+      nfc,
     )
   }
   override fun equals(other: Any?): Boolean {
@@ -494,7 +499,7 @@ data class Readiness (
       return true
     }
     val other = other as Readiness
-    return PlatformPigeonUtils.deepEquals(this.permission, other.permission) && PlatformPigeonUtils.deepEquals(this.permissionInSettings, other.permissionInSettings) && PlatformPigeonUtils.deepEquals(this.bluetooth, other.bluetooth) && PlatformPigeonUtils.deepEquals(this.wifi, other.wifi) && PlatformPigeonUtils.deepEquals(this.location, other.location)
+    return PlatformPigeonUtils.deepEquals(this.permission, other.permission) && PlatformPigeonUtils.deepEquals(this.permissionInSettings, other.permissionInSettings) && PlatformPigeonUtils.deepEquals(this.bluetooth, other.bluetooth) && PlatformPigeonUtils.deepEquals(this.wifi, other.wifi) && PlatformPigeonUtils.deepEquals(this.location, other.location) && PlatformPigeonUtils.deepEquals(this.nfc, other.nfc)
   }
 
   override fun hashCode(): Int {
@@ -504,10 +509,11 @@ data class Readiness (
     result = 31 * result + PlatformPigeonUtils.deepHash(this.bluetooth)
     result = 31 * result + PlatformPigeonUtils.deepHash(this.wifi)
     result = 31 * result + PlatformPigeonUtils.deepHash(this.location)
+    result = 31 * result + PlatformPigeonUtils.deepHash(this.nfc)
     return result
   }
   override fun toString(): String {
-    return "Readiness(permission=$permission, permissionInSettings=$permissionInSettings, bluetooth=$bluetooth, wifi=$wifi, location=$location)"
+    return "Readiness(permission=$permission, permissionInSettings=$permissionInSettings, bluetooth=$bluetooth, wifi=$wifi, location=$location, nfc=$nfc)"
   }
 }
 
@@ -738,11 +744,11 @@ interface NearvoltPlatform {
   suspend fun pickFolder(): PickResult?
   suspend fun scanQr(): String?
   /**
-   * Opens Receive: advertises the tickets over NFC (private) and the local
-   * network and Bluetooth (public), then creates the Wi-Fi Direct group.
+   * Opens Receive: serves the tap ticket over NFC and advertises the public one
+   * on the local network and Bluetooth, then creates the Wi-Fi Direct group.
    */
-  suspend fun startReceiving(privateTicket: String, publicTicket: String, port: Long): WifiGroup?
-  fun updateTickets(privateTicket: String, publicTicket: String, port: Long)
+  suspend fun startReceiving(tapTicket: String, publicTicket: String, port: Long): WifiGroup?
+  fun updateTickets(tapTicket: String, publicTicket: String, port: Long)
   /**
    * A transfer started: stops advertising this phone over Bluetooth, the local
    * network and NFC, and closes the Wi-Fi Direct group unless the sender
@@ -750,9 +756,12 @@ interface NearvoltPlatform {
    */
   fun stopAdvertising()
   fun stopReceiving()
-  /** Looks for receivers and listens for NFC taps while the send page is open. */
-  fun startDiscovery()
-  fun stopDiscovery()
+  /** Looks for receivers on the local network and over Bluetooth. */
+  fun startNearby()
+  fun stopNearby()
+  /** Reads a receiver's ticket when the phones are tapped together. */
+  fun startTapReading()
+  fun stopTapReading()
   /**
    * Starts noticing USB cables to other phones, reported as `usbConnected` and
    * `usbDisconnected` events.
@@ -901,12 +910,12 @@ interface NearvoltPlatform {
         if (api != null) {
           channel.setMessageHandler { message, reply ->
             val args = message as List<Any?>
-            val privateTicketArg = args[0] as String
+            val tapTicketArg = args[0] as String
             val publicTicketArg = args[1] as String
             val portArg = args[2] as Long
             CoroutineScope(Dispatchers.Main).launch {
               val wrapped: List<Any?> = try {
-                listOf(api.startReceiving(privateTicketArg, publicTicketArg, portArg))
+                listOf(api.startReceiving(tapTicketArg, publicTicketArg, portArg))
               } catch (exception: Throwable) {
                 PlatformPigeonUtils.wrapError(exception)
               }
@@ -922,11 +931,11 @@ interface NearvoltPlatform {
         if (api != null) {
           channel.setMessageHandler { message, reply ->
             val args = message as List<Any?>
-            val privateTicketArg = args[0] as String
+            val tapTicketArg = args[0] as String
             val publicTicketArg = args[1] as String
             val portArg = args[2] as Long
             val wrapped: List<Any?> = try {
-              api.updateTickets(privateTicketArg, publicTicketArg, portArg)
+              api.updateTickets(tapTicketArg, publicTicketArg, portArg)
               listOf(null)
             } catch (exception: Throwable) {
               PlatformPigeonUtils.wrapError(exception)
@@ -970,11 +979,11 @@ interface NearvoltPlatform {
         }
       }
       run {
-        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.nearvolt.NearvoltPlatform.startDiscovery$separatedMessageChannelSuffix", codec)
+        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.nearvolt.NearvoltPlatform.startNearby$separatedMessageChannelSuffix", codec)
         if (api != null) {
           channel.setMessageHandler { _, reply ->
             val wrapped: List<Any?> = try {
-              api.startDiscovery()
+              api.startNearby()
               listOf(null)
             } catch (exception: Throwable) {
               PlatformPigeonUtils.wrapError(exception)
@@ -986,11 +995,43 @@ interface NearvoltPlatform {
         }
       }
       run {
-        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.nearvolt.NearvoltPlatform.stopDiscovery$separatedMessageChannelSuffix", codec)
+        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.nearvolt.NearvoltPlatform.stopNearby$separatedMessageChannelSuffix", codec)
         if (api != null) {
           channel.setMessageHandler { _, reply ->
             val wrapped: List<Any?> = try {
-              api.stopDiscovery()
+              api.stopNearby()
+              listOf(null)
+            } catch (exception: Throwable) {
+              PlatformPigeonUtils.wrapError(exception)
+            }
+            reply.reply(wrapped)
+          }
+        } else {
+          channel.setMessageHandler(null)
+        }
+      }
+      run {
+        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.nearvolt.NearvoltPlatform.startTapReading$separatedMessageChannelSuffix", codec)
+        if (api != null) {
+          channel.setMessageHandler { _, reply ->
+            val wrapped: List<Any?> = try {
+              api.startTapReading()
+              listOf(null)
+            } catch (exception: Throwable) {
+              PlatformPigeonUtils.wrapError(exception)
+            }
+            reply.reply(wrapped)
+          }
+        } else {
+          channel.setMessageHandler(null)
+        }
+      }
+      run {
+        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.nearvolt.NearvoltPlatform.stopTapReading$separatedMessageChannelSuffix", codec)
+        if (api != null) {
+          channel.setMessageHandler { _, reply ->
+            val wrapped: List<Any?> = try {
+              api.stopTapReading()
               listOf(null)
             } catch (exception: Throwable) {
               PlatformPigeonUtils.wrapError(exception)

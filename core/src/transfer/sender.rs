@@ -289,6 +289,9 @@ async fn session<L: Link>(
     let mut offered = false;
     let mut accepted = false;
     let mut batch_started = Instant::now();
+    // Anything moving counts as progress: bytes arriving, the receiver checking
+    // finished files, or this side hashing what the receiver already has.
+    let mut remote = 0u64;
     let mut last_progress = (0u64, Instant::now());
     let mut stall_check = tokio::time::interval(Duration::from_secs(1));
     loop {
@@ -327,14 +330,12 @@ async fn session<L: Link>(
                     let (files, bytes) = (offer.files.len() as u64, offer.total_bytes());
                     stats.set_totals(files, bytes);
                     stats.set_done(done_files, done_bytes);
-                    (accepted, batch_started, last_progress) = (true, Instant::now(), (done_bytes, Instant::now()));
+                    (accepted, batch_started, last_progress.1) = (true, Instant::now(), Instant::now());
                     emit(events, Event::Started { batch, files, bytes });
                 }
-                Some(Ok(Control::Progress { files, bytes })) => {
+                Some(Ok(Control::Progress { files, bytes, checked })) => {
                     stats.set_done(files, bytes);
-                    if bytes != last_progress.0 {
-                        last_progress = (bytes, Instant::now());
-                    }
+                    remote = bytes.wrapping_add(checked);
                 }
                 Some(Ok(Control::Resend { files })) => {
                     if let Some((batch, manifest)) = &batches.current {
@@ -374,7 +375,7 @@ async fn session<L: Link>(
                 }
             }
             Some(stream) = opening.next() => {
-                workers.spawn(worker(stream?, session_id, peer.secret, jobs_rx.clone()));
+                workers.spawn(worker(stream?, session_id, peer.secret, jobs_rx.clone(), stats.clone()));
             }
             Some(joined) = workers.join_next() => {
                 let error = match joined {
@@ -391,7 +392,10 @@ async fn session<L: Link>(
                 return Err(error);
             }
             _ = stall_check.tick() => {
-                if accepted && jobs.is_empty() && last_progress.1.elapsed() >= STALL_TIMEOUT {
+                let pulse = remote.wrapping_add(stats.checked());
+                if pulse != last_progress.0 {
+                    last_progress = (pulse, Instant::now());
+                } else if accepted && jobs.is_empty() && last_progress.1.elapsed() >= STALL_TIMEOUT {
                     bail!("the receiver stopped making progress; resynchronizing");
                 }
             }
@@ -463,6 +467,7 @@ async fn worker(
     session: SessionId,
     secret: Option<Secret>,
     jobs: async_channel::Receiver<Job>,
+    stats: Arc<Stats>,
 ) -> Result<()> {
     let hello = Control::Hello {
         version: PROTOCOL_VERSION,
@@ -473,23 +478,23 @@ async fn worker(
     };
     write_msg(&mut stream, &hello).await?;
     while let Ok(job) = jobs.recv().await {
-        send_file(&mut stream, job).await?;
+        send_file(&mut stream, job, &stats).await?;
     }
     Ok(())
 }
 
 /// One file: its header, the bytes from `offset` to the end, then the hash of the
 /// whole file. The part the receiver already has is read only to hash it.
-async fn send_file(stream: &mut TlsStream, job: Job) -> Result<()> {
+async fn send_file(stream: &mut TlsStream, job: Job, stats: &Arc<Stats>) -> Result<()> {
     let Job { batch, file, offset, manifest } = job;
     let entry = &manifest.offer.files[file as usize];
     let size = entry.size;
     let unreadable = |e: std::io::Error| Fatal(format!("can't read {}: {e}", entry.path));
-    let (m, path) = (manifest.clone(), entry.path.clone());
+    let (m, path, stats) = (manifest.clone(), entry.path.clone(), stats.clone());
     let (mut source, mut hasher) = tokio::task::spawn_blocking(move || -> Result<_> {
         let source = m.open(file)?;
         let mut hasher = blake3::Hasher::new();
-        hash_range(&source, 0, offset, &mut hasher).map_err(|e| Fatal(format!("can't read {path}: {e}")))?;
+        hash_range(&source, 0, offset, &mut hasher, &stats).map_err(|e| Fatal(format!("can't read {path}: {e}")))?;
         Ok((source, hasher))
     })
     .await??;

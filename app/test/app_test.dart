@@ -1,7 +1,7 @@
 import 'dart:ui' show Size;
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:material_ui/material_ui.dart' show LinearProgressIndicator;
+import 'package:material_ui/material_ui.dart' show LinearProgressIndicator, NavigatorState, Navigator;
 import 'package:nearvolt/app.dart';
 import 'package:nearvolt/engine/models.dart';
 
@@ -20,21 +20,20 @@ void main() {
     await tester.pump();
   }
 
-  Future<void> openSend(WidgetTester tester) async {
-    await open(tester);
-    await tester.tap(find.text('Send'));
+  Future<void> go(WidgetTester tester, String label) async {
+    await tester.tap(find.text(label).last);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
   }
 
-  Future<void> chooseFiles(WidgetTester tester) async {
-    await tester.tap(find.text('Choose files'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
-    await tester.tap(find.text('Files'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
+  Future<void> openMethod(WidgetTester tester, String method) async {
+    await open(tester);
+    await go(tester, 'Send');
+    await go(tester, method);
   }
+
+  const rahulName = "Rahul's Pixel 9";
+  const connected = Connection(phase: LinkPhase.connected, peer: rahulName, link: 'Same Wi-Fi');
 
   testWidgets('a failed start explains itself instead of a blank screen', (tester) async {
     await tester.pumpWidget(const StartupFailure(reason: 'the engine library is missing'));
@@ -42,15 +41,23 @@ void main() {
     expect(find.text('the engine library is missing'), findsOneWidget);
   });
 
-  testWidgets('nothing looks for phones until Send or Receive is chosen', (tester) async {
+  testWidgets('nothing looks for phones until a way to connect is chosen', (tester) async {
     await open(tester);
     expect(find.text('Move files to anyone nearby'), findsOneWidget);
+
+    await go(tester, 'Send');
+    expect(find.text('How do you want to connect?'), findsOneWidget);
+    for (final method in ['Tap phones', 'Scan code', 'Nearby phones', 'USB cable']) {
+      expect(find.text(method), findsOneWidget);
+    }
+    expect(engine.prepared, isEmpty);
     expect(engine.discoveries, 0);
     expect(engine.receiveSessions, 0);
 
-    await tester.tap(find.text('Send'));
-    await tester.pump();
-    expect(engine.discoveries, 1);
+    await go(tester, 'Tap phones');
+    expect(engine.prepared, [Purpose.tap]);
+    expect(engine.tapped.hasListener, isTrue);
+    expect(engine.discoveries, 0);
   });
 
   testWidgets('checks for updates only when asked', (tester) async {
@@ -86,91 +93,108 @@ void main() {
     expect(find.textContaining('Installing version 0.1.9'), findsOneWidget);
   });
 
-  testWidgets('sends after the receiver confirms the same code', (tester) async {
-    await openSend(tester);
+  testWidgets('stays connected and sends each batch added, until Disconnect', (tester) async {
+    await openMethod(tester, 'Nearby phones');
     expect(find.text('Looking for devices with Receive open…'), findsOneWidget);
-
     engine.devices.add([rahul, tablet]);
     await tester.pumpAndSettle();
-    expect(find.text('Studio tablet'), findsOneWidget);
 
-    await chooseFiles(tester);
-    expect(find.text('Ready to send'), findsOneWidget);
-    expect(find.text('4 files'), findsOneWidget);
-    expect(find.text('Choose who to send to'), findsOneWidget);
-
-    await tester.tap(find.text("Rahul's Pixel 9"));
+    await tester.tap(find.text(rahulName));
     await tester.pumpAndSettle();
-    await tester.tap(find.text("Send to Rahul's Pixel 9"));
-    await tester.pumpAndSettle();
+    expect(engine.connectedTo, rahul);
     expect(find.text('Sending to'), findsOneWidget);
-    expect(engine.sentTo, rahul);
+    expect(engine.devices.hasListener, isFalse, reason: 'no searching while connected');
 
-    engine.sending!.add(const TransferProgress(phase: TransferPhase.waiting, code: '4821'));
+    engine.sending!.add(const Connection(phase: LinkPhase.waiting, peer: rahulName, code: '4821'));
     await tester.pumpAndSettle();
     expect(find.text('4 8 2 1'), findsOneWidget);
-    expect(find.text("Waiting for Rahul's Pixel 9 to accept"), findsOneWidget);
+    expect(find.text("Waiting for $rahulName to accept"), findsOneWidget);
 
-    engine.sending!.add(const TransferProgress(
-      phase: TransferPhase.transferring,
-      doneBytes: 410700000,
-      totalBytes: 821400000,
-      doneFiles: 2,
-      totalFiles: 4,
-      bytesPerSecond: 92000000,
-    ));
+    engine.sending!.add(connected);
+    await tester.pumpAndSettle();
+    expect(find.text('Add files to send them to $rahulName.'), findsOneWidget);
+
+    await go(tester, 'Add files');
+    await tester.tap(find.text('Files').last);
+    await tester.pumpAndSettle();
+    expect(engine.queued, [album]);
+
+    engine.sending!.add(
+      connected.copyWith(
+        batches: const [Batch(id: 0, files: 4, bytes: 821400000, state: BatchState.moving)],
+        progress: const Progress(
+          doneBytes: 410700000,
+          totalBytes: 821400000,
+          doneFiles: 2,
+          totalFiles: 4,
+          bytesPerSecond: 92000000,
+        ),
+      ),
+    );
     await tester.pumpAndSettle();
     expect(find.text('50%'), findsOneWidget);
 
-    engine.sending!.add(const TransferProgress(
-      phase: TransferPhase.completed,
-      doneBytes: 821400000,
-      totalBytes: 821400000,
-      doneFiles: 4,
-      totalFiles: 4,
-    ));
+    engine.sending!.add(
+      connected.copyWith(
+        batches: const [
+          Batch(id: 0, files: 4, bytes: 821400000, state: BatchState.done),
+          Batch(id: 1, files: 1, bytes: 2000000),
+        ],
+      ),
+    );
     await tester.pumpAndSettle();
-    expect(find.text('All 4 files verified'), findsOneWidget);
+    expect(find.text('Sent and verified'), findsOneWidget);
+    expect(find.text('Waiting its turn'), findsOneWidget);
 
+    // Back asks first, and staying keeps the connection.
+    tester.state<NavigatorState>(find.byType(Navigator)).maybePop();
+    await tester.pumpAndSettle();
+    expect(find.text('Disconnect from $rahulName?'), findsOneWidget);
+    await tester.tap(find.text('Stay connected'));
+    await tester.pumpAndSettle();
+    expect(engine.disconnects, 0);
+
+    await tester.tap(find.text('Disconnect'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Disconnect').last);
+    await tester.pumpAndSettle();
+    expect(engine.disconnects, 1);
+
+    engine.sending!.add(connected.copyWith(phase: LinkPhase.ended));
+    await tester.pumpAndSettle();
+    expect(find.text('Disconnected'), findsOneWidget);
     await tester.tap(find.text('Done'));
     await tester.pumpAndSettle();
     expect(find.text('Nearby'), findsOneWidget);
+    expect(engine.devices.hasListener, isTrue, reason: 'searching again once disconnected');
   });
 
-  testWidgets('tapping phones with files chosen starts sending at once', (tester) async {
-    await openSend(tester);
-    await chooseFiles(tester);
+  testWidgets('tapping phones connects at once', (tester) async {
+    await openMethod(tester, 'Tap phones');
+    expect(find.text('Hold the backs of the phones together'), findsOneWidget);
 
     engine.tapped.add('NV1TAP');
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('Sending to'), findsOneWidget);
-    expect(engine.sentTo?.ticket, 'NV1TAP');
+    expect(engine.connectedTo?.ticket, 'NV1TAP');
+    expect(engine.tapped.hasListener, isFalse);
   });
 
-  testWidgets('cancelling a transfer stops the engine', (tester) async {
-    await openSend(tester);
-    engine.devices.add([rahul]);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text("Rahul's Pixel 9"));
+  testWidgets('a USB cable connects as soon as the other phone answers', (tester) async {
+    await openMethod(tester, 'USB cable');
+    expect(engine.prepared, [Purpose.usb]);
+
+    engine.usb.add(const NearbyDevice(id: 'usb', name: 'USB cable', kind: DeviceKind.phone, link: 'USB cable'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    await tester.tap(find.text('Files'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text("Send to Rahul's Pixel 9"));
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('Cancel'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Stop'));
-    await tester.pumpAndSettle();
-    expect(engine.stops, 1);
-    expect(find.text('Ready to send'), findsOneWidget);
+    expect(find.text('Sending to'), findsOneWidget);
+    expect(engine.connectedTo?.id, 'usb');
   });
 
   testWidgets('a missing permission shows a notice, and fixing it restarts the search', (tester) async {
     engine.missing = const [Need.permission, Need.bluetooth];
-    await openSend(tester);
+    await openMethod(tester, 'Nearby phones');
     expect(find.text('Allow Nearby devices so Nearvolt can find phones and be found.'), findsOneWidget);
     expect(engine.discoveries, 1);
 
@@ -182,37 +206,61 @@ void main() {
     expect(engine.discoveries, 2);
   });
 
-  testWidgets('receives after accepting, then opens Receive again', (tester) async {
-    await open(tester);
-    await tester.tap(find.text('Receive'));
+  testWidgets('NFC turned off is pointed out on the tap page', (tester) async {
+    engine.missing = const [Need.nfc];
+    await openMethod(tester, 'Tap phones');
+    expect(find.text('NFC is off. Turn it on to tap phones together.'), findsOneWidget);
+
+    await tester.tap(find.text('Turn on'));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
+    expect(engine.fixed, [Need.nfc]);
+  });
+
+  testWidgets('accepts one connection, receives every batch, then opens Receive again', (tester) async {
+    await open(tester);
+    await go(tester, 'Receive');
     expect(find.text('Visible as Pixel 8'), findsOneWidget);
     expect(engine.receiveSessions, 1);
 
-    engine.receiving!.add(const ReceiveReady('NV1ABC'));
+    const waiting = Connection(ticket: 'NV1ABC');
+    engine.receiving!.add(waiting);
     await tester.pumpAndSettle();
     expect(find.bySemanticsLabel('QR code to connect'), findsOneWidget);
 
-    engine.receiving!.add(const ReceiveOffer(IncomingOffer(from: rahul, files: 4, bytes: 821400000, code: '4821')));
+    engine.receiving!.add(
+      waiting.copyWith(
+        phase: LinkPhase.waiting,
+        peer: rahulName,
+        request: const Request(from: rahulName, code: '4821'),
+      ),
+    );
     await tester.pumpAndSettle();
-    expect(find.text("Rahul's Pixel 9 wants to send you"), findsOneWidget);
+    expect(find.text('wants to connect and send you files'), findsOneWidget);
     expect(find.text('4 8 2 1'), findsOneWidget);
 
     await tester.tap(find.text('Accept'));
     await tester.pumpAndSettle();
     expect(engine.answered, isTrue);
-    expect(find.text('Receiving from'), findsOneWidget);
 
-    engine.receiving!.add(const ReceiveProgress(TransferProgress(
-      phase: TransferPhase.completed,
-      doneBytes: 821400000,
-      totalBytes: 821400000,
-      doneFiles: 4,
-      totalFiles: 4,
-    )));
+    engine.receiving!.add(connected);
     await tester.pumpAndSettle();
-    expect(find.text('All 4 files verified'), findsOneWidget);
+    expect(find.text('Receiving from'), findsOneWidget);
+    expect(find.text('Files $rahulName sends appear here.'), findsOneWidget);
+
+    engine.receiving!.add(
+      connected.copyWith(
+        batches: const [
+          Batch(id: 0, files: 4, bytes: 821400000, state: BatchState.done),
+          Batch(id: 1, files: 1, bytes: 2000000, state: BatchState.done),
+        ],
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Received and verified'), findsNWidgets(2));
+
+    engine.receiving!.add(connected.copyWith(phase: LinkPhase.ended, endedByPeer: true));
+    await tester.pumpAndSettle();
+    expect(find.text('$rahulName disconnected'), findsOneWidget);
 
     await tester.tap(find.text('Done'));
     await tester.pump();

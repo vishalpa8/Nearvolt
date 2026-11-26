@@ -32,6 +32,9 @@ pub struct Stats {
     done_bytes: AtomicU64,
     total_files: AtomicU64,
     done_files: AtomicU64,
+    /// Bytes read back from disk only to hash them. Grows while a large file is
+    /// checked, when the other counters stand still.
+    checked: AtomicU64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -80,6 +83,14 @@ impl Stats {
 
     pub(crate) fn add_file(&self) {
         self.done_files.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn add_checked(&self, n: u64) {
+        self.checked.fetch_add(n, Ordering::Relaxed);
+    }
+
+    pub(crate) fn checked(&self) -> u64 {
+        self.checked.load(Ordering::Relaxed)
     }
 }
 

@@ -1,26 +1,33 @@
 @Tags(['golden'])
 library;
 
-import 'dart:async';
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:nearvolt/app.dart';
 import 'package:nearvolt/engine/models.dart';
+import 'package:nearvolt/pages/connection_page.dart';
 import 'package:nearvolt/pages/receive_page.dart';
-import 'package:nearvolt/pages/transfer_page.dart';
 import 'package:nearvolt/theme.dart';
 
 import 'fake_engine.dart';
 
-const _half = TransferProgress(
-  phase: TransferPhase.transferring,
+const _ticket = 'NV1AEBAGBAFAYDQQCIKBMGA2DQNZXGI3DMOJQGEYTCMBQGAYTANBTGA3TOMBRGU';
+
+const _connected = Connection(phase: LinkPhase.connected, peer: "Rahul's Pixel 9", link: 'Same Wi-Fi');
+
+const _half = Progress(
   doneBytes: 410700000,
   totalBytes: 821400000,
   doneFiles: 2,
   totalFiles: 4,
   bytesPerSecond: 92000000,
 );
+
+const _batches = [
+  Batch(id: 0, files: 12, bytes: 48200000, state: BatchState.done),
+  Batch(id: 1, files: 4, bytes: 821400000, state: BatchState.moving),
+  Batch(id: 2, files: 1, bytes: 2300000),
+];
 
 void main() {
   late FakeEngine engine;
@@ -39,6 +46,13 @@ void main() {
 
   Future<void> shoot(String name) => expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/$name.png'));
 
+  /// Waits a set time rather than settling: searching shows a spinner that never stops.
+  Future<void> go(WidgetTester tester, String label) async {
+    await tester.tap(find.text(label));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+  }
+
   testWidgets('home', (tester) async {
     await phone(tester, NearvoltApp(engine: engine, profile: profile));
     await tester.pumpAndSettle();
@@ -55,90 +69,86 @@ void main() {
     await shoot('update');
   });
 
-  Future<void> openSend(WidgetTester tester) async {
+  testWidgets('send', (tester) async {
     await phone(tester, NearvoltApp(engine: engine, profile: profile));
-    await tester.tap(find.text('Send'));
-    await tester.pump();
+    await go(tester, 'Send');
+    await shoot('send');
+  });
+
+  testWidgets('tap', (tester) async {
+    await phone(tester, NearvoltApp(engine: engine, profile: profile));
+    await go(tester, 'Send');
+    await go(tester, 'Tap phones');
+    await shoot('tap');
+  });
+
+  testWidgets('nearby', (tester) async {
+    await phone(tester, NearvoltApp(engine: engine, profile: profile));
+    await go(tester, 'Send');
+    await go(tester, 'Nearby phones');
     engine.devices.add([rahul, tablet]);
     await tester.pumpAndSettle();
-  }
-
-  testWidgets('send', (tester) async {
-    await openSend(tester);
-    await shoot('send');
+    await shoot('nearby');
   });
 
   testWidgets('needs', (tester) async {
     engine.missing = const [Need.permission];
-    await openSend(tester);
+    await phone(tester, NearvoltApp(engine: engine, profile: profile));
+    await go(tester, 'Send');
+    await go(tester, 'Nearby phones');
+    await tester.pump(const Duration(milliseconds: 400));
     await shoot('needs');
   });
 
-  testWidgets('pick', (tester) async {
-    await openSend(tester);
-    await tester.tap(find.text('Choose files'));
-    await tester.pumpAndSettle();
-    await shoot('pick');
-  });
+  Widget connection(Connection c, {bool sending = true}) =>
+      screen(ConnectionPage(engine: engine, updates: const Stream.empty(), initial: c, sending: sending));
 
-  testWidgets('ready', (tester) async {
-    await openSend(tester);
-    await tester.tap(find.text('Choose files'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Files'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text("Rahul's Pixel 9"));
-    await tester.pumpAndSettle();
-    await shoot('ready');
-  });
-
-  for (final (name, progress) in [
-    ('code', const TransferProgress(phase: TransferPhase.waiting, code: '4821')),
-    ('sending', _half),
-    ('reconnecting', TransferProgress(
-      phase: TransferPhase.reconnecting,
-      doneBytes: _half.doneBytes,
-      totalBytes: _half.totalBytes,
-      doneFiles: 2,
-      totalFiles: 4,
-    )),
-    ('done', const TransferProgress(
-      phase: TransferPhase.completed,
-      doneBytes: 821400000,
-      totalBytes: 821400000,
-      doneFiles: 4,
-      totalFiles: 4,
-    )),
+  for (final (name, c, sending) in [
+    (
+      'code',
+      const Connection(phase: LinkPhase.waiting, peer: "Rahul's Pixel 9", link: 'Same Wi-Fi', code: '4821'),
+      true,
+    ),
+    ('connected', _connected, true),
+    ('sending', _connected.copyWith(batches: _batches, progress: _half), true),
+    ('reconnecting', _connected.copyWith(phase: LinkPhase.reconnecting, batches: _batches, progress: _half), true),
+    ('ended', _connected.copyWith(phase: LinkPhase.ended, endedByPeer: true, batches: _batches.take(1).toList()), true),
+    ('received', _connected.copyWith(batches: _batches.take(2).toList(), progress: _half), false),
   ]) {
     testWidgets(name, (tester) async {
-      await phone(
-        tester,
-        screen(TransferPage(
-          progress: Stream.value(progress),
-          peerName: rahul.name,
-          link: rahul.link,
-          incoming: false,
-          onStop: () {},
-        )),
-      );
+      await phone(tester, connection(c, sending: sending));
       await tester.pumpAndSettle();
       await shoot(name);
     });
   }
 
+  testWidgets('add', (tester) async {
+    await phone(tester, connection(_connected));
+    await tester.pumpAndSettle();
+    await go(tester, 'Add files');
+    await shoot('add');
+  });
+
   testWidgets('receive', (tester) async {
     await phone(tester, screen(ReceivePage(engine: engine, profile: profile)));
-    engine.receiving!.add(const ReceiveReady('NV1AEBAGBAFAYDQQCIKBMGA2DQNZXGI3DMOJQGEYTCMBQGAYTANBTGA3TOMBRGU'));
+    engine.receiving!.add(const Connection(ticket: _ticket));
     await tester.pumpAndSettle();
     await shoot('receive');
   });
 
-  testWidgets('offer', (tester) async {
+  testWidgets('request', (tester) async {
     await phone(tester, screen(ReceivePage(engine: engine, profile: profile)));
     engine.receiving!
-      ..add(const ReceiveReady('NV1AEBAGBAFAYDQQCIKBMGA2DQNZXGI3DMOJQGEYTCMBQGAYTANBTGA3TOMBRGU'))
-      ..add(const ReceiveOffer(IncomingOffer(from: rahul, files: 4, bytes: 821400000, code: '4821')));
+      ..add(const Connection(ticket: _ticket))
+      ..add(
+        const Connection(
+          ticket: _ticket,
+          phase: LinkPhase.waiting,
+          peer: "Rahul's Pixel 9",
+          request: Request(from: "Rahul's Pixel 9", code: '4821'),
+        ),
+      );
     await tester.pumpAndSettle();
-    await shoot('offer');
+    await shoot('request');
   });
 }

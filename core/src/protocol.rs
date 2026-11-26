@@ -97,9 +97,13 @@ pub enum Control {
     /// Sender heartbeat.
     Ping,
     /// Receiver heartbeat: progress of the current batch, as written so far.
+    /// `checked` counts bytes read back from disk to verify finished files, so a
+    /// long check of a large file isn't mistaken for a stall.
     Progress {
         files: u64,
         bytes: u64,
+        #[serde(default)]
+        checked: u64,
     },
     /// These files failed verification on disk; send them again from the start.
     Resend {

@@ -16,8 +16,9 @@ Golden screenshots are rendered on Windows, so CI on Linux skips them
 
 - **The log:** Files app › Downloads › Nearvolt › `nearvolt-log.txt`. It records
   each start (app version, phone, Android version), every crash with its stack
-  trace, each update step with Android's reason when an install fails, and each
-  transfer's milestones. It holds no file contents and no codes. Share it, or
+  trace,   each update step with Android's reason when an install fails, and each
+  connection's milestones (connected, each batch, drops, disconnect). It holds
+  no file contents and no codes. Share it, or
   with USB debugging: `adb pull /sdcard/Download/Nearvolt/nearvolt-log.txt`.
 - **The app won't open, so it can't update itself:** in the phone's browser open
   <https://github.com/vishalpa8/Nearvolt/releases/latest>, download the
@@ -51,55 +52,59 @@ Start with a fresh install, Bluetooth off.
 
 | # | Steps | Expected |
 |---|---|---|
-| P1 | Open the app. | Home with Send and Receive; no permission prompt yet. |
-| P2 | Tap Send. | Android asks for Nearby devices and notifications, then asks to turn on Bluetooth. Allow all: no notice on the page. |
-| P3 | Reinstall, tap Send and deny Nearby devices. | A notice asks to allow it. Tap Allow and grant it: the notice goes away and Bluetooth phones start appearing. |
+| P1 | Open the app, then tap Send. | Send lists Tap phones, Scan code, Nearby phones and USB cable; no permission prompt yet. |
+| P2 | Tap Nearby phones. | Android asks for Nearby devices and notifications, then asks to turn on Bluetooth. Allow all: no notice on the page. |
+| P3 | Reinstall, open Nearby phones and deny Nearby devices. | A notice asks to allow it. Tap Allow and grant it: the notice goes away and Bluetooth phones start appearing. |
 | P4 | Deny Nearby devices twice. | The notice's button says Settings and opens Nearvolt's app settings; granting it there and coming back clears the notice. |
-| P5 | Turn Wi-Fi off, open Send. | A Wi-Fi notice; Turn on opens Android's Wi-Fi panel. |
-| P6 | Android 11 or 12 only: turn Location off, open Send. | A Location notice; Turn on opens Location settings. |
-| P7 | With Send open, turn Bluetooth off from quick settings. | The Bluetooth notice appears without leaving the page. |
+| P5 | Turn NFC off, open Tap phones. | An NFC notice; Turn on opens Android's NFC settings. No permission or Bluetooth prompt. |
+| P6 | Turn Wi-Fi off, open Nearby phones. | A Wi-Fi notice; Turn on opens Android's Wi-Fi panel. |
+| P7 | Android 11 or 12 only: turn Location off, open Nearby phones. | A Location notice; Turn on opens Location settings. |
+| P8 | With Nearby phones open, turn Bluetooth off from quick settings. | The Bluetooth notice appears without leaving the page. |
 
 ### Ways to connect
 
 | # | Steps | Expected |
 |---|---|---|
-| 1 | Both on the same Wi-Fi. B opens Receive, A opens Send. | B appears in A's Nearby list within 3 s, marked "Same Wi-Fi". |
-| 2 | On A, tap B, choose files, tap Send. | Both screens show the same 4-digit code. B accepts; the transfer runs and ends with "All N files verified". Hashes match. |
-| 3 | Both with Wi-Fi on but not connected to the same network (or none). B opens Receive. | B appears on A marked "Bluetooth". Sending joins B's Wi-Fi Direct group with no pop-up and transfers as in 2. |
-| 4 | B opens Receive. On A, choose files, tap Scan code, scan B's QR code. | Sending starts at once with no code; B is asked to accept. |
-| 5 | B opens Receive. On A, choose files, then hold the backs of the phones together. | Sending starts at once with no code. |
-| 6 | B opens Receive, A opens Send, then connect the phones with a USB cable. Answer Android's prompts ("Allow access", "Open Nearvolt"). | A shows "USB cable" (or B's model) in Nearby. Sending shows a code on both, as in 2. |
-| 7 | B closes Receive. | B disappears from A's Nearby list. |
-| 8 | B declines an offer. | A shows "Transfer stopped". |
-| 8a | During a transfer over the same Wi-Fi, look for B in a third phone's Nearvolt Send list and in its Wi-Fi Direct settings. | B is in neither: once a transfer starts, B stops advertising and closes its unused Wi-Fi Direct group. |
+| 1 | Both on the same Wi-Fi. B opens Receive, A opens Send › Nearby phones. | B appears within 3 s, marked "Same Wi-Fi". |
+| 2 | On A, tap B. | Both screens show the same 4-digit code. B accepts; A shows "Connected". |
+| 3 | On A, tap Add files and pick some. Before they finish, add more. | The first batch shows "Sending", the second "Waiting its turn", then each "Sent and verified". B lists the same as "Received and verified". Hashes match. |
+| 4 | Both with Wi-Fi on but not connected to the same network (or none). B opens Receive. | B appears on A marked "Bluetooth". Connecting joins B's Wi-Fi Direct group with no pop-up; then as in 2 and 3. |
+| 5 | B opens Receive. On A, Send › Scan code, scan B's QR code. | No code to compare; B is asked once to accept. |
+| 6 | B opens Receive. On A, Send › Tap phones, then hold the backs together. | Connected at once, with no prompt on B. |
+| 7 | B opens Receive, A opens Send › USB cable, then connect the phones with a cable. Answer Android's prompts ("Allow access", "Open Nearvolt"). | A connects by itself; both show the same code, as in 2. |
+| 8 | B closes Receive. | B disappears from A's Nearby list. |
+| 9 | B declines. | A shows "Connection failed" with "The receiver declined." |
+| 10 | While A and B are connected over the same Wi-Fi, look for B in a third phone's Nearby list and in its Wi-Fi Direct settings, and try connecting from the third phone with B's QR code. | B is in neither list, and the third phone is turned away: "This phone is connected to another device." |
+| 11 | Tap Disconnect on B. | A shows "B disconnected" and a Done button. Both stop. |
 
 ### Keeping the connection
 
-Start a transfer of at least 5 GB for each of these.
+Send at least 5 GB for each of these.
 
 | # | Steps | Expected |
 |---|---|---|
-| 9 | Turn Wi-Fi off on B for 10 seconds, then on. | A shows "Reconnecting…", then continues from where it stopped and completes. Hashes match. |
-| 10 | Pull the USB cable for 10 seconds, then plug it back in. | As in 9. |
-| 11 | Lock both screens until the transfer ends. | It keeps running, with progress in the notification. |
-| 12 | Force-stop the app on B mid-transfer (`adb shell am force-stop app.nearvolt`). Reopen Receive on B, then on A tap Send again (the files stay chosen). | The transfer resumes near where it stopped instead of starting over, and completes with matching hashes. |
-| 13 | Force-stop A mid-transfer. Reopen it on A, choose the same files and send again. | As in 12. |
+| 12 | Turn Wi-Fi off on B for 10 seconds, then on. | A shows "Reconnecting…", then continues from where it stopped with no prompt on B, and completes. Hashes match. |
+| 13 | Pull the USB cable for 10 seconds, then plug it back in. | As in 12. |
+| 14 | Lock both screens until the batch ends. | It keeps running, with progress in the notification. |
+| 15 | Leave the phones connected and idle for 10 minutes, then add files. | Still connected; the files go straight away. |
+| 16 | Force-stop the app on B mid-transfer (`adb shell am force-stop app.nearvolt`). Reopen Receive on B, connect from A again and add the same files. | They resume near where they stopped instead of starting over, and complete with matching hashes. |
+| 17 | Force-stop A mid-transfer. Reopen it, connect again and add the same files. | As in 16. |
 
 ### Big and many
 
 | # | Steps | Expected |
 |---|---|---|
-| 14 | Send as much as B's storage allows (aim for 100 GB or more), mixing large videos and thousands of photos. | Completes with "All N files verified". Spot-check hashes. Record the speed below. |
-| 15 | Send a folder with nested folders and a few thousand small files. | The same folder structure appears under `Download/Nearvolt`, and the photos show up in the gallery. |
+| 18 | Send as much as B's storage allows (aim for 100 GB or more), mixing large videos and thousands of photos. | Every batch ends "Sent and verified". Spot-check hashes. Record the speed below. |
+| 19 | Send a folder with nested folders and a few thousand small files. | The same folder structure appears under `Download/Nearvolt`, and the photos show up in the gallery. |
 
 ### Updates
 
 | # | Steps | Expected |
 |---|---|---|
-| 16 | Install the latest release, open the app and tap Check for updates. | "Nearvolt N is the latest version." Nothing is checked until the button is tapped. |
-| 17 | Push a change to `main` and wait for its release. Tap Check for updates. | It downloads version N+1. The first time, Android opens "Install unknown apps"; turn it on and go back, and the update continues by itself. Nearvolt closes for a moment; reopened, it runs N+1. |
-| 18 | Repeat 17 on Android 12 or later. | No prompt at all this time. |
-| 19 | On B, tap Check for updates and, while it downloads, open Receive and accept a transfer from A. | Nothing is installed while the transfer runs; the update card says to finish the transfer first. |
+| 20 | Install the latest release, open the app and tap Check for updates. | "Nearvolt N is the latest version." Nothing is checked until the button is tapped. |
+| 21 | Push a change to `main` and wait for its release. Tap Check for updates. | It downloads version N+1. The first time, Android opens "Install unknown apps"; turn it on and go back, and the update continues by itself. Nearvolt closes for a moment; reopened, it runs N+1. |
+| 22 | Repeat 21 on Android 12 or later. | No prompt at all this time. |
+| 23 | On B, tap Check for updates and, while it downloads, open Receive and accept a connection from A. | Nothing is installed while connected; the update card says to disconnect first. |
 
 ### Speeds
 

@@ -8,20 +8,19 @@ import 'rust/api.dart' as rust;
 
 /// The real engine: transfers run in Rust, radios and system services in Kotlin.
 class NativeEngine implements TransferEngine, NearvoltEvents {
-  /// The phone at the other end of a USB cable, when one is plugged in.
-  static const _usb = 'usb';
-
   final _platform = NearvoltPlatform();
   final _found = <String, NearbyDevice>{};
   final _nearby = StreamController<List<NearbyDevice>>.broadcast();
   final _taps = StreamController<String>.broadcast();
+  final _usb = StreamController<NearbyDevice?>.broadcast();
   final _updateProgress = StreamController<double>.broadcast();
   late DeviceInfo _device;
+  NearbyDevice? _usbPeer;
   UpdateInfo? _update;
-  String? _incomingFrom;
+  _Live? _sending;
 
-  /// Sessions share the engine and the radios, so each waits for the previous
-  /// one to finish cleaning up; otherwise a closing session could stop the next.
+  /// Connections share the engine and the radios, so each waits for the
+  /// previous one to finish cleaning up; otherwise a closing one could stop the next.
   Future<void> _sendClosed = Future.value();
   Future<void> _receiveClosed = Future.value();
 
@@ -39,30 +38,35 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
   }
 
   @override
-  Future<List<Need>> prepare() async {
-    var readiness = await _platform.fix(Requirement.permissions);
-    if (readiness.permission && !readiness.bluetooth) readiness = await _platform.fix(Requirement.bluetooth);
-    return _needs(readiness);
+  Future<List<Need>> prepare(Purpose purpose) async {
+    var readiness = await _platform.readiness();
+    if (purpose.findsPhones) {
+      readiness = await _platform.fix(Requirement.permissions);
+      if (readiness.permission && !readiness.bluetooth) readiness = await _platform.fix(Requirement.bluetooth);
+    }
+    return _needs(readiness, purpose);
   }
 
   @override
-  Future<List<Need>> needs() async => _needs(await _platform.readiness());
+  Future<List<Need>> needs(Purpose purpose) async => _needs(await _platform.readiness(), purpose);
 
   @override
-  Future<List<Need>> fix(Need need) async => _needs(await _platform.fix(switch (need) {
-        Need.permission => Requirement.permissions,
-        Need.permissionInSettings => Requirement.appSettings,
-        Need.wifi => Requirement.wifi,
-        Need.bluetooth => Requirement.bluetooth,
-        Need.location => Requirement.location,
-      }));
+  Future<void> fix(Need need) => _platform.fix(switch (need) {
+    Need.permission => Requirement.permissions,
+    Need.permissionInSettings => Requirement.appSettings,
+    Need.nfc => Requirement.nfc,
+    Need.wifi => Requirement.wifi,
+    Need.bluetooth => Requirement.bluetooth,
+    Need.location => Requirement.location,
+  });
 
-  List<Need> _needs(Readiness r) => [
-        if (!r.permission) r.permissionInSettings ? Need.permissionInSettings : Need.permission,
-        if (!r.wifi) Need.wifi,
-        if (!r.bluetooth) Need.bluetooth,
-        if (!r.location) Need.location,
-      ];
+  List<Need> _needs(Readiness r, Purpose purpose) => [
+    if (purpose.findsPhones && !r.permission) r.permissionInSettings ? Need.permissionInSettings : Need.permission,
+    if (purpose == Purpose.tap && !r.nfc) Need.nfc,
+    if (purpose != Purpose.usb && !r.wifi) Need.wifi,
+    if (purpose.findsPhones && !r.bluetooth) Need.bluetooth,
+    if (purpose.findsPhones && !r.location) Need.location,
+  ];
 
   @override
   void onEvent(PlatformEvent event) {
@@ -90,58 +94,83 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
           _platform.log('usb', "the engine couldn't use the cable: $e");
           return;
         }
-        _found[_usb] = NearbyDevice(
-          id: _usb,
-          name: event.name ?? 'Phone on USB',
-          kind: DeviceKind.phone,
-          link: 'USB cable',
+        _usb.add(
+          _usbPeer = NearbyDevice(
+            id: 'usb',
+            name: event.name ?? 'Phone on USB',
+            kind: DeviceKind.phone,
+            link: 'USB cable',
+          ),
         );
-        _publishNearby();
       case PlatformEventKind.usbDisconnected:
-        _found.remove(_usb);
-        _publishNearby();
+        _usb.add(_usbPeer = null);
     }
   }
 
   /// One entry per device; the local network wins over Bluetooth because it
-  /// already carries the ticket. The cable always gets its own entry.
+  /// already carries the ticket.
   void _publishNearby() {
     final byName = <String, NearbyDevice>{};
     for (final device in _found.values) {
-      final key = device.id == _usb ? _usb : device.name;
-      final existing = byName[key];
-      if (existing == null || (existing.ticket == null && device.ticket != null)) byName[key] = device;
+      final existing = byName[device.name];
+      if (existing == null || (existing.ticket == null && device.ticket != null)) byName[device.name] = device;
     }
     _nearby.add(byName.values.toList());
   }
 
   @override
-  Stream<List<NearbyDevice>> nearby() {
-    late final StreamController<List<NearbyDevice>> controller;
-    StreamSubscription<List<NearbyDevice>>? forward;
+  Stream<List<NearbyDevice>> nearby() => _whileListened(
+    _nearby.stream,
+    start: () {
+      _found.clear();
+      return _platform.startNearby();
+    },
+    stop: _platform.stopNearby,
+    initial: [const []],
+  );
+
+  @override
+  Stream<String> taps() =>
+      _whileListened(_taps.stream, start: _platform.startTapReading, stop: _platform.stopTapReading);
+
+  @override
+  Stream<NearbyDevice?> usbPeer() =>
+      _whileListened(_usb.stream, start: _platform.watchUsb, stop: () async {}, initial: [_usbPeer]);
+
+  /// Runs `start` while someone listens, and `stop` once they stop. `initial`
+  /// goes to the listener first.
+  Stream<T> _whileListened<T>(
+    Stream<T> source, {
+    required Future<void> Function() start,
+    required Future<void> Function() stop,
+    List<T> initial = const [],
+  }) {
+    late final StreamController<T> controller;
+    StreamSubscription<T>? forward;
     controller = StreamController(
       onListen: () async {
-        forward = _nearby.stream.listen(controller.add);
-        _found.removeWhere((id, _) => id != _usb);
-        _publishNearby();
-        await _platform.watchUsb();
-        await _platform.startDiscovery();
+        forward = source.listen(controller.add);
+        initial.forEach(controller.add);
+        await start();
       },
       onCancel: () async {
         await forward?.cancel();
-        await _platform.stopDiscovery();
+        await stop();
       },
     );
     return controller.stream;
   }
 
   @override
-  Stream<String> taps() => _taps.stream;
-
-  @override
   NearbyDevice deviceFor(String ticket) {
     final info = rust.readTicket(text: ticket);
-    return NearbyDevice(id: 'code:${info.name}', name: info.name, kind: DeviceKind.phone, link: 'Code', ticket: ticket);
+    return NearbyDevice(
+      id: 'code:${info.name}',
+      name: info.name,
+      kind: DeviceKind.phone,
+      link: 'Wi-Fi',
+      ticket: ticket,
+    );
   }
 
   @override
@@ -161,84 +190,112 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
   Future<String?> scanCode() => _platform.scanQr();
 
   @override
-  Stream<TransferProgress> send(NearbyDevice to, Selection what) async* {
-    yield const TransferProgress(phase: TransferPhase.connecting);
+  Stream<Connection> connect(NearbyDevice to) {
+    final out = StreamController<Connection>();
+    final live = _sending = _Live(
+      Connection(peer: to.name, link: to.link),
+      onChange: out.add,
+    );
     final previous = _sendClosed;
     final closed = Completer<void>();
     _sendClosed = closed.future;
-    Timer? fallback;
-    var joined = false;
-    try {
-      await previous;
-      final ticket = to.id == _usb ? null : to.ticket ?? await _platform.readTicket(to.id);
-      final wifi = ticket == null ? null : rust.readTicket(text: ticket).wifi;
-      await _platform.startTransferService('Sending to ${to.name}');
-      final files = [for (final f in what.files) rust.SourceFile(path: f.path, size: f.size, modifiedMs: f.modifiedMs)];
-      _platform.log('send', '${files.length} files, ${what.bytes} bytes to ${to.name} (${to.link})');
-      final events = ticket == null
-          ? rust.sendUsb(sourceToken: what.token, files: files)
-          : rust.sendFiles(ticket: ticket, sourceToken: what.token, files: files);
-      // Not on the same network: join the receiver's Wi-Fi Direct group. The engine
-      // keeps retrying every address in the ticket, including the group's.
-      var connected = false;
-      if (wifi != null) {
-        fallback = Timer(const Duration(milliseconds: 2500), () async {
-          if (!connected) {
-            joined = await _platform.joinWifi(WifiGroup(ssid: wifi.ssid, passphrase: wifi.passphrase, frequency: wifi.frequency));
-          }
-        });
-      }
-      yield* _track(events, onConnected: () => connected = true);
-    } finally {
+
+    Future<void> run() async {
+      Timer? fallback;
+      var joined = false;
       try {
+        await previous;
+        final ticket = to.id == 'usb' ? null : to.ticket ?? await _platform.readTicket(to.id);
+        final wifi = ticket == null ? null : rust.readTicket(text: ticket).wifi;
+        await _platform.startTransferService('Connected to ${to.name}');
+        _platform.log('send', 'connecting to ${to.name} (${to.link})');
+        final events = ticket == null ? rust.connectUsb() : rust.connect(ticket: ticket);
+        // Not on the same network: join the receiver's Wi-Fi Direct group, asking
+        // for the permission it needs only now. The engine keeps trying every
+        // address in the ticket, including the group's.
+        if (wifi != null) {
+          fallback = Timer(const Duration(milliseconds: 2500), () async {
+            if (live.state.phase != LinkPhase.connecting) return;
+            if (!(await _platform.readiness()).permission) await _platform.fix(Requirement.permissions);
+            joined = await _platform.joinWifi(
+              WifiGroup(ssid: wifi.ssid, passphrase: wifi.passphrase, frequency: wifi.frequency),
+            );
+          });
+        }
+        await for (final event in events) {
+          _record('send', event);
+          live.apply(event);
+          _notify(live.state);
+        }
+      } on Object catch (e) {
+        _platform.log('send', 'connection failed: $e');
+        live.emit(live.state.copyWith(phase: LinkPhase.failed, error: '$e'));
+      } finally {
         fallback?.cancel();
-        rust.stopSending();
         await _platform.stopTransferService();
         if (joined) await _platform.leaveWifi();
-      } finally {
+        if (_sending == live) _sending = null;
+        await out.close();
         closed.complete();
       }
     }
+
+    out
+      ..onListen = run
+      // Leaving the connection page ends the connection.
+      ..onCancel = rust.disconnect;
+    return out.stream;
   }
 
   @override
-  Stream<ReceiveEvent> receive() async* {
+  void queue(Selection what) {
+    final live = _sending;
+    if (live == null) return;
+    rust.queueFiles(
+      sourceToken: what.token,
+      files: [for (final f in what.files) rust.SourceFile(path: f.path, size: f.size, modifiedMs: f.modifiedMs)],
+    );
+    _platform.log('send', 'queued ${what.files.length} files, ${what.bytes} bytes');
+    final batch = Batch(id: live.queued++, files: what.files.length, bytes: what.bytes);
+    live.emit(live.state.copyWith(batches: [...live.state.batches, batch]));
+  }
+
+  @override
+  Stream<Connection> receive() async* {
     final previous = _receiveClosed;
     final closed = Completer<void>();
     _receiveClosed = closed.future;
-    final tracker = _Tracker();
+    final live = _Live(const Connection());
+    var serving = false;
     try {
       await previous;
       await _platform.watchUsb();
       final events = rust.receive(destDir: _device.downloadDir, journalDir: _device.journalDir);
       await for (final event in events) {
         _record('receive', event);
-        switch (event.kind) {
-          case rust.EventKind.ready:
-            var tickets = rust.receiveTickets();
-            yield ReceiveReady(tickets.privateTicket);
-            final group = await _platform.startReceiving(tickets.privateTicket, tickets.publicTicket, tickets.port);
-            if (group != null) {
-              final wifi = rust.WifiInfo(ssid: group.ssid, passphrase: group.passphrase, frequency: group.frequency);
-              tickets = rust.receiveTickets(wifi: wifi);
-              await _platform.updateTickets(tickets.privateTicket, tickets.publicTicket, tickets.port);
-              yield ReceiveReady(tickets.privateTicket);
-            }
-          case rust.EventKind.offer:
-            _incomingFrom = event.text ?? 'Someone nearby';
-            yield ReceiveOffer(IncomingOffer(
-              from: NearbyDevice(id: 'sender', name: _incomingFrom!, kind: DeviceKind.phone, link: 'Wi-Fi'),
-              files: event.totalFiles,
-              bytes: event.totalBytes,
-              code: event.code,
-            ));
-          default:
-            final progress = tracker.apply(event);
-            if (progress != null) {
-              _notify(progress);
-              yield ReceiveProgress(progress);
-            }
+        if (event.kind == rust.EventKind.ready) {
+          var tickets = rust.receiveTickets();
+          live.emit(live.state.copyWith(ticket: tickets.privateTicket));
+          yield live.state;
+          final group = await _platform.startReceiving(tickets.tapTicket, tickets.publicTicket, tickets.port);
+          if (group != null) {
+            final wifi = rust.WifiInfo(ssid: group.ssid, passphrase: group.passphrase, frequency: group.frequency);
+            tickets = rust.receiveTickets(wifi: wifi);
+            await _platform.updateTickets(tickets.tapTicket, tickets.publicTicket, tickets.port);
+            live.emit(live.state.copyWith(ticket: tickets.privateTicket));
+            yield live.state;
+          }
+          continue;
         }
+        live.apply(event);
+        if (event.kind == rust.EventKind.connected) {
+          // Connected: the radios that found this phone have done their job.
+          await _platform.stopAdvertising();
+          if (!serving) await _platform.startTransferService('Connected to ${live.state.peer}');
+          serving = true;
+        }
+        _notify(live.state);
+        yield live.state;
       }
     } finally {
       try {
@@ -253,18 +310,15 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
 
   @override
   void answer({required bool accept}) {
-    rust.answerOffer(accept: accept);
+    rust.answerRequest(accept: accept);
     _platform.log('receive', accept ? 'accepted' : 'declined');
-    if (!accept) return;
-    // Connected: the radios that found this phone have done their job.
-    _platform.stopAdvertising();
-    _platform.startTransferService('Receiving from ${_incomingFrom ?? 'a nearby device'}');
   }
 
   @override
-  void stopTransfer() {
-    rust.stopSending();
-    rust.stopReceiving();
+  void disconnect() {
+    _platform.log('connection', 'disconnecting');
+    rust.disconnect();
+    rust.disconnectReceiving();
   }
 
   @override
@@ -277,113 +331,136 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
   Stream<double> installUpdate() {
     final controller = StreamController<double>();
     final forward = _updateProgress.stream.listen(controller.add);
-    _platform.installUpdate(_update!).then(
-      (_) => controller.close(),
-      onError: (Object e) {
-        controller.addError(e);
-        controller.close();
-      },
-    ).whenComplete(forward.cancel);
+    _platform
+        .installUpdate(_update!)
+        .then(
+          (_) => controller.close(),
+          onError: (Object e) {
+            controller.addError(e);
+            controller.close();
+          },
+        )
+        .whenComplete(forward.cancel);
     return controller.stream;
   }
 
-  /// The milestones of a transfer, for the log; progress ticks are left out.
+  /// The milestones of a connection, for the log; progress ticks are left out.
   void _record(String tag, rust.TransferEvent e) {
     final line = switch (e.kind) {
-      rust.EventKind.connected => 'connected to ${e.text}',
+      rust.EventKind.request => 'request from ${e.text}',
       rust.EventKind.code => 'showing a confirmation code',
-      rust.EventKind.offer => 'offer of ${e.totalFiles} files, ${e.totalBytes} bytes from ${e.text}',
+      rust.EventKind.connected => 'connected to ${e.text}',
+      rust.EventKind.started => 'batch ${e.batch}: ${e.totalFiles} files, ${e.totalBytes} bytes',
+      rust.EventKind.completed => 'batch ${e.batch} completed',
+      rust.EventKind.batchFailed => 'batch ${e.batch} failed: ${e.text}',
       rust.EventKind.connectionLost => 'connection lost: ${e.text}',
-      rust.EventKind.completed => 'completed: ${e.doneFiles} files, ${e.doneBytes} bytes',
-      rust.EventKind.failed => 'failed after ${e.doneBytes} bytes: ${e.text}',
+      rust.EventKind.peerLeft => 'the other phone disconnected',
+      rust.EventKind.disconnected => 'disconnected after ${e.doneFiles} files, ${e.doneBytes} bytes',
+      rust.EventKind.failed => 'failed: ${e.text}',
       rust.EventKind.ready || rust.EventKind.progress => null,
     };
     if (line != null) _platform.log(tag, line);
   }
 
-  Stream<TransferProgress> _track(Stream<rust.TransferEvent> events, {void Function()? onConnected}) async* {
-    final tracker = _Tracker();
-    await for (final event in events) {
-      _record('send', event);
-      if (event.kind == rust.EventKind.connected) onConnected?.call();
-      final progress = tracker.apply(event);
-      if (progress != null) {
-        _notify(progress);
-        yield progress;
-      }
-    }
-  }
-
   DateTime _notified = DateTime(0);
 
   /// The notification needs no more than one update a second.
-  void _notify(TransferProgress p) {
+  void _notify(Connection c) {
+    final p = c.progress;
     final now = DateTime.now();
-    if (p.finished || now.difference(_notified) < const Duration(seconds: 1)) return;
+    if (p == null || now.difference(_notified) < const Duration(seconds: 1)) return;
     _notified = now;
-    _platform.updateTransferService('${formatBytes(p.doneBytes)} of ${formatBytes(p.totalBytes)}', (p.fraction * 100).round());
+    _platform.updateTransferService(
+      '${formatBytes(p.doneBytes)} of ${formatBytes(p.totalBytes)}',
+      (p.fraction * 100).round(),
+    );
   }
 }
 
-/// Turns engine events into the progress the UI shows, with a smoothed speed.
-class _Tracker {
-  var _phase = TransferPhase.connecting;
-  String? _code;
-  var _last = const TransferProgress(phase: TransferPhase.connecting);
-  DateTime? _speedAt;
-  var _speedBytes = 0;
-  var _speed = 0.0;
+/// A connection in progress: turns engine events into snapshots for the UI,
+/// with a smoothed speed.
+class _Live {
+  _Live(this.state, {this.onChange});
 
-  TransferProgress? apply(rust.TransferEvent e) {
-    switch (e.kind) {
-      case rust.EventKind.connected:
-        _phase = _last.doneBytes > 0 ? TransferPhase.transferring : TransferPhase.waiting;
-        return _emit(_last.doneBytes, e);
-      case rust.EventKind.code:
-        _code = e.code;
-        _phase = TransferPhase.waiting;
-        return _emit(_last.doneBytes, e);
-      case rust.EventKind.connectionLost:
-        _phase = TransferPhase.reconnecting;
-        _speed = 0;
-        return _emit(_last.doneBytes, e);
-      case rust.EventKind.progress:
-        if (_phase == TransferPhase.waiting && e.doneBytes > 0) _phase = TransferPhase.transferring;
-        if (_phase == TransferPhase.connecting && e.doneBytes > 0) _phase = TransferPhase.transferring;
-        return _emit(e.doneBytes, e);
-      case rust.EventKind.completed:
-        _phase = TransferPhase.completed;
-        return _emit(e.totalBytes, e);
-      case rust.EventKind.failed:
-        _phase = TransferPhase.failed;
-        return _emit(e.doneBytes, e, error: e.text);
-      case rust.EventKind.ready || rust.EventKind.offer:
-        return null;
-    }
+  Connection state;
+  final void Function(Connection)? onChange;
+  int queued = 0;
+  DateTime? _speedAt;
+  int _speedBytes = 0;
+  double _speed = 0;
+
+  void emit(Connection next) {
+    state = next;
+    onChange?.call(next);
   }
 
-  TransferProgress _emit(int doneBytes, rust.TransferEvent e, {String? error}) {
+  void apply(rust.TransferEvent e) {
+    final s = state;
+    emit(switch (e.kind) {
+      rust.EventKind.ready => s,
+      rust.EventKind.request => s.copyWith(
+        phase: LinkPhase.waiting,
+        peer: e.text,
+        request: Request(from: e.text ?? 'A nearby phone', code: e.code),
+      ),
+      rust.EventKind.code => s.copyWith(phase: LinkPhase.waiting, code: e.code),
+      rust.EventKind.connected => s.copyWith(
+        phase: LinkPhase.connected,
+        peer: e.text,
+        keepCode: false,
+        keepRequest: false,
+      ),
+      rust.EventKind.started => _start(s, e),
+      rust.EventKind.progress => s.moving == null ? s : s.copyWith(progress: _progress(e)),
+      rust.EventKind.completed => s.copyWith(batches: _mark(s.batches, e.batch, BatchState.done), keepProgress: false),
+      rust.EventKind.batchFailed => s.copyWith(
+        batches: _mark(s.batches, e.batch, BatchState.failed, error: e.text),
+        keepProgress: false,
+      ),
+      rust.EventKind.connectionLost => s.copyWith(phase: LinkPhase.reconnecting),
+      rust.EventKind.peerLeft => s.copyWith(endedByPeer: true),
+      rust.EventKind.disconnected => s.copyWith(phase: LinkPhase.ended, keepProgress: false),
+      rust.EventKind.failed => s.copyWith(phase: LinkPhase.failed, error: e.text, keepProgress: false),
+    });
+  }
+
+  /// The sender already listed the batch when it was queued; the receiver lists
+  /// it when it starts arriving.
+  Connection _start(Connection s, rust.TransferEvent e) {
+    _speedAt = null;
+    _speed = 0;
+    final batch = Batch(id: e.batch, files: e.totalFiles, bytes: e.totalBytes, state: BatchState.moving);
+    final known = s.batches.any((b) => b.id == e.batch);
+    return s.copyWith(
+      batches: known ? [for (final b in s.batches) b.id == e.batch ? batch : b] : [...s.batches, batch],
+      progress: Progress(totalBytes: e.totalBytes, totalFiles: e.totalFiles),
+    );
+  }
+
+  List<Batch> _mark(List<Batch> batches, int id, BatchState state, {String? error}) => [
+    for (final b in batches) b.id == id ? b.copyWith(state: state, error: error) : b,
+  ];
+
+  Progress _progress(rust.TransferEvent e) {
     final now = DateTime.now();
     final at = _speedAt;
-    if (at == null || _phase != TransferPhase.transferring) {
-      _speedAt = now;
-      _speedBytes = doneBytes;
-    } else if (now.difference(at) >= const Duration(milliseconds: 500)) {
-      final instant = (doneBytes - _speedBytes) / (now.difference(at).inMicroseconds / 1e6);
+    if (at != null && now.difference(at) < const Duration(milliseconds: 500)) return _last(e);
+    if (at != null) {
+      final instant = (e.doneBytes - _speedBytes) / (now.difference(at).inMicroseconds / 1e6);
       _speed = _speed == 0 ? instant : _speed * 0.7 + instant * 0.3;
-      _speedAt = now;
-      _speedBytes = doneBytes;
     }
-    _last = TransferProgress(
-      phase: _phase,
-      doneBytes: doneBytes,
-      totalBytes: e.totalBytes > 0 ? e.totalBytes : _last.totalBytes,
-      doneFiles: e.doneFiles > 0 ? e.doneFiles : _last.doneFiles,
-      totalFiles: e.totalFiles > 0 ? e.totalFiles : _last.totalFiles,
-      bytesPerSecond: _phase == TransferPhase.transferring ? _speed.clamp(0, double.infinity) : 0,
-      code: _phase == TransferPhase.waiting ? _code : null,
-      error: error,
+    _speedAt = now;
+    _speedBytes = e.doneBytes;
+    return _last(e);
+  }
+
+  Progress _last(rust.TransferEvent e) {
+    return Progress(
+      doneBytes: e.doneBytes,
+      totalBytes: e.totalBytes,
+      doneFiles: e.doneFiles,
+      totalFiles: e.totalFiles,
+      bytesPerSecond: _speed.clamp(0, double.infinity),
     );
-    return _last;
   }
 }

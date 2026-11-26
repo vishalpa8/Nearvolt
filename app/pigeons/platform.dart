@@ -59,7 +59,7 @@ class WifiGroup {
 
 /// What Send and Receive need from Android, as it is right now.
 class Readiness {
-  Readiness(this.permission, this.permissionInSettings, this.bluetooth, this.wifi, this.location);
+  Readiness(this.permission, this.permissionInSettings, this.bluetooth, this.wifi, this.location, this.nfc);
 
   /// The Nearby devices permissions are granted.
   bool permission;
@@ -73,6 +73,9 @@ class Readiness {
 
   /// Location is on, or not needed (Android 13 and later).
   bool location;
+
+  /// On, or the device has no NFC.
+  bool nfc;
 }
 
 /// Something Android can be asked to turn on.
@@ -85,6 +88,7 @@ enum Requirement {
   bluetooth,
   wifi,
   location,
+  nfc,
 }
 
 class UpdateInfo {
@@ -152,12 +156,12 @@ abstract class NearvoltPlatform {
   @async
   String? scanQr();
 
-  /// Opens Receive: advertises the tickets over NFC (private) and the local
-  /// network and Bluetooth (public), then creates the Wi-Fi Direct group.
+  /// Opens Receive: serves the tap ticket over NFC and advertises the public one
+  /// on the local network and Bluetooth, then creates the Wi-Fi Direct group.
   @async
-  WifiGroup? startReceiving(String privateTicket, String publicTicket, int port);
+  WifiGroup? startReceiving(String tapTicket, String publicTicket, int port);
 
-  void updateTickets(String privateTicket, String publicTicket, int port);
+  void updateTickets(String tapTicket, String publicTicket, int port);
 
   /// A transfer started: stops advertising this phone over Bluetooth, the local
   /// network and NFC, and closes the Wi-Fi Direct group unless the sender
@@ -166,10 +170,15 @@ abstract class NearvoltPlatform {
 
   void stopReceiving();
 
-  /// Looks for receivers and listens for NFC taps while the send page is open.
-  void startDiscovery();
+  /// Looks for receivers on the local network and over Bluetooth.
+  void startNearby();
 
-  void stopDiscovery();
+  void stopNearby();
+
+  /// Reads a receiver's ticket when the phones are tapped together.
+  void startTapReading();
+
+  void stopTapReading();
 
   /// Starts noticing USB cables to other phones, reported as `usbConnected` and
   /// `usbDisconnected` events.

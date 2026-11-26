@@ -60,16 +60,22 @@ Golden screenshots of each one are in [app/test/goldens](../app/test/goldens).
 1. **Home.** Two large cards, Send and Receive, and a "Check for updates" button
    that downloads and installs a new version in place. Nothing looks for other
    phones, or for updates, until asked.
-2. **Send.** Nearby devices with Receive open, as round avatars with names, plus
-   "Scan code" and a tap hint. One "Choose files" button asks Files or Folder.
-   Anything Android still needs (a permission, Wi-Fi, Bluetooth, Location) shows
-   as one notice at the top with the button that fixes it; Receive shows the same.
-3. **Ready to send.** Total size and file count, the devices to send to, and the
-   picked files and folders. One "Send to …" button.
-4. **Receive.** A large QR code, the name others see, and the ways to connect.
-5. **Receive prompt.** One sheet, for example "Rahul's Pixel 9 wants to send you
-   4 files · 821 MB", with the 4-digit code when there is one, and Accept and
-   Decline.
-6. **Transfer.** A large progress ring with percent, speed, time left and file
-   count. While waiting for the receiver it shows the 4-digit code to compare. It
-   ends with "All 4 files verified".
+2. **Send.** "How do you want to connect?" with four choices: Tap phones (only
+   on phones with NFC), Scan code, Nearby phones and USB cable. Only the chosen
+   one runs.
+3. **Tap phones, USB cable.** One picture and one instruction; the connection
+   opens by itself when the phones touch or the cable answers.
+4. **Nearby phones.** Phones with Receive open, as round avatars with names.
+   Anything a method still needs (a permission, NFC, Wi-Fi, Bluetooth,
+   Location) shows as one notice at the top with the button that fixes it;
+   Receive shows the same.
+5. **Receive.** A large QR code, the name others see, and the ways to connect.
+6. **Receive prompt.** One sheet, "Rahul's Pixel 9 wants to connect and send you
+   files", with the 4-digit code when there is one, and Accept and Decline.
+   Asked once per connection, and never after a tap.
+7. **Connection.** Both phones: who they're connected to and how, the batch on
+   the move as a large progress ring with percent, speed, time left and file
+   count, and every batch so far, newest first. While the receiver decides it
+   shows the 4-digit code to compare. The sender's "Add files" asks Files or
+   Folder and queues them; "Disconnect" on either phone ends it for both, after
+   a confirmation. Back asks the same.

@@ -8,10 +8,11 @@ import '../theme.dart';
 import '../ui/atoms.dart';
 import '../ui/organisms.dart';
 import '../ui/templates.dart';
-import 'transfer_page.dart';
+import 'connection_page.dart';
 
-/// While this page is open, nearby senders can find this device, scan its code
-/// or tap phones with it.
+/// While this page is open, a sender can scan its code, tap phones with it,
+/// pick it from their Nearby list or plug in a cable. Once one connects, it
+/// stays connected until either phone disconnects.
 class ReceivePage extends StatefulWidget {
   const ReceivePage({super.key, required this.engine, required this.profile});
 
@@ -23,62 +24,59 @@ class ReceivePage extends StatefulWidget {
 }
 
 class _ReceivePageState extends State<ReceivePage> with NeedsMixin {
-  StreamSubscription<ReceiveEvent>? _session;
-  StreamController<TransferProgress>? _transfer;
-  String? _ticket;
+  StreamSubscription<Connection>? _session;
+  final _updates = StreamController<Connection>.broadcast();
+  Connection _c = const Connection();
+  var _asking = false;
+  var _showing = false;
 
   @override
   TransferEngine get engine => widget.engine;
+
+  @override
+  Purpose get purpose => Purpose.receive;
 
   /// A new session, so the code and what's advertised match what's on now.
   @override
   Future<void> restart() async {
     await _session?.cancel();
     if (!mounted) return;
-    setState(() => _ticket = null);
-    _session = engine.receive().listen(_onEvent);
+    setState(() => _c = const Connection());
+    _session = engine.receive().listen(_update);
   }
 
-  Future<void> _onEvent(ReceiveEvent event) async {
-    switch (event) {
-      case ReceiveReady(:final ticket):
-        setState(() => _ticket = ticket);
-      case ReceiveOffer(:final offer):
-        final accepted = await showReceivePrompt(context, offer);
-        engine.answer(accept: accepted);
-        if (accepted && mounted) await _follow(offer);
-      case ReceiveProgress(:final progress):
-        _transfer?.add(progress);
+  Future<void> _update(Connection c) async {
+    setState(() => _c = c);
+    _updates.add(c);
+    if (c.request case final request? when !_asking && c.phase == LinkPhase.waiting) {
+      _asking = true;
+      final accepted = await showReceivePrompt(context, request);
+      _asking = false;
+      engine.answer(accept: accepted);
     }
-  }
-
-  /// Shows the transfer, then opens Receive again for the next one.
-  Future<void> _follow(IncomingOffer offer) async {
-    final transfer = _transfer = StreamController<TransferProgress>.broadcast();
-    await Navigator.of(context).push(MaterialPageRoute<void>(
-      builder: (_) => TransferPage(
-        progress: transfer.stream,
-        peerName: offer.from.name,
-        incoming: true,
-        onStop: engine.stopTransfer,
-      ),
-    ));
-    await transfer.close();
-    _transfer = null;
-    await restart();
+    if (c.phase == LinkPhase.connected && !_showing && mounted) {
+      _showing = true;
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => ConnectionPage(engine: engine, updates: _updates.stream, initial: _c, sending: false),
+        ),
+      );
+      _showing = false;
+      if (mounted) await restart();
+    }
   }
 
   @override
   void dispose() {
     _session?.cancel();
-    _transfer?.close();
+    _updates.close();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
-    final ticket = _ticket;
+    final ticket = _c.ticket;
     return PageScaffold(
       title: 'Receive',
       onBack: () => Navigator.of(context).maybePop(),
@@ -101,8 +99,8 @@ class _ReceivePageState extends State<ReceivePage> with NeedsMixin {
             const SizedBox(height: Space.s),
             const Pill(label: 'Waiting for a sender', color: AppColors.success),
             const SizedBox(height: Space.xxl),
-            _Hint(icon: Icons.qr_code_scanner_rounded, text: 'Scan this code on the other device'),
-            if (widget.profile.hasNfc) _Hint(icon: Icons.nfc_rounded, text: 'Or tap the phones together'),
+            const _Hint(icon: Icons.qr_code_scanner_rounded, text: 'Scan this code on the other phone'),
+            if (widget.profile.hasNfc) const _Hint(icon: Icons.nfc_rounded, text: 'Or tap the phones together'),
             _Hint(icon: Icons.radar_rounded, text: 'Or pick ${widget.profile.name} in their Nearby list'),
             const _Hint(icon: Icons.usb_rounded, text: 'Or connect the phones with a USB cable'),
           ],

@@ -5,30 +5,44 @@ import 'package:nearvolt/engine/models.dart';
 
 const profile = DeviceProfile(name: 'Pixel 8', kind: DeviceKind.phone, hasNfc: true, version: '0.1.0');
 
-const rahul = NearbyDevice(id: 'a', name: "Rahul's Pixel 9", kind: DeviceKind.phone, link: 'Same Wi-Fi', ticket: 'NV1A');
+const rahul = NearbyDevice(
+  id: 'a',
+  name: "Rahul's Pixel 9",
+  kind: DeviceKind.phone,
+  link: 'Same Wi-Fi',
+  ticket: 'NV1A',
+);
 const tablet = NearbyDevice(id: 'b', name: 'Studio tablet', kind: DeviceKind.tablet, link: 'Bluetooth');
 
-const album = Selection(token: 7, files: [
-  SelectedFile(path: 'Goa trip/IMG_0001.jpg', size: 4200000),
-  SelectedFile(path: 'Goa trip/IMG_0002.jpg', size: 3900000),
-  SelectedFile(path: 'Goa trip/clip.mp4', size: 812000000),
-  SelectedFile(path: 'Notes.pdf', size: 1300000),
-]);
+const album = Selection(
+  token: 7,
+  files: [
+    SelectedFile(path: 'Goa trip/IMG_0001.jpg', size: 4200000),
+    SelectedFile(path: 'Goa trip/IMG_0002.jpg', size: 3900000),
+    SelectedFile(path: 'Goa trip/clip.mp4', size: 812000000),
+    SelectedFile(path: 'Notes.pdf', size: 1300000),
+  ],
+);
 
 /// A scripted engine: tests push what the platform and Rust would report.
 class FakeEngine implements TransferEngine {
   final devices = StreamController<List<NearbyDevice>>.broadcast();
   final tapped = StreamController<String>.broadcast();
-  StreamController<TransferProgress>? sending;
-  StreamController<ReceiveEvent>? receiving;
-  NearbyDevice? sentTo;
+  final usb = StreamController<NearbyDevice?>.broadcast();
+  StreamController<Connection>? sending;
+  StreamController<Connection>? receiving;
+  NearbyDevice? connectedTo;
+  final queued = <Selection>[];
   bool? answered;
+  int disconnects = 0;
   int discoveries = 0;
   int receiveSessions = 0;
-  int stops = 0;
   int updateChecks = 0;
   String? update;
   final installing = StreamController<double>();
+
+  /// Which methods asked for setup, in order.
+  final prepared = <Purpose>[];
 
   /// What Android is missing; tests change it to simulate the user fixing things.
   List<Need> missing = const [];
@@ -38,16 +52,16 @@ class FakeEngine implements TransferEngine {
   Future<DeviceProfile> start() async => profile;
 
   @override
-  Future<List<Need>> prepare() async => missing;
-
-  @override
-  Future<List<Need>> needs() async => missing;
-
-  @override
-  Future<List<Need>> fix(Need need) async {
-    fixed.add(need);
+  Future<List<Need>> prepare(Purpose purpose) async {
+    prepared.add(purpose);
     return missing;
   }
+
+  @override
+  Future<List<Need>> needs(Purpose purpose) async => missing;
+
+  @override
+  Future<void> fix(Need need) async => fixed.add(need);
 
   @override
   Stream<List<NearbyDevice>> nearby() {
@@ -57,6 +71,9 @@ class FakeEngine implements TransferEngine {
 
   @override
   Stream<String> taps() => tapped.stream;
+
+  @override
+  Stream<NearbyDevice?> usbPeer() => usb.stream;
 
   @override
   NearbyDevice deviceFor(String ticket) =>
@@ -72,13 +89,16 @@ class FakeEngine implements TransferEngine {
   Future<String?> scanCode() async => null;
 
   @override
-  Stream<TransferProgress> send(NearbyDevice to, Selection what) {
-    sentTo = to;
+  Stream<Connection> connect(NearbyDevice to) {
+    connectedTo = to;
     return (sending = StreamController()).stream;
   }
 
   @override
-  Stream<ReceiveEvent> receive() {
+  void queue(Selection what) => queued.add(what);
+
+  @override
+  Stream<Connection> receive() {
     receiveSessions++;
     // Cancelling resolves in the test's zone, like the real engine's async* stream.
     return (receiving = StreamController(onCancel: () async {})).stream;
@@ -88,7 +108,7 @@ class FakeEngine implements TransferEngine {
   void answer({required bool accept}) => answered = accept;
 
   @override
-  void stopTransfer() => stops++;
+  void disconnect() => disconnects++;
 
   @override
   Future<String?> checkForUpdate() async {

@@ -46,7 +46,10 @@ class PageScaffold extends StatelessWidget {
                 ),
               ),
             Expanded(
-              child: Padding(padding: const EdgeInsets.symmetric(horizontal: Space.xl), child: body),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: Space.xl),
+                child: body,
+              ),
             ),
             if (bottom != null)
               Padding(padding: const EdgeInsets.fromLTRB(Space.xl, Space.s, Space.xl, Space.xl), child: bottom),
@@ -57,16 +60,18 @@ class PageScaffold extends StatelessWidget {
   }
 }
 
-/// For pages that reach other phones. When the page opens, asks Android for
-/// permissions and Bluetooth, then calls [restart]; keeps what's still missing
-/// in [needs], and calls [restart] again whenever that changes, including after
-/// the user flips a switch outside the app.
+/// For pages that reach other phones. When the page opens, asks Android for what
+/// [purpose] uses, then calls [restart]; keeps what's still missing in [needs],
+/// and calls [restart] again whenever that changes, including after the user
+/// flips a switch outside the app.
 mixin NeedsMixin<T extends StatefulWidget> on State<T> {
   List<Need> needs = const [];
   late final AppLifecycleListener _lifecycle;
   var _busy = false;
 
   TransferEngine get engine;
+
+  Purpose get purpose;
 
   /// Starts, or starts again, with whatever is available now.
   void restart();
@@ -75,7 +80,7 @@ mixin NeedsMixin<T extends StatefulWidget> on State<T> {
   void initState() {
     super.initState();
     _lifecycle = AppLifecycleListener(onResume: _recheck);
-    _update(engine.prepare(), always: true);
+    _update(engine.prepare(purpose), always: true);
   }
 
   @override
@@ -86,11 +91,16 @@ mixin NeedsMixin<T extends StatefulWidget> on State<T> {
 
   /// The notice for the most important missing thing, if any.
   Widget? get needNotice =>
-      needs.isEmpty ? null : NeedNotice(need: needs.first, onFix: () => _update(engine.fix(needs.first)));
+      needs.isEmpty ? null : NeedNotice(need: needs.first, onFix: () => _update(_fix(needs.first)));
 
-  /// Only while this page is on top, so a running transfer is never restarted.
+  Future<List<Need>> _fix(Need need) async {
+    await engine.fix(need);
+    return engine.needs(purpose);
+  }
+
+  /// Only while this page is on top, so an open connection is never restarted.
   void _recheck() {
-    if (!_busy && (ModalRoute.of(context)?.isCurrent ?? true)) _update(engine.needs());
+    if (!_busy && (ModalRoute.of(context)?.isCurrent ?? true)) _update(engine.needs(purpose));
   }
 
   Future<void> _update(Future<List<Need>> next, {bool always = false}) async {

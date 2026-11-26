@@ -6,43 +6,52 @@ abstract interface class TransferEngine {
   /// This device. Call once before anything else.
   Future<DeviceProfile> start();
 
-  /// Asks Android for the permissions Send and Receive use and to turn on
-  /// Bluetooth, then returns what's still missing.
-  Future<List<Need>> prepare();
+  /// Asks Android for what `purpose` uses, such as permissions and Bluetooth, then
+  /// returns what's still missing. Tapping, scanning and USB ask for nothing.
+  Future<List<Need>> prepare(Purpose purpose);
 
-  /// What's missing right now.
-  Future<List<Need>> needs();
+  /// What `purpose` is missing right now.
+  Future<List<Need>> needs(Purpose purpose);
 
-  /// Shows Android's prompt or settings page for `need`, then returns what's
-  /// still missing.
-  Future<List<Need>> fix(Need need);
+  /// Shows Android's prompt or settings page for `need`; then call [needs].
+  Future<void> fix(Need need);
 
-  /// Devices with Receive open, while listened to.
+  /// Devices with Receive open on the local network or over Bluetooth, while listened to.
   Stream<List<NearbyDevice>> nearby();
 
-  /// Tickets from phones tapped against this one, while the send page listens.
+  /// Tickets from phones tapped against this one, while listened to.
   Stream<String> taps();
 
-  /// The receiver a ticket describes, for showing before sending.
+  /// The phone at the other end of a USB cable, or null, while listened to.
+  Stream<NearbyDevice?> usbPeer();
+
+  /// The receiver a ticket describes.
   NearbyDevice deviceFor(String ticket);
+
+  /// Scans a receiver's QR code. Returns its ticket, or null if cancelled.
+  Future<String?> scanCode();
 
   Future<Selection?> pickFiles();
 
   Future<Selection?> pickFolder();
 
-  /// Scans a receiver's QR code. Returns its ticket, or null if cancelled.
-  Future<String?> scanCode();
+  /// Connects to `to` and keeps the connection, reconnecting the same way
+  /// whenever the link drops, until [disconnect]. Each event is the whole
+  /// connection as it is now.
+  Stream<Connection> connect(NearbyDevice to);
 
-  /// Sends and keeps going through dropped links until done or stopped.
-  Stream<TransferProgress> send(NearbyDevice to, Selection what);
+  /// Adds files to the open connection; they go after anything queued before.
+  void queue(Selection what);
 
-  /// Opens Receive until the stream is cancelled.
-  Stream<ReceiveEvent> receive();
+  /// Opens Receive until the stream is cancelled: shows a code, then serves one
+  /// phone's connection until either side disconnects.
+  Stream<Connection> receive();
 
+  /// Answers a phone asking to connect.
   void answer({required bool accept});
 
-  /// Stops the transfer in progress. Received files stay, and it can resume.
-  void stopTransfer();
+  /// Ends the open connection; the other phone is told.
+  void disconnect();
 
   /// The version of an available update, if any. Throws when GitHub can't be
   /// reached.
