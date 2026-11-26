@@ -9,6 +9,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `drive`, `engine`, `forward`, `new`, `picked_files`, `with_progress`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Engine`, `Receiving`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`
 
 /// Loads or creates this device's identity in `data_dir`. Safe to call again.
 void startEngine({required String dataDir, required String deviceName}) =>
@@ -55,6 +56,8 @@ Stream<TransferEvent> sendFiles({
 void stopSending() => RustLib.instance.api.crateApiStopSending();
 
 enum EventKind {
+  /// Receive is open; `receive_tickets` is ready.
+  ready,
   connected,
 
   /// The sender shows `code`; the receiver shows the same code in its offer.

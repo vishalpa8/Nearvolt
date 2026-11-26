@@ -1,6 +1,7 @@
 import 'dart:math';
 
 import 'package:material_ui/material_ui.dart';
+import 'package:qr/qr.dart';
 
 import '../engine/models.dart';
 import '../theme.dart';
@@ -137,6 +138,57 @@ class _RingPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_RingPainter old) => old.value != value || old.color != color || old.stroke != stroke;
+}
+
+/// A QR code with its quiet zone, drawn as crisp squares at any size.
+class QrView extends StatelessWidget {
+  const QrView({super.key, required this.data, this.size = 232});
+
+  final String data;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final image = QrImage(QrCode(payload: QrPayload.fromString(data)));
+    return Semantics(
+      label: 'QR code to connect',
+      child: CustomPaint(size: Size.square(size), painter: _QrPainter(image)),
+    );
+  }
+}
+
+class _QrPainter extends CustomPainter {
+  _QrPainter(this.image);
+
+  final QrImage image;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const quiet = 4;
+    final n = image.moduleCount;
+    final cell = size.width / (n + 2 * quiet);
+    final paint = Paint()..color = AppColors.textPrimary;
+    for (var row = 0; row < n; row++) {
+      var col = 0;
+      while (col < n) {
+        if (!image.isDark(row, col)) {
+          col++;
+          continue;
+        }
+        final start = col;
+        while (col < n && image.isDark(row, col)) {
+          col++;
+        }
+        canvas.drawRect(
+          Rect.fromLTWH((start + quiet) * cell, (row + quiet) * cell, (col - start) * cell, cell),
+          paint,
+        );
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_QrPainter old) => old.image != image;
 }
 
 /// Bordered white surface used for cards across the app.

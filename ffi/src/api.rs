@@ -53,6 +53,8 @@ pub struct SourceFile {
 
 #[derive(Clone, Copy)]
 pub enum EventKind {
+    /// Receive is open; `receive_tickets` is ready.
+    Ready,
     Connected,
     /// The sender shows `code`; the receiver shows the same code in its offer.
     Code,
@@ -172,11 +174,13 @@ pub fn receive(dest_dir: String, journal_dir: String, events: StreamSink<Transfe
         })
     };
     let running = receiver.clone();
+    let ready = events.clone();
     let task = engine.runtime.spawn(drive(
         move |stats, events| async move { running.run(approve, stats, Some(events)).await },
         events,
     ));
     *engine.receiving.lock().unwrap() = Some(Receiving { receiver, pending, _task: AbortOnDrop(task) });
+    let _ = ready.add(TransferEvent::new(EventKind::Ready, None));
     Ok(())
 }
 

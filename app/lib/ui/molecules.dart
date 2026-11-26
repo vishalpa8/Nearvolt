@@ -52,10 +52,9 @@ class DeviceTile extends StatelessWidget {
 }
 
 class FileRow extends StatelessWidget {
-  const FileRow({super.key, required this.item, this.onRemove});
+  const FileRow({super.key, required this.item});
 
   final PickedItem item;
-  final VoidCallback? onRemove;
 
   @override
   Widget build(BuildContext context) {
@@ -88,12 +87,6 @@ class FileRow extends StatelessWidget {
               ],
             ),
           ),
-          if (onRemove != null)
-            IconButton(
-              onPressed: onRemove,
-              tooltip: 'Remove ${item.name}',
-              icon: const Icon(Icons.close_rounded, color: AppColors.textSecondary),
-            ),
         ],
       ),
     );

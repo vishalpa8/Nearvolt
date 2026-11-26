@@ -1,24 +1,41 @@
 import 'models.dart';
 
-/// Everything the UI needs from the transfer engine. The Rust core implements it
-/// through flutter_rust_bridge; [DemoEngine] simulates it for UI work.
+/// Everything the UI needs. [NativeEngine] implements it with the Rust engine and
+/// the Android platform layer; tests use a fake.
 abstract interface class TransferEngine {
-  /// The name nearby devices see.
-  String get deviceName;
+  /// This device. Call once before anything else.
+  Future<DeviceProfile> start();
 
-  /// True when devices and transfers are simulated, so the UI can say so.
-  bool get isSimulated;
+  /// Devices with Receive open, while listened to.
+  Stream<List<NearbyDevice>> nearby();
 
-  Stream<List<NearbyDevice>> nearbyDevices();
+  /// Tickets from phones tapped against this one, while the send page listens.
+  Stream<String> taps();
 
-  Stream<IncomingOffer> incomingOffers();
+  /// The receiver a ticket describes, for showing before sending.
+  NearbyDevice deviceFor(String ticket);
 
-  /// Opens the platform's file picker. Returns an empty list if cancelled.
-  Future<List<PickedItem>> pickFiles();
+  Future<Selection?> pickFiles();
 
-  Stream<TransferProgress> send(NearbyDevice to, List<PickedItem> items);
+  Future<Selection?> pickFolder();
 
-  Stream<TransferProgress> receive(IncomingOffer offer);
+  /// Scans a receiver's QR code. Returns its ticket, or null if cancelled.
+  Future<String?> scanCode();
 
-  void decline(IncomingOffer offer);
+  /// Sends and keeps going through dropped links until done or stopped.
+  Stream<TransferProgress> send(NearbyDevice to, Selection what);
+
+  /// Opens Receive until the stream is cancelled.
+  Stream<ReceiveEvent> receive();
+
+  void answer({required bool accept});
+
+  /// Stops the transfer in progress. Received files stay, and it can resume.
+  void stopTransfer();
+
+  /// The version of an available update, if any.
+  Future<String?> checkForUpdate();
+
+  /// Downloads and installs the update; reports download progress from 0 to 1.
+  Stream<double> installUpdate();
 }

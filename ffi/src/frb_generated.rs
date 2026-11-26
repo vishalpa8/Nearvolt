@@ -400,13 +400,14 @@ impl SseDecode for crate::api::EventKind {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut inner = <i32>::sse_decode(deserializer);
         return match inner {
-            0 => crate::api::EventKind::Connected,
-            1 => crate::api::EventKind::Code,
-            2 => crate::api::EventKind::Offer,
-            3 => crate::api::EventKind::Progress,
-            4 => crate::api::EventKind::ConnectionLost,
-            5 => crate::api::EventKind::Completed,
-            6 => crate::api::EventKind::Failed,
+            0 => crate::api::EventKind::Ready,
+            1 => crate::api::EventKind::Connected,
+            2 => crate::api::EventKind::Code,
+            3 => crate::api::EventKind::Offer,
+            4 => crate::api::EventKind::Progress,
+            5 => crate::api::EventKind::ConnectionLost,
+            6 => crate::api::EventKind::Completed,
+            7 => crate::api::EventKind::Failed,
             _ => unreachable!("Invalid variant for EventKind: {}", inner),
         };
     }
@@ -620,13 +621,14 @@ fn pde_ffi_dispatcher_sync_impl(
 impl flutter_rust_bridge::IntoDart for crate::api::EventKind {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         match self {
-            Self::Connected => 0.into_dart(),
-            Self::Code => 1.into_dart(),
-            Self::Offer => 2.into_dart(),
-            Self::Progress => 3.into_dart(),
-            Self::ConnectionLost => 4.into_dart(),
-            Self::Completed => 5.into_dart(),
-            Self::Failed => 6.into_dart(),
+            Self::Ready => 0.into_dart(),
+            Self::Connected => 1.into_dart(),
+            Self::Code => 2.into_dart(),
+            Self::Offer => 3.into_dart(),
+            Self::Progress => 4.into_dart(),
+            Self::ConnectionLost => 5.into_dart(),
+            Self::Completed => 6.into_dart(),
+            Self::Failed => 7.into_dart(),
             _ => unreachable!(),
         }
     }
@@ -762,13 +764,14 @@ impl SseEncode for crate::api::EventKind {
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <i32>::sse_encode(
             match self {
-                crate::api::EventKind::Connected => 0,
-                crate::api::EventKind::Code => 1,
-                crate::api::EventKind::Offer => 2,
-                crate::api::EventKind::Progress => 3,
-                crate::api::EventKind::ConnectionLost => 4,
-                crate::api::EventKind::Completed => 5,
-                crate::api::EventKind::Failed => 6,
+                crate::api::EventKind::Ready => 0,
+                crate::api::EventKind::Connected => 1,
+                crate::api::EventKind::Code => 2,
+                crate::api::EventKind::Offer => 3,
+                crate::api::EventKind::Progress => 4,
+                crate::api::EventKind::ConnectionLost => 5,
+                crate::api::EventKind::Completed => 6,
+                crate::api::EventKind::Failed => 7,
                 _ => {
                     unimplemented!("");
                 }
