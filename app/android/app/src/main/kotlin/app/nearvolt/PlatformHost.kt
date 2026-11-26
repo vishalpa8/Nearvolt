@@ -18,6 +18,7 @@ import android.provider.Settings
 import android.widget.Toast
 import com.google.android.gms.common.moduleinstall.ModuleInstall
 import com.google.android.gms.common.moduleinstall.ModuleInstallRequest
+import com.google.mlkit.common.MlKitException
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
@@ -171,17 +172,38 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
      * Play services downloads it the first time, so the scan waits for that.
      */
     override suspend fun scanQr(): String? = try {
-        if (!modules.areModulesAvailable(scanner).await().areModulesAvailable()) {
-            Toast.makeText(context, "Getting the code scanner ready…", Toast.LENGTH_SHORT).show()
-            modules.installModules(ModuleInstallRequest.newBuilder().addApi(scanner).build()).await()
-            waitForScanner()
+        prepareScanner()
+        try {
+            scanner.startScan().await().rawValue
+        } catch (e: MlKitException) {
+            // Play services can report the scanner as ready while it can't start;
+            // an install request repairs it, so one more try usually works.
+            AppLog.write("scanner", "scan failed with code ${e.errorCode}: ${e.message}; repairing and trying again")
+            prepareScanner()
+            delay(1_000)
+            scanner.startScan().await().rawValue
         }
-        scanner.startScan().await().rawValue
     } catch (_: CancellationException) {
         null
     } catch (e: Exception) {
+        AppLog.write("scanner", "scan failed${(e as? MlKitException)?.let { " with code ${it.errorCode}" } ?: ""}")
         AppLog.error("scanner", e)
-        throw FlutterError("scanner", "Couldn't open the code scanner. Update Google Play services, then try again.")
+        throw FlutterError("scanner", "The code scanner didn't start. Try again, or tap phones or pick from Nearby phones instead.")
+    }
+
+    /**
+     * Always asks Play services to install the scanner: when it's already there
+     * this returns at once, and it fixes a scanner Play services wrongly reports
+     * as ready.
+     */
+    private suspend fun prepareScanner() {
+        val response = runCatching {
+            modules.installModules(ModuleInstallRequest.newBuilder().addApi(scanner).build()).await()
+        }.onFailure { AppLog.error("scanner", it) }.getOrNull() ?: return
+        if (!response.areModulesAlreadyInstalled()) {
+            Toast.makeText(context, "Getting the code scanner ready…", Toast.LENGTH_SHORT).show()
+            waitForScanner()
+        }
     }
 
     private suspend fun waitForScanner() {

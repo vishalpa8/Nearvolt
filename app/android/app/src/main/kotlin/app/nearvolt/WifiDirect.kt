@@ -31,15 +31,18 @@ class WifiDirect(private val context: Context) {
     suspend fun createGroup(): WifiGroup? {
         val manager = manager ?: return null
         val channel = channel ?: return null
-        removeGroup()
+        // Android refuses new requests while it's still removing a group, so wait for that.
+        if (groupInfo(manager, channel) != null) manager.perform("remove the old group") { removeGroup(channel, it) }
         val name = "DIRECT-NV-" + random(4)
         val passphrase = random(12)
         val created = routerFrequency()?.let { frequency ->
-            manager.perform { createGroup(channel, config(name, passphrase) { setGroupOperatingFrequency(frequency) }, it) }
+            manager.perform("create a group on $frequency MHz") {
+                createGroup(channel, config(name, passphrase) { setGroupOperatingFrequency(frequency) }, it)
+            }
         } ?: false
         if (!created) {
             val auto = config(name, passphrase) { setGroupOperatingBand(WifiP2pConfig.GROUP_OWNER_BAND_AUTO) }
-            if (!manager.perform { createGroup(channel, auto, it) }) return null
+            if (!manager.perform("create a group") { createGroup(channel, auto, it) }) return null
         }
         repeat(25) {
             val group = groupInfo(manager, channel)
@@ -56,7 +59,7 @@ class WifiDirect(private val context: Context) {
         val manager = manager ?: return false
         val channel = channel ?: return false
         val config = config(group.ssid, group.passphrase) { setGroupOperatingFrequency(group.frequency.toInt()) }
-        if (!manager.perform { connect(channel, config, it) }) return false
+        if (!manager.perform("join ${group.ssid}") { connect(channel, config, it) }) return false
         repeat(75) {
             val info = withTimeoutOrNull(ANSWER_MS) {
                 suspendCancellableCoroutine<WifiP2pInfo?> { c -> manager.requestConnectionInfo(channel) { c.resume(it) } }
@@ -91,22 +94,50 @@ class WifiDirect(private val context: Context) {
     private fun config(name: String, passphrase: String, extra: WifiP2pConfig.Builder.() -> Unit) =
         WifiP2pConfig.Builder().setNetworkName(name).setPassphrase(passphrase).apply(extra).build()
 
-    /** Android sometimes never answers, for example just after Wi-Fi turns on, so every request has a time limit. */
-    private suspend fun WifiP2pManager.perform(action: WifiP2pManager.(WifiP2pManager.ActionListener) -> Unit): Boolean =
-        withTimeoutOrNull(ANSWER_MS) {
-            suspendCancellableCoroutine { continuation ->
-                action(object : WifiP2pManager.ActionListener {
-                    override fun onSuccess() = continuation.resume(true)
-                    override fun onFailure(reason: Int) {
-                        AppLog.write("wifi-direct", "request failed, reason $reason")
-                        continuation.resume(false)
-                    }
-                })
+    /**
+     * Android sometimes never answers, for example just after Wi-Fi turns on, so
+     * every request has a time limit. "Busy" passes within a moment, so it's
+     * asked again a few times.
+     */
+    private suspend fun WifiP2pManager.perform(
+        what: String,
+        action: WifiP2pManager.(WifiP2pManager.ActionListener) -> Unit,
+    ): Boolean {
+        repeat(BUSY_TRIES) { attempt ->
+            val reason = withTimeoutOrNull(ANSWER_MS) {
+                suspendCancellableCoroutine { continuation ->
+                    action(object : WifiP2pManager.ActionListener {
+                        override fun onSuccess() = continuation.resume(SUCCESS)
+                        override fun onFailure(reason: Int) = continuation.resume(reason)
+                    })
+                }
             }
-        } ?: false.also { AppLog.write("wifi-direct", "no answer from Android") }
+            when {
+                reason == SUCCESS -> return true
+                reason == WifiP2pManager.BUSY && attempt < BUSY_TRIES - 1 -> delay(BUSY_WAIT_MS)
+                else -> {
+                    AppLog.write("wifi-direct", "couldn't $what: ${reason?.let(::describe) ?: "no answer from Android"}")
+                    return false
+                }
+            }
+        }
+        return false
+    }
+
+    private fun describe(reason: Int) = when (reason) {
+        WifiP2pManager.BUSY -> "Android is busy"
+        WifiP2pManager.P2P_UNSUPPORTED -> "this phone doesn't support Wi-Fi Direct"
+        WifiP2pManager.ERROR -> "internal error"
+        else -> "reason $reason"
+    }
 
     private companion object {
         const val ANSWER_MS = 5_000L
+        const val BUSY_TRIES = 4
+        const val BUSY_WAIT_MS = 500L
+
+        /** Not one of Android's failure reasons, which start at 0. */
+        const val SUCCESS = -1
     }
 
     private fun random(length: Int): String {
