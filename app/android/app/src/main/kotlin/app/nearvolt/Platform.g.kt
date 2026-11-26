@@ -726,6 +726,8 @@ private open class PlatformPigeonCodec : StandardMessageCodec() {
 /** Generated interface from Pigeon that represents a handler of messages from Flutter. */
 interface NearvoltPlatform {
   fun deviceInfo(): DeviceInfo
+  /** Adds a line to the log users can share, Download/Nearvolt/nearvolt-log.txt. */
+  fun log(tag: String, message: String)
   fun readiness(): Readiness
   /**
    * Shows Android's prompt or settings page for `requirement` and returns once
@@ -781,6 +783,25 @@ interface NearvoltPlatform {
           channel.setMessageHandler { _, reply ->
             val wrapped: List<Any?> = try {
               listOf(api.deviceInfo())
+            } catch (exception: Throwable) {
+              PlatformPigeonUtils.wrapError(exception)
+            }
+            reply.reply(wrapped)
+          }
+        } else {
+          channel.setMessageHandler(null)
+        }
+      }
+      run {
+        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.nearvolt.NearvoltPlatform.log$separatedMessageChannelSuffix", codec)
+        if (api != null) {
+          channel.setMessageHandler { message, reply ->
+            val args = message as List<Any?>
+            val tagArg = args[0] as String
+            val messageArg = args[1] as String
+            val wrapped: List<Any?> = try {
+              api.log(tagArg, messageArg)
+              listOf(null)
             } catch (exception: Throwable) {
               PlatformPigeonUtils.wrapError(exception)
             }

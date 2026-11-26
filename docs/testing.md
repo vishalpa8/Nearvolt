@@ -12,6 +12,18 @@ Golden screenshots are rendered on Windows, so CI on Linux skips them
 (`--exclude-tags golden`). After an intended UI change, refresh them with
 `flutter test --update-goldens` and look at the images in `app/test/goldens`.
 
+## When something goes wrong
+
+- **The log:** Files app › Downloads › Nearvolt › `nearvolt-log.txt`. It records
+  each start (app version, phone, Android version), every crash with its stack
+  trace, each update step with Android's reason when an install fails, and each
+  transfer's milestones. It holds no file contents and no codes. Share it, or
+  with USB debugging: `adb pull /sdcard/Download/Nearvolt/nearvolt-log.txt`.
+- **The app won't open, so it can't update itself:** in the phone's browser open
+  <https://github.com/vishalpa8/Nearvolt/releases/latest>, download the
+  `arm64-v8a` APK and install it over the old one. If Android says "App not
+  installed", uninstall Nearvolt first; received files stay in Downloads.
+
 ## On two phones
 
 The radios, the USB cable and the updater only run on real hardware. Use two

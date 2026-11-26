@@ -696,6 +696,24 @@ class NearvoltPlatform {
     return pigeonVar_replyValue! as DeviceInfo;
   }
 
+  /// Adds a line to the log users can share, Download/Nearvolt/nearvolt-log.txt.
+  Future<void> log(String tag, String message) async {
+    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.log$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channel = BasicMessageChannel<Object?>(
+      pigeonVar_channelName,
+      pigeonChannelCodec,
+      binaryMessenger: pigeonVar_binaryMessenger,
+    );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[tag, message]);
+    final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
+    _extractReplyValueOrThrow(
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: true,
+    )
+    ;
+  }
+
   Future<Readiness> readiness() async {
     final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.readiness$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(

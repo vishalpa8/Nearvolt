@@ -25,7 +25,21 @@ class TransferService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val title = intent?.getStringExtra(EXTRA_TITLE) ?: getString(R.string.app_name)
-        startForeground(NOTIFICATION_ID, notification(this, title, null, 0), ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
+        // Android crashes the app if a service started this way stops before
+        // calling startForeground, so it always does, even when already told to stop.
+        try {
+            startForeground(NOTIFICATION_ID, notification(this, title, null, 0), ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
+        } catch (e: Exception) {
+            // Refused by this Android version or device; the transfer runs without the service.
+            AppLog.error("service", e)
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        started = true
+        if (!active) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
         if (wakeLock == null) {
             wakeLock = getSystemService(PowerManager::class.java)
                 .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "nearvolt:transfer")
@@ -38,6 +52,7 @@ class TransferService : Service() {
     }
 
     override fun onDestroy() {
+        started = false
         wakeLock?.takeIf { it.isHeld }?.release()
         wifiLock?.takeIf { it.isHeld }?.release()
         super.onDestroy()
@@ -59,6 +74,10 @@ class TransferService : Service() {
         var active = false
             private set
 
+        /** The service has reached the foreground; until then it stops itself instead. */
+        @Volatile
+        private var started = false
+
         fun start(context: Context, title: String) {
             this.title = title
             active = true
@@ -66,17 +85,23 @@ class TransferService : Service() {
             manager.createNotificationChannel(
                 NotificationChannel(CHANNEL, context.getString(R.string.transfer_channel), NotificationManager.IMPORTANCE_LOW),
             )
-            context.startForegroundService(Intent(context, TransferService::class.java).putExtra(EXTRA_TITLE, title))
+            try {
+                context.startForegroundService(Intent(context, TransferService::class.java).putExtra(EXTRA_TITLE, title))
+            } catch (e: IllegalStateException) {
+                // Not allowed from the background; the transfer runs without the service.
+                AppLog.error("service", e)
+            }
         }
 
         fun update(context: Context, text: String, percent: Int) {
+            if (!active) return
             context.getSystemService(NotificationManager::class.java)
                 .notify(NOTIFICATION_ID, notification(context, title, text, percent))
         }
 
         fun stop(context: Context) {
             active = false
-            context.stopService(Intent(context, TransferService::class.java))
+            if (started) context.stopService(Intent(context, TransferService::class.java))
         }
 
         private fun notification(context: Context, title: String, text: String?, percent: Int): Notification {

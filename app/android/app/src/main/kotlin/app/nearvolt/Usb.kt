@@ -12,6 +12,7 @@ import android.hardware.usb.UsbManager
 import android.os.ParcelFileDescriptor
 import android.system.Os
 import android.system.OsConstants
+import androidx.core.content.ContextCompat
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
@@ -54,9 +55,11 @@ class Usb(private val context: Context, private val emit: (PlatformEvent) -> Uni
             addAction(UsbManager.ACTION_USB_ACCESSORY_DETACHED)
             addAction(PERMISSION)
         }
-        context.registerReceiver(events, filter, Context.RECEIVER_NOT_EXPORTED)
-        manager.accessoryList?.forEach(::onAccessory)
-        manager.deviceList.values.forEach { onDevice(it, ask = true) }
+        ContextCompat.registerReceiver(context, events, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+        guarded {
+            manager.accessoryList?.forEach(::onAccessory)
+            manager.deviceList.values.forEach { onDevice(it, ask = true) }
+        }
     }
 
     fun close() {
@@ -66,7 +69,7 @@ class Usb(private val context: Context, private val emit: (PlatformEvent) -> Uni
     }
 
     /** Attach, detach and permission broadcasts, and the activity opened for a cable. */
-    fun handle(intent: Intent) {
+    fun handle(intent: Intent) = guarded {
         when (intent.action) {
             UsbManager.ACTION_USB_ACCESSORY_ATTACHED -> intent.parcelable<UsbAccessory>(UsbManager.EXTRA_ACCESSORY)?.let(::onAccessory)
             UsbManager.ACTION_USB_DEVICE_ATTACHED -> intent.parcelable<UsbDevice>(UsbManager.EXTRA_DEVICE)?.let { onDevice(it, ask = false) }
@@ -115,7 +118,16 @@ class Usb(private val context: Context, private val emit: (PlatformEvent) -> Uni
             if (ask || !accessory) manager.requestPermission(device, permissionIntent())
             return
         }
-        if (accessory) openAccessory(device) else thread(name = "usb-switch") { switchToAccessory(device) }
+        if (accessory) openAccessory(device) else thread(name = "usb-switch") { guarded { switchToAccessory(device) } }
+    }
+
+    /** A cable that misbehaves, or a device Android won't open, is logged and left alone. */
+    private inline fun guarded(block: () -> Unit) {
+        try {
+            block()
+        } catch (e: Exception) {
+            AppLog.error("usb", e)
+        }
     }
 
     private fun switchToAccessory(device: UsbDevice) {
@@ -124,6 +136,7 @@ class Usb(private val context: Context, private val emit: (PlatformEvent) -> Uni
             val version = ByteArray(2)
             val read = connection.controlTransfer(VENDOR_IN, AOA_GET_PROTOCOL, 0, 0, version, version.size, TIMEOUT_MS)
             val protocol = (version[0].toInt() and 0xFF) or ((version[1].toInt() and 0xFF) shl 8)
+            AppLog.write("usb", "${device.productName}: accessory protocol ${if (read == 2) protocol else "not supported"}")
             if (read != 2 || protocol < 1) return
             IDENTITY.forEachIndexed { index, text ->
                 val bytes = "$text\u0000".toByteArray()
@@ -164,6 +177,7 @@ class Usb(private val context: Context, private val emit: (PlatformEvent) -> Uni
     }
 
     private fun start(pump: Pump, host: Boolean, name: String?) {
+        AppLog.write("usb", "connected as ${if (host) "host" else "accessory"} to ${name ?: "a phone"}")
         link = pump
         emit(PlatformEvent(PlatformEventKind.USB_CONNECTED, name = name, fd = pump.engineFd.toLong(), host = host))
         pump.begin()
@@ -221,7 +235,8 @@ class Usb(private val context: Context, private val emit: (PlatformEvent) -> Uni
         private fun run(name: String, body: () -> Unit) = thread(name = name) {
             try {
                 body()
-            } catch (_: IOException) {
+            } catch (e: Exception) {
+                AppLog.write("usb", "$name stopped: $e")
             } finally {
                 close()
             }

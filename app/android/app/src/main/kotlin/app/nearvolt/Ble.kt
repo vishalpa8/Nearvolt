@@ -47,7 +47,14 @@ class Ble(private val context: Context, private val emit: (PlatformEvent) -> Uni
     }
 
     private val scanning = object : ScanCallback() {
-        override fun onScanResult(callbackType: Int, result: ScanResult) {
+        override fun onScanResult(callbackType: Int, result: ScanResult) = try {
+            found(result)
+        } catch (e: SecurityException) {
+            // The Bluetooth permission was taken away while scanning.
+            AppLog.error("bluetooth", e)
+        }
+
+        private fun found(result: ScanResult) {
             val device = result.device
             val isNew = synchronized(found) { found.put(device.address, device) == null }
             if (isNew) {

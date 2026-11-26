@@ -36,6 +36,12 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
   }
 
+  testWidgets('a failed start explains itself instead of a blank screen', (tester) async {
+    await tester.pumpWidget(const StartupFailure(reason: 'the engine library is missing'));
+    expect(find.text("Nearvolt couldn't start"), findsOneWidget);
+    expect(find.text('the engine library is missing'), findsOneWidget);
+  });
+
   testWidgets('nothing looks for phones until Send or Receive is chosen', (tester) async {
     await open(tester);
     expect(find.text('Move files to anyone nearby'), findsOneWidget);

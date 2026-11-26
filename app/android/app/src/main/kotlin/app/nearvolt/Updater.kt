@@ -8,6 +8,7 @@ import android.content.pm.PackageInstaller
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import android.widget.Toast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONException
@@ -31,11 +32,14 @@ class Updater(private val activity: MainActivity, private val emit: (PlatformEve
     suspend fun check(): UpdateInfo? = withContext(Dispatchers.IO) {
         val manifest = try {
             JSONObject(open(MANIFEST_URL).inputStream.bufferedReader().use { it.readText() })
-        } catch (_: IOException) {
+        } catch (e: IOException) {
+            AppLog.error("update", e)
             throw FlutterError("offline", "Couldn't reach GitHub. Check your internet connection.")
-        } catch (_: JSONException) {
+        } catch (e: JSONException) {
+            AppLog.error("update", e)
             throw FlutterError("damaged", "The update information is damaged. Try again later.")
         }
+        AppLog.write("update", "latest ${manifest.optString("version")} (${manifest.optLong("code")}), installed ${installedCode()}")
         if (manifest.getLong("code") <= installedCode()) return@withContext null
         val apks = manifest.getJSONObject("apks")
         val abi = Build.SUPPORTED_ABIS.firstOrNull(apks::has) ?: return@withContext null
@@ -50,12 +54,15 @@ class Updater(private val activity: MainActivity, private val emit: (PlatformEve
                 Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}")),
             )
             if (!context.packageManager.canRequestPackageInstalls()) {
+                AppLog.write("update", "install permission refused")
                 throw FlutterError("permission", "Nearvolt needs permission to install its updates.")
             }
         }
+        AppLog.write("update", "downloading ${update.url}")
         val apk = try {
             withContext(Dispatchers.IO) { download(update) }
-        } catch (_: IOException) {
+        } catch (e: IOException) {
+            AppLog.error("update", e)
             throw FlutterError("offline", "The download stopped. Check your internet connection and try again.")
         }
         requireIdle()
@@ -93,9 +100,11 @@ class Updater(private val activity: MainActivity, private val emit: (PlatformEve
         }
         val actual = digest.digest().joinToString("") { "%02x".format(it) }
         if (!actual.equals(update.sha256, ignoreCase = true)) {
+            AppLog.write("update", "checksum mismatch: got $actual, expected ${update.sha256}")
             file.delete()
             throw FlutterError("checksum", "The download was damaged. Try again.")
         }
+        AppLog.write("update", "downloaded ${file.length()} bytes, checksum matches")
         return file
     }
 
@@ -120,6 +129,7 @@ class Updater(private val activity: MainActivity, private val emit: (PlatformEve
                 PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
             session.commit(result.intentSender)
+            AppLog.write("update", "install session $id committed")
         }
     }
 
@@ -138,12 +148,23 @@ class Updater(private val activity: MainActivity, private val emit: (PlatformEve
     }
 }
 
-/** Shows Android's install confirmation when the session needs the user. */
+/**
+ * Android's answer to an install: shows its confirmation when the session needs
+ * the user, and reports why when an install fails.
+ */
 class UpdateReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.getIntExtra(PackageInstaller.EXTRA_STATUS, -1) == PackageInstaller.STATUS_PENDING_USER_ACTION) {
-            intent.parcelable<Intent>(Intent.EXTRA_INTENT)
-                ?.let { context.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+        val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
+        val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
+        AppLog.write("update", "install status $status: $message")
+        when (status) {
+            PackageInstaller.STATUS_PENDING_USER_ACTION -> intent.parcelable<Intent>(Intent.EXTRA_INTENT)?.let {
+                runCatching { context.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                    .onFailure { e -> AppLog.error("update", e) }
+            }
+            PackageInstaller.STATUS_SUCCESS -> {}
+            else -> Toast.makeText(context, "The update didn't install: ${message ?: "status $status"}", Toast.LENGTH_LONG)
+                .show()
         }
     }
 }

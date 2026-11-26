@@ -74,6 +74,8 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
         versionName = context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "",
     )
 
+    override fun log(tag: String, message: String) = AppLog.write(tag, message)
+
     override fun readiness(): Readiness {
         val missing = permissionsFor("nearby").filterNot(::granted)
         return Readiness(
@@ -109,7 +111,7 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
             }
             Requirement.LOCATION -> activity.settings.launch(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
         }
-        return readiness()
+        return readiness().also { AppLog.write("setup", "after $requirement: $it") }
     }
 
     /** A radio takes a moment to come up after the user turns it on. */
@@ -186,7 +188,9 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
 
     override suspend fun startReceiving(privateTicket: String, publicTicket: String, port: Long): WifiGroup? {
         updateTickets(privateTicket, publicTicket, port)
-        return if (nearbyGranted) wifiDirect.createGroup() else null
+        val group = if (nearbyGranted) wifiDirect.createGroup() else null
+        AppLog.write("receive", "listening on port $port, Wi-Fi Direct group ${group?.let { "on ${it.frequency} MHz" } ?: "not created"}")
+        return group
     }
 
     override fun updateTickets(privateTicket: String, publicTicket: String, port: Long) {
@@ -227,7 +231,8 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
 
     override suspend fun readTicket(receiverId: String): String = ble.readTicket(receiverId)
 
-    override suspend fun joinWifi(group: WifiGroup): Boolean = nearbyGranted && wifiDirect.join(group)
+    override suspend fun joinWifi(group: WifiGroup): Boolean =
+        (nearbyGranted && wifiDirect.join(group)).also { AppLog.write("send", "joined the receiver's Wi-Fi Direct group: $it") }
 
     override fun leaveWifi() = wifiDirect.removeGroup()
 

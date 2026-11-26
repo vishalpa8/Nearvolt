@@ -133,6 +133,9 @@ class PlatformEvent {
 abstract class NearvoltPlatform {
   DeviceInfo deviceInfo();
 
+  /// Adds a line to the log users can share, Download/Nearvolt/nearvolt-log.txt.
+  void log(String tag, String message);
+
   Readiness readiness();
 
   /// Shows Android's prompt or settings page for `requirement` and returns once

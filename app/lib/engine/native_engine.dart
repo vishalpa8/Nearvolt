@@ -79,7 +79,12 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
       case PlatformEventKind.updateProgress:
         _updateProgress.add(event.progress ?? 0);
       case PlatformEventKind.usbConnected:
-        rust.attachUsb(fd: event.fd!, host: event.host ?? false);
+        try {
+          rust.attachUsb(fd: event.fd!, host: event.host ?? false);
+        } on Object catch (e) {
+          _platform.log('usb', "the engine couldn't use the cable: $e");
+          return;
+        }
         _found[_usb] = NearbyDevice(
           id: _usb,
           name: event.name ?? 'Phone on USB',
@@ -157,6 +162,7 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
     final wifi = ticket == null ? null : rust.readTicket(text: ticket).wifi;
     await _platform.startTransferService('Sending to ${to.name}');
     final files = [for (final f in what.files) rust.SourceFile(path: f.path, size: f.size, modifiedMs: f.modifiedMs)];
+    _platform.log('send', '${files.length} files, ${what.bytes} bytes to ${to.name} (${to.link})');
     final events = ticket == null
         ? rust.sendUsb(sourceToken: what.token, files: files)
         : rust.sendFiles(ticket: ticket, sourceToken: what.token, files: files);
@@ -186,6 +192,7 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
     final tracker = _Tracker();
     try {
       await for (final event in events) {
+        _record('receive', event);
         switch (event.kind) {
           case rust.EventKind.ready:
             var tickets = rust.receiveTickets();
@@ -255,9 +262,24 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
     return controller.stream;
   }
 
+  /// The milestones of a transfer, for the log; progress ticks are left out.
+  void _record(String tag, rust.TransferEvent e) {
+    final line = switch (e.kind) {
+      rust.EventKind.connected => 'connected to ${e.text}',
+      rust.EventKind.code => 'showing a confirmation code',
+      rust.EventKind.offer => 'offer of ${e.totalFiles} files, ${e.totalBytes} bytes from ${e.text}',
+      rust.EventKind.connectionLost => 'connection lost: ${e.text}',
+      rust.EventKind.completed => 'completed: ${e.doneFiles} files, ${e.doneBytes} bytes',
+      rust.EventKind.failed => 'failed after ${e.doneBytes} bytes: ${e.text}',
+      rust.EventKind.ready || rust.EventKind.progress => null,
+    };
+    if (line != null) _platform.log(tag, line);
+  }
+
   Stream<TransferProgress> _track(Stream<rust.TransferEvent> events, {void Function()? onConnected}) async* {
     final tracker = _Tracker();
     await for (final event in events) {
+      _record('send', event);
       if (event.kind == rust.EventKind.connected) onConnected?.call();
       final progress = tracker.apply(event);
       if (progress != null) {
