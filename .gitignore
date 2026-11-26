@@ -7,6 +7,11 @@
 # Test data created by the benchmark tool
 /.bench/
 
+# Signing keys never belong in the repository
+*.jks
+*.keystore
+key.properties
+
 # Editors and OS
 .vscode/
 .idea/

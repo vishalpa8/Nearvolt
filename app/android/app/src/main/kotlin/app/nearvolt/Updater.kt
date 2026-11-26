@@ -24,15 +24,15 @@ import java.security.MessageDigest
 class Updater(private val context: Context, private val emit: (PlatformEvent) -> Unit) {
     suspend fun check(): UpdateInfo? = withContext(Dispatchers.IO) {
         val manifest = JSONObject(open(MANIFEST_URL).inputStream.bufferedReader().use { it.readText() })
-        val version = manifest.getString("version")
-        if (!isNewer(version, currentVersion())) return@withContext null
+        if (manifest.getLong("code") <= installedCode()) return@withContext null
         val apks = manifest.getJSONObject("apks")
         val abi = Build.SUPPORTED_ABIS.firstOrNull(apks::has) ?: return@withContext null
         val apk = apks.getJSONObject(abi)
-        UpdateInfo(version, manifest.optString("notes"), apk.getString("url"), apk.getString("sha256"))
+        UpdateInfo(manifest.getString("version"), manifest.optString("notes"), apk.getString("url"), apk.getString("sha256"))
     }
 
     suspend fun install(update: UpdateInfo) {
+        requireIdle()
         if (!context.packageManager.canRequestPackageInstalls()) {
             context.startActivity(
                 Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}"))
@@ -41,7 +41,13 @@ class Updater(private val context: Context, private val emit: (PlatformEvent) ->
             throw FlutterError("permission", "Allow Nearvolt to install updates, then tap Update again.")
         }
         val apk = withContext(Dispatchers.IO) { download(update) }
+        requireIdle()
         withContext(Dispatchers.IO) { commit(apk) }
+    }
+
+    /** Installing restarts the app, so it never happens during a transfer. */
+    private fun requireIdle() {
+        if (TransferService.active) throw FlutterError("busy", "Finish the transfer first, then tap Update.")
     }
 
     private fun download(update: UpdateInfo): File {
@@ -100,8 +106,8 @@ class Updater(private val context: Context, private val emit: (PlatformEvent) ->
         }
     }
 
-    private fun currentVersion(): String =
-        context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "0"
+    private fun installedCode(): Long =
+        context.packageManager.getPackageInfo(context.packageName, 0).longVersionCode
 
     private fun open(url: String): HttpURLConnection =
         (URL(url).openConnection() as HttpURLConnection).apply {
@@ -112,18 +118,6 @@ class Updater(private val context: Context, private val emit: (PlatformEvent) ->
 
     companion object {
         const val MANIFEST_URL = "https://github.com/vishalpa8/Nearvolt/releases/latest/download/update.json"
-
-        /** Compares dotted version numbers, ignoring anything after `+`. */
-        fun isNewer(candidate: String, current: String): Boolean {
-            fun parts(v: String) = v.substringBefore('+').split('.').map { it.toIntOrNull() ?: 0 }
-            val (a, b) = parts(candidate) to parts(current)
-            for (i in 0 until maxOf(a.size, b.size)) {
-                val x = a.getOrElse(i) { 0 }
-                val y = b.getOrElse(i) { 0 }
-                if (x != y) return x > y
-            }
-            return false
-        }
     }
 }
 

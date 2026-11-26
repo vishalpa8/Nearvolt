@@ -1,7 +1,8 @@
 name: nearvolt
 description: "Move files directly between nearby devices at full speed."
 publish_to: 'none'
-version: 0.1.0+1
+# Releases set both from the tag: v1.2.3 builds 1.2.3+10203 (major*10000 + minor*100 + patch).
+version: 0.1.0+100
 
 environment:
   sdk: ^3.14.0

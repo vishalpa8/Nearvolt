@@ -54,8 +54,14 @@ class TransferService : Service() {
         @Volatile
         private var title = ""
 
+        /** True while a transfer runs; updates wait until it ends. */
+        @Volatile
+        var active = false
+            private set
+
         fun start(context: Context, title: String) {
             this.title = title
+            active = true
             val manager = context.getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(
                 NotificationChannel(CHANNEL, context.getString(R.string.transfer_channel), NotificationManager.IMPORTANCE_LOW),
@@ -69,6 +75,7 @@ class TransferService : Service() {
         }
 
         fun stop(context: Context) {
+            active = false
             context.stopService(Intent(context, TransferService::class.java))
         }
 

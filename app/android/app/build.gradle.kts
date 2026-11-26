@@ -1,8 +1,19 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
+
+// Release signing: CI passes the key through NEARVOLT_* variables; locally it comes
+// from android/key.properties. Both stay out of Git.
+val keyProperties = Properties().apply {
+    rootProject.file("key.properties").takeIf { it.exists() }?.inputStream()?.use(::load)
+}
+fun signingValue(property: String, variable: String): String? =
+    System.getenv(variable) ?: keyProperties.getProperty(property)
+val releaseKeystore = signingValue("storeFile", "NEARVOLT_KEYSTORE")
 
 android {
     namespace = "app.nearvolt"
@@ -24,9 +35,22 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        if (releaseKeystore != null) {
+            create("release") {
+                storeFile = file(releaseKeystore)
+                storePassword = signingValue("storePassword", "NEARVOLT_KEYSTORE_PASSWORD")
+                keyAlias = signingValue("keyAlias", "NEARVOLT_KEY_ALIAS")
+                keyPassword = signingValue("keyPassword", "NEARVOLT_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("debug")
+            // Without the release key, local release builds use the debug key; such
+            // APKs can't update a released install, which Android enforces.
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
 }
