@@ -9,11 +9,15 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.LocationManager
 import android.net.Uri
+import android.net.wifi.ScanResult
 import android.net.wifi.WifiManager
 import android.nfc.NfcAdapter
+import android.os.BatteryManager
 import android.os.Build
 import android.os.Environment
 import android.os.Parcelable
+import android.os.PowerManager
+import android.os.SystemClock
 import android.provider.Settings
 import android.widget.Toast
 import com.google.android.gms.common.moduleinstall.ModuleInstall
@@ -32,6 +36,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.Locale
 
 /** Implements the Pigeon interface by delegating to one small class per radio. */
 class PlatformHost(private val activity: MainActivity, private val events: NearvoltEvents) : NearvoltPlatform {
@@ -79,6 +84,45 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
     )
 
     override fun log(tag: String, message: String) = AppLog.write(tag, message)
+
+    override suspend fun linkReport(): String = listOfNotNull(
+        routerReport(),
+        if (nearbyGranted) runCatching { wifiDirect.report() }.getOrNull() else null,
+        phoneReport(),
+    ).joinToString(" · ")
+
+    /** The phone's own Wi-Fi link to a router: what limits "same Wi-Fi" transfers. */
+    @Suppress("DEPRECATION") // The current WifiInfo otherwise needs a network callback registered in advance.
+    private fun routerReport(): String {
+        if (!wifi.isWifiEnabled) return "Wi-Fi off"
+        val info = wifi.connectionInfo
+        if (info == null || info.frequency <= 0) return "Wi-Fi on, no network"
+        val standard = when (info.wifiStandard) {
+            ScanResult.WIFI_STANDARD_11N -> "Wi-Fi 4"
+            ScanResult.WIFI_STANDARD_11AC -> "Wi-Fi 5"
+            ScanResult.WIFI_STANDARD_11AX -> "Wi-Fi 6"
+            ScanResult.WIFI_STANDARD_11BE -> "Wi-Fi 7"
+            else -> "Wi-Fi"
+        }
+        return "network: $standard, ${WifiDirect.band(info.frequency)} (${info.frequency} MHz), " +
+            "signal ${info.rssi} dBm, link ${info.txLinkSpeedMbps} Mbps out / ${info.rxLinkSpeedMbps} Mbps in"
+    }
+
+    /** What makes a phone slow itself down: battery saver and heat. */
+    private fun phoneReport(): String {
+        val power = context.getSystemService(PowerManager::class.java)
+        val battery = context.getSystemService(BatteryManager::class.java)
+        val level = battery?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        val heat = when (power?.currentThermalStatus) {
+            PowerManager.THERMAL_STATUS_NONE -> "cool"
+            PowerManager.THERMAL_STATUS_LIGHT -> "warm"
+            PowerManager.THERMAL_STATUS_MODERATE -> "hot, may slow down"
+            null -> "temperature unknown"
+            else -> "very hot, slowing down"
+        }
+        return "battery $level%${if (battery?.isCharging == true) " charging" else ""}, " +
+            "battery saver ${if (power?.isPowerSaveMode == true) "on" else "off"}, $heat"
+    }
 
     override fun readiness(): Readiness {
         val missing = permissionsFor("nearby").filterNot(::granted)
@@ -259,8 +303,16 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
 
     override suspend fun readTicket(receiverId: String): String = ble.readTicket(receiverId)
 
-    override suspend fun joinWifi(group: WifiGroup): Boolean =
-        (nearbyGranted && wifiDirect.join(group)).also { AppLog.write("send", "joined the receiver's Wi-Fi Direct group: $it") }
+    override suspend fun joinWifi(group: WifiGroup): Boolean {
+        val started = SystemClock.elapsedRealtime()
+        val joined = nearbyGranted && wifiDirect.join(group)
+        val seconds = "%.1f".format(Locale.US, (SystemClock.elapsedRealtime() - started) / 1000.0)
+        AppLog.write(
+            "send",
+            if (joined) "joined the receiver's Wi-Fi Direct group in $seconds s" else "couldn't join the receiver's Wi-Fi Direct group",
+        )
+        return joined
+    }
 
     override fun leaveWifi() = wifiDirect.removeGroup()
 

@@ -721,6 +721,27 @@ class NearvoltPlatform {
     ;
   }
 
+  /// One line on what can slow a transfer down, for the log: the Wi-Fi link
+  /// (generation, band, signal, speed), any Wi-Fi Direct group, battery saver
+  /// and how hot the phone is.
+  Future<String> linkReport() async {
+    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.linkReport$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channel = BasicMessageChannel<Object?>(
+      pigeonVar_channelName,
+      pigeonChannelCodec,
+      binaryMessenger: pigeonVar_binaryMessenger,
+    );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(null);
+    final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
+    final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: false,
+    )
+    ;
+    return pigeonVar_replyValue! as String;
+  }
+
   Future<Readiness> readiness() async {
     final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.readiness$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(

@@ -734,6 +734,12 @@ interface NearvoltPlatform {
   fun deviceInfo(): DeviceInfo
   /** Adds a line to the log users can share, Download/Nearvolt/nearvolt.log. */
   fun log(tag: String, message: String)
+  /**
+   * One line on what can slow a transfer down, for the log: the Wi-Fi link
+   * (generation, band, signal, speed), any Wi-Fi Direct group, battery saver
+   * and how hot the phone is.
+   */
+  suspend fun linkReport(): String
   fun readiness(): Readiness
   /**
    * Shows Android's prompt or settings page for `requirement` and returns once
@@ -815,6 +821,23 @@ interface NearvoltPlatform {
               PlatformPigeonUtils.wrapError(exception)
             }
             reply.reply(wrapped)
+          }
+        } else {
+          channel.setMessageHandler(null)
+        }
+      }
+      run {
+        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.nearvolt.NearvoltPlatform.linkReport$separatedMessageChannelSuffix", codec)
+        if (api != null) {
+          channel.setMessageHandler { _, reply ->
+            CoroutineScope(Dispatchers.Main).launch {
+              val wrapped: List<Any?> = try {
+                listOf(api.linkReport())
+              } catch (exception: Throwable) {
+                PlatformPigeonUtils.wrapError(exception)
+              }
+              reply.reply(wrapped)
+            }
           }
         } else {
           channel.setMessageHandler(null)

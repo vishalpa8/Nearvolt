@@ -62,7 +62,8 @@ pub enum EventKind {
     Request,
     /// Sender: show `code` while the receiver decides.
     Code,
-    /// Connected and accepted, also after every reconnect. `text` is the other phone.
+    /// Connected and accepted, also after every reconnect. `text` is the other
+    /// phone; on the sender, `route` is the address or cable it reached.
     Connected,
     /// A batch started sending or arriving: `batch` and its totals.
     Started,
@@ -88,6 +89,7 @@ pub struct TransferEvent {
     pub kind: EventKind,
     pub text: Option<String>,
     pub code: Option<String>,
+    pub route: Option<String>,
     pub batch: i64,
     pub done_bytes: i64,
     pub total_bytes: i64,
@@ -97,7 +99,17 @@ pub struct TransferEvent {
 
 impl TransferEvent {
     fn new(kind: EventKind, text: Option<String>) -> Self {
-        Self { kind, text, code: None, batch: -1, done_bytes: 0, total_bytes: 0, done_files: 0, total_files: 0 }
+        Self {
+            kind,
+            text,
+            code: None,
+            route: None,
+            batch: -1,
+            done_bytes: 0,
+            total_bytes: 0,
+            done_files: 0,
+            total_files: 0,
+        }
     }
 
     fn batch(kind: EventKind, batch: u32, files: u64, bytes: u64) -> Self {
@@ -401,7 +413,10 @@ where
 
 fn forward(sink: &StreamSink<TransferEvent>, event: Event) {
     let event = match event {
-        Event::Connected { peer } => TransferEvent::new(EventKind::Connected, Some(peer)),
+        Event::Connected { peer, route } => TransferEvent {
+            route: Some(route).filter(|r| !r.is_empty()),
+            ..TransferEvent::new(EventKind::Connected, Some(peer))
+        },
         Event::Code { code } => TransferEvent { code: Some(code), ..TransferEvent::new(EventKind::Code, None) },
         Event::Started { batch, files, bytes } | Event::Incoming { batch, files, bytes } => {
             TransferEvent::batch(EventKind::Started, batch, files, bytes)

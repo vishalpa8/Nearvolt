@@ -574,6 +574,7 @@ impl SseDecode for crate::api::TransferEvent {
         let mut var_kind = <crate::api::EventKind>::sse_decode(deserializer);
         let mut var_text = <Option<String>>::sse_decode(deserializer);
         let mut var_code = <Option<String>>::sse_decode(deserializer);
+        let mut var_route = <Option<String>>::sse_decode(deserializer);
         let mut var_batch = <i64>::sse_decode(deserializer);
         let mut var_doneBytes = <i64>::sse_decode(deserializer);
         let mut var_totalBytes = <i64>::sse_decode(deserializer);
@@ -583,6 +584,7 @@ impl SseDecode for crate::api::TransferEvent {
             kind: var_kind,
             text: var_text,
             code: var_code,
+            route: var_route,
             batch: var_batch,
             done_bytes: var_doneBytes,
             total_bytes: var_totalBytes,
@@ -746,6 +748,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::TransferEvent {
             self.kind.into_into_dart().into_dart(),
             self.text.into_into_dart().into_dart(),
             self.code.into_into_dart().into_dart(),
+            self.route.into_into_dart().into_dart(),
             self.batch.into_into_dart().into_dart(),
             self.done_bytes.into_into_dart().into_dart(),
             self.total_bytes.into_into_dart().into_dart(),
@@ -931,6 +934,7 @@ impl SseEncode for crate::api::TransferEvent {
         <crate::api::EventKind>::sse_encode(self.kind, serializer);
         <Option<String>>::sse_encode(self.text, serializer);
         <Option<String>>::sse_encode(self.code, serializer);
+        <Option<String>>::sse_encode(self.route, serializer);
         <i64>::sse_encode(self.batch, serializer);
         <i64>::sse_encode(self.done_bytes, serializer);
         <i64>::sse_encode(self.total_bytes, serializer);

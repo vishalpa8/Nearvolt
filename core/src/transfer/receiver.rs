@@ -352,7 +352,7 @@ async fn serve(
     }
     *shared.trusted.lock().unwrap() = Some(sender);
     write_msg(&mut send, &Control::Ready).await?;
-    emit(&shared.events, Event::Connected { peer: sender_name });
+    emit(&shared.events, Event::Connected { peer: sender_name, route: String::new() });
 
     let (resend_tx, mut resend_rx) = mpsc::unbounded_channel();
     let mut readers = JoinSet::new();

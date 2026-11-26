@@ -603,17 +603,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TransferEvent dco_decode_transfer_event(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 8)
-      throw Exception('unexpected arr length: expect 8 but see ${arr.length}');
+    if (arr.length != 9)
+      throw Exception('unexpected arr length: expect 9 but see ${arr.length}');
     return TransferEvent(
       kind: dco_decode_event_kind(arr[0]),
       text: dco_decode_opt_String(arr[1]),
       code: dco_decode_opt_String(arr[2]),
-      batch: dco_decode_i_64(arr[3]),
-      doneBytes: dco_decode_i_64(arr[4]),
-      totalBytes: dco_decode_i_64(arr[5]),
-      doneFiles: dco_decode_i_64(arr[6]),
-      totalFiles: dco_decode_i_64(arr[7]),
+      route: dco_decode_opt_String(arr[3]),
+      batch: dco_decode_i_64(arr[4]),
+      doneBytes: dco_decode_i_64(arr[5]),
+      totalBytes: dco_decode_i_64(arr[6]),
+      doneFiles: dco_decode_i_64(arr[7]),
+      totalFiles: dco_decode_i_64(arr[8]),
     );
   }
 
@@ -802,6 +803,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_kind = sse_decode_event_kind(deserializer);
     var var_text = sse_decode_opt_String(deserializer);
     var var_code = sse_decode_opt_String(deserializer);
+    var var_route = sse_decode_opt_String(deserializer);
     var var_batch = sse_decode_i_64(deserializer);
     var var_doneBytes = sse_decode_i_64(deserializer);
     var var_totalBytes = sse_decode_i_64(deserializer);
@@ -811,6 +813,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       kind: var_kind,
       text: var_text,
       code: var_code,
+      route: var_route,
       batch: var_batch,
       doneBytes: var_doneBytes,
       totalBytes: var_totalBytes,
@@ -1015,6 +1018,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_event_kind(self.kind, serializer);
     sse_encode_opt_String(self.text, serializer);
     sse_encode_opt_String(self.code, serializer);
+    sse_encode_opt_String(self.route, serializer);
     sse_encode_i_64(self.batch, serializer);
     sse_encode_i_64(self.doneBytes, serializer);
     sse_encode_i_64(self.totalBytes, serializer);

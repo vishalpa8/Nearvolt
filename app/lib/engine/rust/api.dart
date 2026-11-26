@@ -88,7 +88,8 @@ enum EventKind {
   /// Sender: show `code` while the receiver decides.
   code,
 
-  /// Connected and accepted, also after every reconnect. `text` is the other phone.
+  /// Connected and accepted, also after every reconnect. `text` is the other
+  /// phone; on the sender, `route` is the address or cable it reached.
   connected,
 
   /// A batch started sending or arriving: `batch` and its totals.
@@ -199,6 +200,7 @@ class TransferEvent {
   final EventKind kind;
   final String? text;
   final String? code;
+  final String? route;
   final PlatformInt64 batch;
   final PlatformInt64 doneBytes;
   final PlatformInt64 totalBytes;
@@ -209,6 +211,7 @@ class TransferEvent {
     required this.kind,
     this.text,
     this.code,
+    this.route,
     required this.batch,
     required this.doneBytes,
     required this.totalBytes,
@@ -221,6 +224,7 @@ class TransferEvent {
       kind.hashCode ^
       text.hashCode ^
       code.hashCode ^
+      route.hashCode ^
       batch.hashCode ^
       doneBytes.hashCode ^
       totalBytes.hashCode ^
@@ -235,6 +239,7 @@ class TransferEvent {
           kind == other.kind &&
           text == other.text &&
           code == other.code &&
+          route == other.route &&
           batch == other.batch &&
           doneBytes == other.doneBytes &&
           totalBytes == other.totalBytes &&

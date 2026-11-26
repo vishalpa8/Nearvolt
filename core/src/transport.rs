@@ -42,6 +42,11 @@ pub type TlsStream = tokio_rustls::TlsStream<RawStream>;
 /// Opens raw byte streams to one peer.
 pub trait Link: Send + Sync {
     fn open_stream(&self) -> impl Future<Output = Result<RawStream>> + Send;
+
+    /// Where the streams go, for logs: an address, or the cable.
+    fn route(&self) -> String {
+        String::new()
+    }
 }
 
 /// TCP over whatever network both devices share. The first connection tries
@@ -68,6 +73,10 @@ impl Link for TcpLink {
         let (stream, addr) = race(&self.addrs).await?;
         *self.preferred.lock().unwrap() = Some(addr);
         Ok(stream)
+    }
+
+    fn route(&self) -> String {
+        self.preferred.lock().unwrap().map(|addr| addr.to_string()).unwrap_or_default()
     }
 }
 
@@ -119,6 +128,10 @@ impl Link for MuxLink {
         let control = self.0.lock().unwrap().clone();
         let stream = control.context("the cable is not connected")?.open_stream().await?;
         Ok(always_reading(stream))
+    }
+
+    fn route(&self) -> String {
+        "USB cable".into()
     }
 }
 

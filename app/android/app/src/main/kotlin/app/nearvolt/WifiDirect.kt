@@ -78,8 +78,25 @@ class WifiDirect(private val context: Context) {
     suspend fun removeGroupIfUnused() {
         val manager = manager ?: return
         val channel = channel ?: return
-        val group = groupInfo(manager, channel)
-        if (group != null && group.clientList.isEmpty()) removeGroup()
+        val group = groupInfo(manager, channel) ?: return
+        if (group.clientList.isEmpty()) {
+            AppLog.write("wifi-direct", "closed the group: the sender came over the router or the cable")
+            removeGroup()
+        } else {
+            AppLog.write("wifi-direct", "kept the group: the sender joined it")
+        }
+    }
+
+    /** The group this phone is in, if any, for the log. */
+    suspend fun report(): String? {
+        val manager = manager ?: return null
+        val channel = channel ?: return null
+        val group = groupInfo(manager, channel) ?: return null
+        return if (group.isGroupOwner) {
+            "Wi-Fi Direct: own group, ${band(group.frequency)} (${group.frequency} MHz), ${group.clientList.size} joined"
+        } else {
+            "Wi-Fi Direct: joined a group, ${band(group.frequency)} (${group.frequency} MHz)"
+        }
     }
 
     private suspend fun groupInfo(manager: WifiP2pManager, channel: WifiP2pManager.Channel): WifiP2pGroup? =
@@ -131,13 +148,20 @@ class WifiDirect(private val context: Context) {
         else -> "reason $reason"
     }
 
-    private companion object {
-        const val ANSWER_MS = 5_000L
-        const val BUSY_TRIES = 4
-        const val BUSY_WAIT_MS = 500L
+    companion object {
+        fun band(frequency: Int) = when {
+            frequency <= 0 -> "unknown band"
+            frequency < 3_000 -> "2.4 GHz"
+            frequency < 5_925 -> "5 GHz"
+            else -> "6 GHz"
+        }
+
+        private const val ANSWER_MS = 5_000L
+        private const val BUSY_TRIES = 4
+        private const val BUSY_WAIT_MS = 500L
 
         /** Not one of Android's failure reasons, which start at 0. */
-        const val SUCCESS = -1
+        private const val SUCCESS = -1
     }
 
     private fun random(length: Int): String {

@@ -277,7 +277,7 @@ async fn session<L: Link>(
             }
         }
     }
-    emit(events, Event::Connected { peer: peer.name.clone() });
+    emit(events, Event::Connected { peer: peer.name.clone(), route: peer.link.route() });
 
     // Data streams open alongside everything else, so the receiver's messages,
     // including a goodbye, are handled from the first moment.

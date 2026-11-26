@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import '../ui/format.dart';
+import 'diagnostics.dart';
 import 'engine.dart';
 import 'models.dart';
 import 'platform.g.dart';
@@ -203,12 +204,14 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
     Future<void> run() async {
       Timer? fallback;
       var joined = false;
+      final diagnostics = Diagnostics(_platform, 'send', sending: true);
       try {
         await previous;
         final ticket = to.id == 'usb' ? null : to.ticket ?? await _platform.readTicket(to.id);
         final wifi = ticket == null ? null : rust.readTicket(text: ticket).wifi;
         await _platform.startTransferService('Connected to ${to.name}');
         _platform.log('send', 'connecting to ${to.name} (${to.link})');
+        await diagnostics.network();
         final events = ticket == null ? rust.connectUsb() : rust.connect(ticket: ticket);
         // Not on the same network: join the receiver's Wi-Fi Direct group, asking
         // for the permission it needs only now. The engine keeps trying every
@@ -223,7 +226,7 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
           });
         }
         await for (final event in events) {
-          _record('send', event);
+          diagnostics.record(event);
           live.apply(event);
           _notify(live.state);
         }
@@ -231,6 +234,7 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
         _platform.log('send', 'connection failed: $e');
         live.emit(live.state.copyWith(phase: LinkPhase.failed, error: '$e'));
       } finally {
+        diagnostics.close();
         fallback?.cancel();
         await _platform.stopTransferService();
         if (joined) await _platform.leaveWifi();
@@ -266,13 +270,14 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
     final closed = Completer<void>();
     _receiveClosed = closed.future;
     final live = _Live(const Connection());
+    final diagnostics = Diagnostics(_platform, 'receive', sending: false);
     var serving = false;
     try {
       await previous;
       await _platform.watchUsb();
       final events = rust.receive(destDir: _device.downloadDir, journalDir: _device.journalDir);
       await for (final event in events) {
-        _record('receive', event);
+        diagnostics.record(event);
         if (event.kind == rust.EventKind.ready) {
           var tickets = rust.receiveTickets();
           live.emit(live.state.copyWith(ticket: tickets.privateTicket));
@@ -285,6 +290,7 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
             live.emit(live.state.copyWith(ticket: tickets.privateTicket));
             yield live.state;
           }
+          unawaited(diagnostics.network());
           continue;
         }
         live.apply(event);
@@ -298,6 +304,7 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
         yield live.state;
       }
     } finally {
+      diagnostics.close();
       try {
         rust.stopReceiving();
         await _platform.stopReceiving();
@@ -342,38 +349,6 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
         )
         .whenComplete(forward.cancel);
     return controller.stream;
-  }
-
-  /// When each batch started, by log tag and batch, for its speed in the log.
-  final _batchStarted = <String, DateTime>{};
-
-  /// The milestones of a connection, for the log; progress ticks are left out.
-  void _record(String tag, rust.TransferEvent e) {
-    final key = '$tag ${e.batch}';
-    final line = switch (e.kind) {
-      rust.EventKind.request => 'request from ${e.text}',
-      rust.EventKind.code => 'showing a confirmation code',
-      rust.EventKind.connected => 'connected to ${e.text}',
-      rust.EventKind.started => 'batch ${e.batch}: ${e.totalFiles} files, ${formatBytes(e.totalBytes)}',
-      rust.EventKind.completed => 'batch ${e.batch} completed: ${e.totalFiles} files, ${formatBytes(e.totalBytes)}'
-          '${_speed(e.totalBytes, _batchStarted.remove(key))}',
-      rust.EventKind.batchFailed => 'batch ${e.batch} failed: ${e.text}',
-      rust.EventKind.connectionLost => 'connection lost: ${e.text}',
-      rust.EventKind.peerLeft => 'the other phone disconnected',
-      rust.EventKind.disconnected => 'disconnected after ${e.doneFiles} files, ${formatBytes(e.doneBytes)}',
-      rust.EventKind.failed => 'failed: ${e.text}',
-      rust.EventKind.ready || rust.EventKind.progress => null,
-    };
-    // A batch resumed after a reconnect keeps its first start.
-    if (e.kind == rust.EventKind.started) _batchStarted.putIfAbsent(key, DateTime.now);
-    if (line != null) _platform.log(tag, line);
-  }
-
-  static String _speed(int bytes, DateTime? started) {
-    if (started == null) return '';
-    final seconds = DateTime.now().difference(started).inMilliseconds / 1000;
-    if (seconds <= 0) return '';
-    return ' in ${seconds.toStringAsFixed(1)} s, ${formatBytes((bytes / seconds).round())}/s';
   }
 
   DateTime _notified = DateTime(0);

@@ -103,9 +103,12 @@ pub struct Summary {
 
 #[derive(Debug, Clone)]
 pub enum Event {
-    /// Connected and accepted, including after every reconnect.
+    /// Connected and accepted, including after every reconnect. `route` is the
+    /// address or cable the sender reached the receiver on; the receiver
+    /// leaves it empty.
     Connected {
         peer: String,
+        route: String,
     },
     /// Show this code so the user can check the other screen shows the same one.
     Code {

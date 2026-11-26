@@ -125,8 +125,41 @@ Send at least 5 GB for each of these.
 
 ### Speeds
 
-| Link | Phones | Data | MB/s |
+Use the same data for every run: one large video (1 GB or more) as one batch,
+then a folder of a few hundred photos as a second batch. Keep the phones about
+a metre apart, screens on, both charged above 30%, battery saver off. After each
+run, share `nearvolt.log` from both phones.
+
+| # | Link | How to set it up | What the sender's log should say |
 |---|---|---|---|
-| Same Wi-Fi | | | |
-| Wi-Fi Direct | | | |
-| USB | | | |
+| S1 | Same Wi-Fi, 5 GHz | Both phones on the same 5 GHz network. Send › Nearby phones. | `connected … (same Wi-Fi)`, `network: … 5 GHz` |
+| S2 | Same Wi-Fi, 2.4 GHz | Both on a 2.4 GHz network (or a router with 5 GHz turned off). | `(same Wi-Fi)`, `2.4 GHz` |
+| S3 | Wi-Fi Direct, no router | Wi-Fi on, but forget or switch off the router on both. Send › Scan code. | `joined the receiver's Wi-Fi Direct group in … s`, `(Wi-Fi Direct)` |
+| S4 | Wi-Fi Direct, phones on different networks | Each phone on a different Wi-Fi network. Send › Tap phones. | As S3 |
+| S5 | A third phone's hotspot | Both phones join the hotspot. Send › Nearby phones. | `(same Wi-Fi)` |
+| S6 | USB cable | Send › USB cable. | `over the USB cable` |
+
+What the log shows for each run:
+
+- `[network]` when connecting and when connected: Wi-Fi generation, band,
+  signal (dBm; -30 to -60 is strong, below -75 is weak), the phone's link speed
+  to the router, any Wi-Fi Direct group, battery saver and temperature.
+- `[speed]` every 5 seconds while files move: progress, the speed over those 5
+  seconds, and the same network and phone details at that moment. A dip that
+  lines up with a weaker signal points to the radio; one that lines up with
+  "hot, may slow down" points to heat; one with no change on either points to
+  the storage or the other phone.
+- `batch N completed: … average …/s; fastest …/s, slowest …/s`.
+- `connection lost: …`, then `connected … again, N s after the link dropped`.
+- On the receiver: `kept the group: the sender joined it` or `closed the group:
+  the sender came over the router or the cable`, showing which route was used.
+
+| # | Phones (sender → receiver) | Batch | Average MB/s | Fastest / slowest | Notes |
+|---|---|---|---|---|---|
+| S1 | | video | | | |
+| S1 | | photos | | | |
+| S2 | | | | | |
+| S3 | | | | | |
+| S4 | | | | | |
+| S5 | | | | | |
+| S6 | | | | | |

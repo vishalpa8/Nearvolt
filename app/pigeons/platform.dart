@@ -140,6 +140,12 @@ abstract class NearvoltPlatform {
   /// Adds a line to the log users can share, Download/Nearvolt/nearvolt.log.
   void log(String tag, String message);
 
+  /// One line on what can slow a transfer down, for the log: the Wi-Fi link
+  /// (generation, band, signal, speed), any Wi-Fi Direct group, battery saver
+  /// and how hot the phone is.
+  @async
+  String linkReport();
+
   Readiness readiness();
 
   /// Shows Android's prompt or settings page for `requirement` and returns once
