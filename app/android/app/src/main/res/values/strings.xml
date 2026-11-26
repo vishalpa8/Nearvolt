@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Nearvolt</string>
+    <string name="nfc_service">Share this device\'s Nearvolt code by tapping phones</string>
+    <string name="transfer_channel">Transfers</string>
+</resources>

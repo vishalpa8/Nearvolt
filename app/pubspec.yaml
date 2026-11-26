@@ -11,11 +11,13 @@ dependencies:
     sdk: flutter
   flutter_rust_bridge: 2.13.0
   material_ui: ^1.1.0
+  qr: ^4.0.1
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  pigeon: ^30.0.4
 
 flutter:
   uses-material-design: true
