@@ -217,22 +217,37 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
      */
     override suspend fun scanQr(): String? = try {
         prepareScanner()
-        try {
-            scanner.startScan().await().rawValue
-        } catch (e: MlKitException) {
-            // Play services can report the scanner as ready while it can't start;
-            // an install request repairs it, so one more try usually works.
-            AppLog.write("scanner", "scan failed with code ${e.errorCode}: ${e.message}; repairing and trying again")
-            prepareScanner()
-            delay(1_000)
-            scanner.startScan().await().rawValue
-        }
+        scan(retry = true)
     } catch (_: CancellationException) {
         null
     } catch (e: Exception) {
         AppLog.write("scanner", "scan failed${(e as? MlKitException)?.let { " with code ${it.errorCode}" } ?: ""}")
         AppLog.error("scanner", e)
         throw FlutterError("scanner", "The code scanner didn't start. Try again, or tap phones or pick from Nearby phones instead.")
+    }
+
+    /**
+     * On some phones Google's scanner reports going back as an error instead of
+     * a cancel, so an error once the camera has been showing counts as going
+     * back. Only an error straight away means the scanner couldn't open; then
+     * it's repaired and tried once more.
+     */
+    private suspend fun scan(retry: Boolean): String? {
+        val started = SystemClock.elapsedRealtime()
+        return try {
+            scanner.startScan().await().rawValue
+        } catch (e: MlKitException) {
+            val open = SystemClock.elapsedRealtime() - started
+            if (open >= SCANNER_SHOWN_MS) {
+                AppLog.write("scanner", "closed without a code after %.1f s (code ${e.errorCode})".format(Locale.US, open / 1000.0))
+                return null
+            }
+            if (!retry) throw e
+            AppLog.write("scanner", "couldn't open (code ${e.errorCode}); repairing and trying again")
+            prepareScanner()
+            delay(1_000)
+            scan(retry = false)
+        }
     }
 
     /**
@@ -342,6 +357,9 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
     private companion object {
         /** Set once the permission dialogs have been shown, to tell "never asked" from "refused for good". */
         const val ASKED = "asked_permissions"
+
+        /** Longer than Google's scanner takes to open and fail; shorter than anyone takes to go back. */
+        const val SCANNER_SHOWN_MS = 1_500L
     }
 }
 
