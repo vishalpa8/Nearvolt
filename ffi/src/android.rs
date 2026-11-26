@@ -27,7 +27,8 @@ pub struct PickedFiles {
 
 impl SourceOpener for PickedFiles {
     fn open(&self, index: u32) -> io::Result<File> {
-        let (vm, bridge) = BRIDGE.get().ok_or_else(|| io::Error::other("the app has not registered its file access"))?;
+        let (vm, bridge) =
+            BRIDGE.get().ok_or_else(|| io::Error::other("the app has not registered its file access"))?;
         let mut env = vm.attach_current_thread_permanently().map_err(io::Error::other)?;
         let result = env
             .call_method(bridge, "openSource", "(JI)I", &[JValue::Long(self.token), JValue::Int(index as i32)])

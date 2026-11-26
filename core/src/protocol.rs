@@ -86,16 +86,30 @@ pub enum Control {
         nonce: Option<[u8; 16]>,
     },
     /// The sender's nonce, revealed only after the receiver sent its own.
-    Reveal { nonce: [u8; 16] },
-    Reject { reason: String },
+    Reveal {
+        nonce: [u8; 16],
+    },
+    Reject {
+        reason: String,
+    },
     Offer(Offer),
-    Accept { have: Vec<FileHave> },
+    Accept {
+        have: Vec<FileHave>,
+    },
     /// Sender heartbeat.
     Ping,
     /// Receiver heartbeat: verified progress so far.
-    Progress { files: u64, bytes: u64 },
-    Resend { chunks: Vec<ChunkRef> },
-    Complete { files: u64, bytes: u64 },
+    Progress {
+        files: u64,
+        bytes: u64,
+    },
+    Resend {
+        chunks: Vec<ChunkRef>,
+    },
+    Complete {
+        files: u64,
+        bytes: u64,
+    },
 }
 
 pub async fn write_msg<W: AsyncWrite + Unpin>(stream: &mut W, msg: &Control) -> Result<()> {

@@ -114,9 +114,7 @@ impl Ticket {
 
 pub fn new_secret() -> Secret {
     let mut secret = [0u8; 16];
-    SystemRandom::new()
-        .fill(&mut secret)
-        .expect("the system random number generator failed");
+    SystemRandom::new().fill(&mut secret).expect("the system random number generator failed");
     secret
 }
 
@@ -132,7 +130,12 @@ pub fn commitment(nonce: &Nonce) -> [u8; 32] {
 /// The 4-digit code both screens show when devices pair without a shared secret.
 /// The sender commits to its nonce before it sees the receiver's, so a device in
 /// the middle can't steer the two codes to match.
-pub fn pairing_code(receiver: &Fingerprint, sender: &Fingerprint, sender_nonce: &Nonce, receiver_nonce: &Nonce) -> String {
+pub fn pairing_code(
+    receiver: &Fingerprint,
+    sender: &Fingerprint,
+    sender_nonce: &Nonce,
+    receiver_nonce: &Nonce,
+) -> String {
     let hash = blake3::Hasher::new()
         .update(b"nearvolt pairing code")
         .update(receiver)
@@ -242,11 +245,8 @@ mod tests {
         let code = pairing_code(&r, &s, &ns, &nr);
         assert_eq!(code.len(), 4);
         assert_eq!(code, pairing_code(&r, &s, &ns, &nr));
-        let others = [
-            pairing_code(&s, &r, &ns, &nr),
-            pairing_code(&r, &s, &nr, &ns),
-            pairing_code(&[9; 32], &s, &ns, &nr),
-        ];
+        let others =
+            [pairing_code(&s, &r, &ns, &nr), pairing_code(&r, &s, &nr, &ns), pairing_code(&[9; 32], &s, &ns, &nr)];
         assert!(others.iter().any(|other| *other != code));
     }
 }

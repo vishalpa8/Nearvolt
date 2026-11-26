@@ -113,10 +113,7 @@ mod tests {
 
     #[test]
     fn case_collisions_get_numbered() {
-        let paths = vec![
-            vec!["dir".to_string(), "A.txt".to_string()],
-            vec!["dir".to_string(), "a.txt".to_string()],
-        ];
+        let paths = vec![vec!["dir".to_string(), "A.txt".to_string()], vec!["dir".to_string(), "a.txt".to_string()]];
         let out = unique_paths(paths).unwrap();
         assert_eq!(out[1], PathBuf::from("dir").join("a (1).txt"));
     }

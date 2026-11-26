@@ -18,8 +18,8 @@ use super::{emit, is_fatal, Event, EventSender, Fatal, Stats, Summary};
 use crate::identity::{Fingerprint, Identity};
 use crate::pairing::{self, constant_time_eq, truncate_utf8, Secret, Ticket, MAX_NAME_LEN};
 use crate::protocol::{
-    read_header, read_msg, write_msg, ChunkHeader, ChunkRef, Control, SessionId, CHUNK_HEADER_LEN,
-    HEARTBEAT_INTERVAL, HEARTBEAT_TIMEOUT, PROTOCOL_VERSION,
+    read_header, read_msg, write_msg, ChunkHeader, ChunkRef, Control, SessionId, CHUNK_HEADER_LEN, HEARTBEAT_INTERVAL,
+    HEARTBEAT_TIMEOUT, PROTOCOL_VERSION,
 };
 use crate::transport::{listen_tcp, Acceptor, RawStream, TlsStream};
 use crate::util::AbortOnDrop;

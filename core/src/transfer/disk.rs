@@ -56,9 +56,7 @@ pub fn available_space(path: &Path) -> io::Result<u64> {
 
     let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
     let mut free = 0u64;
-    let ok = unsafe {
-        GetDiskFreeSpaceExW(wide.as_ptr(), &mut free, std::ptr::null_mut(), std::ptr::null_mut())
-    };
+    let ok = unsafe { GetDiskFreeSpaceExW(wide.as_ptr(), &mut free, std::ptr::null_mut(), std::ptr::null_mut()) };
     if ok == 0 {
         Err(io::Error::last_os_error())
     } else {

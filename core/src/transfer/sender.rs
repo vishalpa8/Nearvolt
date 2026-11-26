@@ -16,8 +16,8 @@ use super::{emit, is_fatal, Event, EventSender, Fatal, Stats, Summary};
 use crate::identity::{Fingerprint, Identity};
 use crate::pairing::{self, Secret, Ticket};
 use crate::protocol::{
-    bit_get, chunk_range, read_msg, write_msg, ChunkHeader, ChunkRef, Control, FileHave, SessionId,
-    DEFAULT_CHUNK_SIZE, HEARTBEAT_INTERVAL, HEARTBEAT_TIMEOUT, PROTOCOL_VERSION,
+    bit_get, chunk_range, read_msg, write_msg, ChunkHeader, ChunkRef, Control, FileHave, SessionId, DEFAULT_CHUNK_SIZE,
+    HEARTBEAT_INTERVAL, HEARTBEAT_TIMEOUT, PROTOCOL_VERSION,
 };
 use crate::transport::{peer_fingerprint, Connector, Link, TcpLink, TlsStream};
 use crate::util::AbortOnDrop;
@@ -339,7 +339,6 @@ fn read_chunk(
     let entry = &manifest.offer.files[job.file as usize];
     let (offset, len) = chunk_range(entry.size, manifest.offer.chunk_size, job.chunk);
     buf.resize(len as usize, 0);
-    disk::read_exact_at(file, buf, offset)
-        .map_err(|e| Fatal(format!("can't read {}: {e}", entry.path)))?;
+    disk::read_exact_at(file, buf, offset).map_err(|e| Fatal(format!("can't read {}: {e}", entry.path)))?;
     Ok(*blake3::hash(buf).as_bytes())
 }

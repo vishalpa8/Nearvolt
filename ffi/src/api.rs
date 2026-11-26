@@ -126,13 +126,8 @@ pub fn start_engine(data_dir: String, device_name: String) -> Result<()> {
     }
     let identity = Identity::load_or_create(&std::path::Path::new(&data_dir).join("identity.bin"))?;
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().thread_name("nearvolt").build()?;
-    let _ = ENGINE.set(Engine {
-        identity,
-        device_name,
-        runtime,
-        receiving: Mutex::new(None),
-        sending: Mutex::new(None),
-    });
+    let _ =
+        ENGINE.set(Engine { identity, device_name, runtime, receiving: Mutex::new(None), sending: Mutex::new(None) });
     Ok(())
 }
 
@@ -175,10 +170,9 @@ pub fn receive(dest_dir: String, journal_dir: String, events: StreamSink<Transfe
     };
     let running = receiver.clone();
     let ready = events.clone();
-    let task = engine.runtime.spawn(drive(
-        move |stats, events| async move { running.run(approve, stats, Some(events)).await },
-        events,
-    ));
+    let task = engine
+        .runtime
+        .spawn(drive(move |stats, events| async move { running.run(approve, stats, Some(events)).await }, events));
     *engine.receiving.lock().unwrap() = Some(Receiving { receiver, pending, _task: AbortOnDrop(task) });
     let _ = ready.add(TransferEvent::new(EventKind::Ready, None));
     Ok(())

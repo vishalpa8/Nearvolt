@@ -73,9 +73,8 @@ impl Link for TcpLink {
 
 /// Connects to every address at once and keeps the first that answers.
 async fn race(addrs: &[SocketAddr]) -> Result<(RawStream, SocketAddr)> {
-    let attempts = addrs
-        .iter()
-        .map(|&addr| Box::pin(async move { connect_tcp(addr).await.map(|stream| (stream, addr)) }));
+    let attempts =
+        addrs.iter().map(|&addr| Box::pin(async move { connect_tcp(addr).await.map(|stream| (stream, addr)) }));
     Ok(futures::future::select_ok(attempts).await?.0)
 }
 
@@ -170,9 +169,7 @@ pub fn peer_fingerprint(stream: &TlsStream) -> Option<Fingerprint> {
 /// protocol's own heartbeat.
 fn tune(tcp: &TcpStream) {
     let _ = tcp.set_nodelay(true);
-    let keepalive = TcpKeepalive::new()
-        .with_time(Duration::from_secs(2))
-        .with_interval(Duration::from_secs(1));
+    let keepalive = TcpKeepalive::new().with_time(Duration::from_secs(2)).with_interval(Duration::from_secs(1));
     let _ = SockRef::from(tcp).set_tcp_keepalive(&keepalive);
 }
 
@@ -198,9 +195,9 @@ impl ServerCertVerifier for ServerCert {
         _now: UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
         match self.pin {
-            Some(pin) if blake3::hash(end_entity.as_ref()) != blake3::Hash::from(pin) => Err(
-                rustls::Error::InvalidCertificate(rustls::CertificateError::ApplicationVerificationFailure),
-            ),
+            Some(pin) if blake3::hash(end_entity.as_ref()) != blake3::Hash::from(pin) => {
+                Err(rustls::Error::InvalidCertificate(rustls::CertificateError::ApplicationVerificationFailure))
+            }
             _ => Ok(ServerCertVerified::assertion()),
         }
     }

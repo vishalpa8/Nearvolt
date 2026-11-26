@@ -102,10 +102,8 @@ async fn sender_without_secret_is_refused_when_code_pairing_is_off() {
     let peer = Peer::from_ticket(&rx.ticket().public());
 
     let approve: Approver = Arc::new(|_| async { true }.boxed());
-    let receiving = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        rx.run(approve, Arc::new(Stats::default()), None),
-    );
+    let receiving =
+        tokio::time::timeout(std::time::Duration::from_secs(5), rx.run(approve, Arc::new(Stats::default()), None));
     let (_, sent) = tokio::join!(receiving, send_album(&peer, &src, None));
     let error = format!("{:#}", sent.unwrap_err());
     assert!(error.contains("not valid"), "unexpected error: {error}");

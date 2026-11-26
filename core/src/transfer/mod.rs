@@ -92,11 +92,19 @@ pub struct Summary {
 
 #[derive(Debug, Clone)]
 pub enum Event {
-    Connected { peer: String },
+    Connected {
+        peer: String,
+    },
     /// Show this code so the user can check the other screen shows the same one.
-    Code { code: String },
-    ConnectionLost { reason: String },
-    Resumed { done_bytes: u64 },
+    Code {
+        code: String,
+    },
+    ConnectionLost {
+        reason: String,
+    },
+    Resumed {
+        done_bytes: u64,
+    },
     Completed(Summary),
 }
 

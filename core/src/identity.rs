@@ -28,9 +28,7 @@ impl Identity {
 
     pub fn load_or_create(path: &Path) -> Result<Self> {
         match fs::read(path) {
-            Ok(bytes) => {
-                Self::decode(&bytes).with_context(|| format!("reading identity {}", path.display()))
-            }
+            Ok(bytes) => Self::decode(&bytes).with_context(|| format!("reading identity {}", path.display())),
             Err(e) if e.kind() == ErrorKind::NotFound => {
                 let identity = Self::generate()?;
                 if let Some(parent) = path.parent() {

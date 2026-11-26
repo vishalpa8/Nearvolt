@@ -59,8 +59,8 @@ impl Manifest {
             Sources::Opener(opener) => (opener.open(index).map_err(unreadable)?, false),
         };
         let meta = file.metadata().map_err(unreadable)?;
-        let changed = meta.len() != entry.size
-            || (check_time && meta.modified().ok().and_then(unix_millis) != entry.modified);
+        let changed =
+            meta.len() != entry.size || (check_time && meta.modified().ok().and_then(unix_millis) != entry.modified);
         if changed {
             return Err(Fatal(format!("{} changed while it was being sent", entry.path)).into());
         }
@@ -74,16 +74,17 @@ fn scan(paths: &[PathBuf]) -> Result<(Vec<FileEntry>, Vec<PathBuf>)> {
     let mut sources = Vec::new();
     for path in paths {
         let path = fs::canonicalize(path).with_context(|| format!("can't find {}", path.display()))?;
-        let name = path
-            .file_name()
-            .with_context(|| format!("can't send {}", path.display()))?
-            .to_string_lossy()
-            .into_owned();
+        let name =
+            path.file_name().with_context(|| format!("can't send {}", path.display()))?.to_string_lossy().into_owned();
         let mut stack = vec![(path, name)];
         while let Some((path, rel)) = stack.pop() {
             let meta = fs::symlink_metadata(&path)?;
             if meta.is_file() {
-                files.push(FileEntry { path: rel, size: meta.len(), modified: meta.modified().ok().and_then(unix_millis) });
+                files.push(FileEntry {
+                    path: rel,
+                    size: meta.len(),
+                    modified: meta.modified().ok().and_then(unix_millis),
+                });
                 sources.push(path);
             } else if meta.is_dir() {
                 let mut entries = fs::read_dir(&path)

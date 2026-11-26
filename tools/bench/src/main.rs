@@ -13,15 +13,15 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use futures::FutureExt;
+use nearvolt_core::util::AbortOnDrop;
 use nearvolt_core::{
-    human_bytes, send, Approver, Event, FileSet, Identity, IncomingOffer, Peer, ReceiveOptions, Receiver,
-    SendOptions, Stats, Summary, Ticket,
+    human_bytes, send, Approver, Event, FileSet, Identity, IncomingOffer, Peer, ReceiveOptions, Receiver, SendOptions,
+    Stats, Summary, Ticket,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
-use nearvolt_core::util::AbortOnDrop;
 use tokio::task::JoinSet;
 
 const IDENTITY_PATH: &str = ".bench/identity.bin";
@@ -127,11 +127,8 @@ async fn receive(dir: PathBuf, port: u16, yes: bool, verify_on_disk: bool) -> Re
     }
     println!("\nTicket for the sender:\n\n  {}\n", receiver.ticket().encode());
 
-    let approve: Approver = if yes {
-        Arc::new(|_| async { true }.boxed())
-    } else {
-        Arc::new(|offer| ask(offer).boxed())
-    };
+    let approve: Approver =
+        if yes { Arc::new(|_| async { true }.boxed()) } else { Arc::new(|offer| ask(offer).boxed()) };
     let stats = Arc::new(Stats::default());
     let (tx, rx) = mpsc::unbounded_channel();
     let summary = with_progress("Receiving", stats.clone(), rx, receiver.run(approve, stats.clone(), Some(tx))).await?;
@@ -221,7 +218,8 @@ async fn local(
             receiver.run(approve, Arc::new(Stats::default()), None).await
         }));
         let mut send_task = AbortOnDrop(tokio::spawn({
-            let (id, stats, options, events) = (sender_id.clone(), tx_stats.clone(), options.clone(), events_tx.clone());
+            let (id, stats, options, events) =
+                (sender_id.clone(), tx_stats.clone(), options.clone(), events_tx.clone());
             let paths = vec![source.clone()];
             async move { send(&id, &Peer::from_ticket(&ticket), FileSet::Paths(paths), &options, stats, Some(events)).await }
         }));
@@ -367,9 +365,7 @@ fn print_summary(verb: &str, s: &Summary) {
 }
 
 fn device_name() -> String {
-    std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_else(|_| "This computer".into())
+    std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_else(|_| "This computer".into())
 }
 
 /// A TCP relay between sender and receiver that can stop all traffic on demand,
@@ -463,8 +459,13 @@ fn compare(a: &Path, b: &Path) -> Result<()> {
     if !missing.is_empty() || !extra.is_empty() {
         bail!("the folders differ. Missing: {missing:?}. Unexpected: {extra:?}");
     }
-    let pairs: Vec<(String, PathBuf, PathBuf)> =
-        left.into_iter().map(|(rel, pa)| { let pb = right[&rel].clone(); (rel, pa, pb) }).collect();
+    let pairs: Vec<(String, PathBuf, PathBuf)> = left
+        .into_iter()
+        .map(|(rel, pa)| {
+            let pb = right[&rel].clone();
+            (rel, pa, pb)
+        })
+        .collect();
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).min(8);
     let per = pairs.len().div_ceil(threads).max(1);
     let bytes = std::thread::scope(|scope| -> Result<u64> {
