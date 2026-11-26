@@ -32,6 +32,12 @@ Golden screenshots are rendered on Windows, so CI on Linux skips them
   <https://github.com/vishalpa8/Nearvolt/releases/latest>, download the
   `arm64-v8a` APK and install it over the old one. If Android says "App not
   installed", uninstall Nearvolt first; received files stay in Downloads.
+- **"Samsung's Auto Blocker stopped the update"** (in the log:
+  `Self update is blocked by unknown source package`): Auto Blocker lets only
+  Google Play and the Galaxy Store install apps, and newer Galaxy phones have it
+  on from the start. Turn it off in Settings › Security and privacy › Auto
+  Blocker, tap Check for updates again (the download is reused), and turn it
+  back on afterwards if you like.
 
 ## On two phones
 
@@ -113,6 +119,9 @@ Send at least 5 GB for each of these.
 | 21 | Push a change to `main` and wait for its release. Tap Check for updates. | It downloads version N+1. The first time, Android opens "Install unknown apps"; turn it on and go back, and the update continues by itself. Nearvolt closes for a moment; reopened, it runs N+1. |
 | 22 | Repeat 21 on Android 12 or later. | No prompt at all this time. |
 | 23 | On B, tap Check for updates and, while it downloads, open Receive and accept a connection from A. | Nothing is installed while connected; the update card says to disconnect first. |
+| 24 | On a Samsung phone, turn on Settings › Security and privacy › Auto Blocker, then tap Check for updates. | The card stops spinning and says Auto Blocker stopped the update. |
+| 25 | Tap Check for updates again. | No second download: the log says "using the N download from earlier". Turn Auto Blocker off and tap again: it installs. |
+| 26 | After an update, open the app once. | The downloaded APK is gone from the app's cache (Settings › Apps › Nearvolt › Storage shows no growth). |
 
 ### Speeds
 

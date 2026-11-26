@@ -8,9 +8,10 @@ import android.content.pm.PackageInstaller
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
-import android.widget.Toast
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONException
 import org.json.JSONObject
 import java.io.File
@@ -18,6 +19,7 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Updates straight from GitHub Releases, only when the user asks. The release
@@ -28,6 +30,11 @@ import java.security.MessageDigest
  */
 class Updater(private val activity: MainActivity, private val emit: (PlatformEvent) -> Unit) {
     private val context: Context = activity.applicationContext
+    private val downloads = File(context.cacheDir, "updates")
+
+    init {
+        cleanUp()
+    }
 
     suspend fun check(): UpdateInfo? = withContext(Dispatchers.IO) {
         val manifest = try {
@@ -58,15 +65,20 @@ class Updater(private val activity: MainActivity, private val emit: (PlatformEve
                 throw FlutterError("permission", "Nearvolt needs permission to install its updates.")
             }
         }
-        AppLog.write("update", "downloading ${update.url}")
-        val apk = try {
+        val apk = withContext(Dispatchers.IO) { downloaded(update) } ?: try {
+            AppLog.write("update", "downloading ${update.url}")
             withContext(Dispatchers.IO) { download(update) }
         } catch (e: IOException) {
             AppLog.error("update", e)
             throw FlutterError("offline", "The download stopped. Check your internet connection and try again.")
         }
+        emit(PlatformEvent(PlatformEventKind.UPDATE_PROGRESS, progress = 1.0))
         requireIdle()
-        withContext(Dispatchers.IO) { commit(apk) }
+        val answer = withContext(Dispatchers.IO) { commit(apk) }
+        // Success ends this process, so only a failure or a lost answer gets past here.
+        val (status, message) = withTimeoutOrNull(ANSWER_WAIT) { answer.await() }
+            ?: throw FlutterError("install", "The install didn't finish. Check for updates to try again.")
+        if (status != PackageInstaller.STATUS_SUCCESS) throw FlutterError("install", explain(status, message))
     }
 
     /** Installing restarts the app, so it never happens during a transfer. */
@@ -74,8 +86,65 @@ class Updater(private val activity: MainActivity, private val emit: (PlatformEve
         if (TransferService.active) throw FlutterError("busy", "Disconnect first, then check again.")
     }
 
+    private fun explain(status: Int, message: String?): String = when {
+        message?.contains("unknown source", ignoreCase = true) == true ->
+            if (Build.MANUFACTURER.equals("samsung", ignoreCase = true)) {
+                "Samsung's Auto Blocker stopped the update. Turn it off in Settings › Security and privacy › " +
+                    "Auto Blocker, then check for updates again. You can turn it back on afterwards."
+            } else {
+                "This phone only allows updates from its app store. Allow other sources in Settings, then check again."
+            }
+        status == PackageInstaller.STATUS_FAILURE_ABORTED -> "The update was cancelled."
+        status == PackageInstaller.STATUS_FAILURE_STORAGE -> "There isn't enough free space to install the update."
+        status == PackageInstaller.STATUS_FAILURE_CONFLICT || status == PackageInstaller.STATUS_FAILURE_INCOMPATIBLE ->
+            "This update can't replace the installed app. Uninstall Nearvolt, then install the latest version from GitHub."
+        else -> "The update didn't install: ${message ?: "status $status"}"
+    }
+
+    /** The APK for `update` if an earlier attempt already downloaded and checked it. */
+    private fun downloaded(update: UpdateInfo): File? {
+        val file = File(downloads, "nearvolt-${update.version}.apk")
+        if (!file.exists()) return null
+        if (runCatching { sha256(file) }.getOrNull().equals(update.sha256, ignoreCase = true)) {
+            AppLog.write("update", "using the ${update.version} download from earlier")
+            return file
+        }
+        file.delete()
+        return null
+    }
+
+    /**
+     * Keeps only downloads newer than the installed app, so an APK is removed once
+     * it's installed. Also removes the single file older versions used.
+     */
+    private fun cleanUp() = runCatching {
+        File(context.cacheDir, "update.apk").delete()
+        val installed = installedCode()
+        downloads.listFiles()?.forEach { apk ->
+            val code = context.packageManager.getPackageArchiveInfo(apk.path, 0)?.longVersionCode
+            if (code == null || code <= installed) apk.delete()
+        }
+    }
+
+    private fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(1 shl 16)
+            while (true) {
+                val n = input.read(buffer)
+                if (n < 0) break
+                digest.update(buffer, 0, n)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    /** Downloads into a part file, so only a complete, checked APK is ever kept. */
     private fun download(update: UpdateInfo): File {
-        val file = File(context.cacheDir, "update.apk")
+        downloads.mkdirs()
+        downloads.listFiles()?.forEach { it.delete() }
+        val target = File(downloads, "nearvolt-${update.version}.apk")
+        val file = File(downloads, "${target.name}.part")
         val digest = MessageDigest.getInstance("SHA-256")
         val connection = open(update.url)
         val total = connection.contentLengthLong.takeIf { it > 0 }
@@ -105,10 +174,12 @@ class Updater(private val activity: MainActivity, private val emit: (PlatformEve
             throw FlutterError("checksum", "The download was damaged. Try again.")
         }
         AppLog.write("update", "downloaded ${file.length()} bytes, checksum matches")
-        return file
+        if (!file.renameTo(target)) throw IOException("couldn't keep the download")
+        return target
     }
 
-    private fun commit(apk: File) {
+    /** Hands the APK to Android; the result completes with Android's final answer. */
+    private fun commit(apk: File): CompletableDeferred<Pair<Int, String?>> {
         val installer = context.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
             setAppPackageName(context.packageName)
@@ -117,6 +188,7 @@ class Updater(private val activity: MainActivity, private val emit: (PlatformEve
             }
         }
         val id = installer.createSession(params)
+        val answer = UpdateReceiver.expect(id)
         installer.openSession(id).use { session ->
             session.openWrite("nearvolt.apk", 0, apk.length()).use { out ->
                 apk.inputStream().use { it.copyTo(out) }
@@ -131,6 +203,7 @@ class Updater(private val activity: MainActivity, private val emit: (PlatformEve
             session.commit(result.intentSender)
             AppLog.write("update", "install session $id committed")
         }
+        return answer
     }
 
     private fun installedCode(): Long =
@@ -145,26 +218,38 @@ class Updater(private val activity: MainActivity, private val emit: (PlatformEve
 
     companion object {
         const val MANIFEST_URL = "https://github.com/vishalpa8/Nearvolt/releases/latest/download/update.json"
+
+        /** Long enough for the user to answer Android's confirmation, if it shows one. */
+        private const val ANSWER_WAIT = 5 * 60_000L
     }
 }
 
 /**
  * Android's answer to an install: shows its confirmation when the session needs
- * the user, and reports why when an install fails.
+ * the user, and hands the final result to the [Updater] waiting for it.
  */
 class UpdateReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
         val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
+        val id = intent.getIntExtra(PackageInstaller.EXTRA_SESSION_ID, -1)
         AppLog.write("update", "install status $status: $message")
-        when (status) {
-            PackageInstaller.STATUS_PENDING_USER_ACTION -> intent.parcelable<Intent>(Intent.EXTRA_INTENT)?.let {
+        if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
+            intent.parcelable<Intent>(Intent.EXTRA_INTENT)?.let {
                 runCatching { context.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
                     .onFailure { e -> AppLog.error("update", e) }
             }
-            PackageInstaller.STATUS_SUCCESS -> {}
-            else -> Toast.makeText(context, "The update didn't install: ${message ?: "status $status"}", Toast.LENGTH_LONG)
-                .show()
+            return
+        }
+        waiting.remove(id)?.complete(status to message)
+    }
+
+    companion object {
+        private val waiting = ConcurrentHashMap<Int, CompletableDeferred<Pair<Int, String?>>>()
+
+        /** Call before committing session `id`, so even an instant answer is caught. */
+        fun expect(id: Int): CompletableDeferred<Pair<Int, String?>> = CompletableDeferred<Pair<Int, String?>>().also {
+            waiting[id] = it
         }
     }
 }

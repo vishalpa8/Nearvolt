@@ -53,7 +53,9 @@ Actions › Release › Run workflow builds one on demand.
 - The release notes list the commit subjects since the previous release.
 - In the app, **Check for updates** on the home page downloads the new version
   and installs it. The first time, Android asks to allow installs from
-  Nearvolt; after that, Android 12 and later update without a prompt.
+  Nearvolt; after that, Android 12 and later update without a prompt. On
+  Samsung phones, Auto Blocker must be off while updating. A version is
+  downloaded once, and the APK is deleted after it's installed.
 
 The signing key lives in four repository secrets (`NEARVOLT_KEYSTORE_BASE64`,
 `NEARVOLT_KEYSTORE_PASSWORD`, `NEARVOLT_KEY_ALIAS`, `NEARVOLT_KEY_PASSWORD`).

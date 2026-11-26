@@ -1,7 +1,9 @@
 import 'dart:ui' show Size;
 
+import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter_test/flutter_test.dart';
-import 'package:material_ui/material_ui.dart' show LinearProgressIndicator, NavigatorState, Navigator;
+import 'package:material_ui/material_ui.dart'
+    show CircularProgressIndicator, LinearProgressIndicator, NavigatorState, Navigator;
 import 'package:nearvolt/app.dart';
 import 'package:nearvolt/engine/models.dart';
 
@@ -87,10 +89,27 @@ void main() {
     await tester.pump();
     expect(tester.widget<LinearProgressIndicator>(find.byType(LinearProgressIndicator)).value, 0.5);
 
-    await engine.installing.close();
-    await tester.pump();
+    engine.installing.add(1);
     await tester.pump();
     expect(find.textContaining('Installing version 0.1.9'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+  });
+
+  testWidgets('an install Android refuses stops the spinner and says why', (tester) async {
+    engine.update = '0.1.9';
+    await open(tester);
+    await tester.tap(find.text('Check for updates'));
+    await tester.pump();
+    await tester.pump();
+    engine.installing.add(1);
+    await tester.pump();
+
+    engine.installing.addError(PlatformException(code: 'install', message: "Samsung's Auto Blocker stopped the update."));
+    await tester.pump();
+    await tester.pump();
+    expect(find.text("Samsung's Auto Blocker stopped the update."), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byTooltip('Close'), findsOneWidget);
   });
 
   testWidgets('stays connected and sends each batch added, until Disconnect', (tester) async {

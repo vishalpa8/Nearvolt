@@ -352,10 +352,15 @@ class _UpdateCardState extends State<UpdateCard> {
         _version = version;
         _step = _UpdateStep.downloading;
       });
+      // Reaching 1 means the APK is ready and Android is installing it; the stream
+      // ends with an error if Android refuses.
       await for (final progress in widget.install()) {
-        if (mounted) setState(() => _progress = progress);
+        if (!mounted) continue;
+        setState(() {
+          _progress = progress;
+          if (progress >= 1) _step = _UpdateStep.installing;
+        });
       }
-      if (mounted) setState(() => _step = _UpdateStep.installing);
     } on Object catch (e) {
       if (!mounted) return;
       setState(() {
