@@ -11,7 +11,10 @@ resume from the last verified chunk.
   automatic reconnect and resume. Tested with link cuts and killed apps.
 - **Test tool** (`tools/bench/`): send and receive between computers, generate test
   data, and run local stress tests.
-- **App** (`app/`): Flutter UI.
+- **App** (`app/`): Flutter UI with the four screens from
+  [docs/design.md](docs/design.md). It runs on a simulated engine, marked
+  "Preview" in the app, until the Rust engine is connected through
+  `flutter_rust_bridge`.
 
 See [docs/architecture.md](docs/architecture.md) for the design and measured
 results.
@@ -43,6 +46,17 @@ Between two computers on the same network:
 & $b receive --dir received           # prints a ticket
 & $b send <ticket> <files or folders>
 ```
+
+## Try the app
+
+```powershell
+cd app
+flutter test
+flutter build web --release --no-web-resources-cdn   # then serve build\web
+```
+
+Open `#/nearby`, `#/pick`, `#/receive`, `#/transfer` or `#/done` to jump straight
+to a screen with sample data.
 
 ## Docs
 
