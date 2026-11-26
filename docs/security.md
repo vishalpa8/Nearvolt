@@ -51,9 +51,9 @@ over a USB cable are dropped unless Receive is open.
   repository. GitHub Actions gets it from encrypted repository secrets, and the
   release workflow refuses to publish an APK whose certificate isn't exactly the
   release certificate (SHA-256 `9ffe2712…8fc5ba`).
-- The app downloads `update.json` and the APK for its ABI only from this
-  repository's GitHub Releases over HTTPS, and checks the APK's SHA-256 before
-  installing it.
+- The app contacts GitHub only when the user taps Check for updates. It
+  downloads `update.json` and the APK for its ABI only from this repository's
+  GitHub Releases over HTTPS, and checks the APK's SHA-256 before installing it.
 - Android itself refuses to install an update signed with any other key.
 - An update is never installed during a transfer.
 

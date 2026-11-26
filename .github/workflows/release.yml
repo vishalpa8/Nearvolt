@@ -1,10 +1,18 @@
 name: Release
 
-# Push a tag like v1.2.3 to build, sign and publish APKs. Installed apps find
-# the new version through update.json on the latest release.
+# Every push to main that changes the app is tested, built, signed and published
+# as a new release. Installed apps find it with "Check for updates", through
+# update.json on the latest release.
 on:
   push:
-    tags: ['v*']
+    branches: [main]
+    paths-ignore: ['docs/**', '**.md']
+  workflow_dispatch:
+
+# One release at a time, in push order.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -16,26 +24,32 @@ env:
   RELEASE_CERT_SHA256: 9ffe27128b1895d7fd81cfd83150c3043a336622276fb5d88a3ee664208fc5ba
 
 jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+
   apk:
+    needs: checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
-      - name: Version from tag
+      # Major and minor come from pubspec.yaml; the patch number is the commit
+      # count on main, so every release is newer than the last. The version
+      # code (what the updater compares) is 100 plus that count.
+      - name: Version
         id: version
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          if [[ ! "$version" =~ ^([0-9]+)\.([0-9]{1,2})\.([0-9]{1,2})$ ]]; then
-            echo "::error::Tags look like v1.2.3, with minor and patch up to 99."
-            exit 1
-          fi
-          echo "name=$version" >> "$GITHUB_OUTPUT"
-          echo "code=$(( BASH_REMATCH[1] * 10000 + BASH_REMATCH[2] * 100 + BASH_REMATCH[3] ))" >> "$GITHUB_OUTPUT"
-          git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+          base=$(sed -nE 's/^version:[[:space:]]*([0-9]+\.[0-9]+)\..*/\1/p' app/pubspec.yaml)
+          count=$(git rev-list --count HEAD)
+          echo "name=$base.$count" >> "$GITHUB_OUTPUT"
+          echo "code=$((100 + count))" >> "$GITHUB_OUTPUT"
+          previous=$(git describe --tags --abbrev=0 2>/dev/null || true)
           delimiter="notes_$(openssl rand -hex 8)"
           {
             echo "notes<<$delimiter"
-            git tag -l --format='%(contents:subject)%0a%0a%(contents:body)' "$GITHUB_REF_NAME"
+            git log --no-merges --format='- %s' "${previous:+$previous..}HEAD"
             echo "$delimiter"
           } >> "$GITHUB_OUTPUT"
 
@@ -91,7 +105,7 @@ jobs:
         run: |
           rm -f "$RUNNER_TEMP/nearvolt.jks"
           apksigner="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)/apksigner"
-          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME"
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/v$VERSION"
           mkdir dist
           apks='{}'
           for abi in arm64-v8a armeabi-v7a x86_64; do
@@ -112,8 +126,10 @@ jobs:
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.name }}
           NOTES: ${{ steps.version.outputs.notes }}
         run: >-
-          gh release create "$GITHUB_REF_NAME" dist/*
-          --title "Nearvolt ${{ steps.version.outputs.name }}"
+          gh release create "v$VERSION" dist/*
+          --target "$GITHUB_SHA"
+          --title "Nearvolt $VERSION"
           --notes "$NOTES"

@@ -1,7 +1,8 @@
 name: nearvolt
 description: "Move files directly between nearby devices at full speed."
 publish_to: 'none'
-# Releases set both from the tag: v1.2.3 builds 1.2.3+10203 (major*10000 + minor*100 + patch).
+# Releases keep major.minor from here; the release workflow sets the patch number
+# and version code from the commit count on main.
 version: 0.1.0+100
 
 environment:

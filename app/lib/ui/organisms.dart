@@ -263,59 +263,115 @@ class ConnectOptions extends StatelessWidget {
   }
 }
 
-/// Offers a new version, then shows its download progress.
-class UpdateBanner extends StatefulWidget {
-  const UpdateBanner({super.key, required this.version, required this.install});
+enum _UpdateStep { checking, latest, downloading, installing, failed }
 
-  final String version;
+/// Checks for a new version when shown, then downloads and installs it
+/// straight away.
+class UpdateCard extends StatefulWidget {
+  const UpdateCard({
+    super.key,
+    required this.current,
+    required this.check,
+    required this.install,
+    required this.onClose,
+  });
+
+  /// The installed version.
+  final String current;
+  final Future<String?> Function() check;
   final Stream<double> Function() install;
+  final VoidCallback onClose;
 
   @override
-  State<UpdateBanner> createState() => _UpdateBannerState();
+  State<UpdateCard> createState() => _UpdateCardState();
 }
 
-class _UpdateBannerState extends State<UpdateBanner> {
-  double? _progress;
+class _UpdateCardState extends State<UpdateCard> {
+  var _step = _UpdateStep.checking;
+  String? _version;
+  double _progress = 0;
   String? _error;
 
-  void _start() {
-    setState(() {
-      _progress = 0;
-      _error = null;
-    });
-    widget.install().listen(
-      (p) => setState(() => _progress = p),
-      onError: (Object e) => setState(() {
-        _progress = null;
-        _error = e is PlatformException ? e.message : 'The update failed. Try again.';
-      }),
-    );
+  @override
+  void initState() {
+    super.initState();
+    _run();
+  }
+
+  Future<void> _run() async {
+    try {
+      final version = await widget.check();
+      if (!mounted) return;
+      if (version == null) return setState(() => _step = _UpdateStep.latest);
+      setState(() {
+        _version = version;
+        _step = _UpdateStep.downloading;
+      });
+      await for (final progress in widget.install()) {
+        if (mounted) setState(() => _progress = progress);
+      }
+      if (mounted) setState(() => _step = _UpdateStep.installing);
+    } on Object catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _step = _UpdateStep.failed;
+        _error = e is PlatformException ? e.message : null;
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
-    final progress = _progress;
+    final message = switch (_step) {
+      _UpdateStep.checking => 'Checking for updates…',
+      _UpdateStep.latest => 'Nearvolt ${widget.current} is the latest version.',
+      _UpdateStep.downloading => 'Downloading version $_version…',
+      _UpdateStep.installing => 'Installing version $_version. Nearvolt closes for a moment; open it again afterwards.',
+      _UpdateStep.failed => _error ?? "The update didn't finish. Try again.",
+    };
+    final busy = _step == _UpdateStep.checking || _step == _UpdateStep.installing;
     return Panel(
-      padding: const EdgeInsets.fromLTRB(Space.l, Space.s, Space.s, Space.s),
+      padding: const EdgeInsets.fromLTRB(Space.l, Space.m, Space.s, Space.m),
       child: Row(
         children: [
-          const Icon(Icons.system_update_rounded, color: AppColors.accent),
+          Icon(
+            _step == _UpdateStep.failed ? Icons.error_outline_rounded : Icons.system_update_rounded,
+            color: _step == _UpdateStep.failed ? AppColors.danger : AppColors.accent,
+          ),
           const SizedBox(width: Space.m),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Version ${widget.version} is ready', style: text.labelLarge),
-                if (progress != null) ...[
-                  const SizedBox(height: Space.xs),
-                  LinearProgressIndicator(value: progress, color: AppColors.accent),
-                ] else if (_error != null)
-                  Text(_error!, style: text.bodySmall?.copyWith(color: AppColors.danger)),
+                Text(message, style: text.bodyMedium),
+                if (_step == _UpdateStep.downloading) ...[
+                  const SizedBox(height: Space.s),
+                  LinearProgressIndicator(
+                    value: _progress,
+                    color: AppColors.accent,
+                    backgroundColor: AppColors.surfaceMuted,
+                    borderRadius: BorderRadius.circular(Radii.button),
+                  ),
+                ],
               ],
             ),
           ),
-          if (progress == null) TextButton(onPressed: _start, child: const Text('Update')),
+          const SizedBox(width: Space.s),
+          if (busy)
+            const Padding(
+              padding: EdgeInsets.all(Space.m),
+              child: SizedBox.square(
+                dimension: 18,
+                child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.accent),
+              ),
+            )
+          else if (_step != _UpdateStep.downloading)
+            IconButton(
+              onPressed: widget.onClose,
+              tooltip: 'Close',
+              icon: const Icon(Icons.close_rounded, color: AppColors.textSecondary),
+            ),
         ],
       ),
     );

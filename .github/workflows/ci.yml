@@ -1,9 +1,9 @@
 name: CI
 
+# Pull requests, and every release (release.yml runs this before building).
 on:
-  push:
-    branches: [main]
   pull_request:
+  workflow_call:
 
 concurrency:
   group: ci-${{ github.ref }}

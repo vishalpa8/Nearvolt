@@ -40,10 +40,19 @@ void main() {
   Future<void> shoot(String name) => expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/$name.png'));
 
   testWidgets('home', (tester) async {
-    engine.update = '0.2.0';
     await phone(tester, NearvoltApp(engine: engine, profile: profile));
     await tester.pumpAndSettle();
     await shoot('home');
+  });
+
+  testWidgets('update', (tester) async {
+    engine.update = '0.1.9';
+    await phone(tester, NearvoltApp(engine: engine, profile: profile));
+    await tester.tap(find.text('Check for updates'));
+    await tester.pump();
+    engine.installing.add(0.4);
+    await tester.pumpAndSettle();
+    await shoot('update');
   });
 
   Future<void> openSend(WidgetTester tester) async {

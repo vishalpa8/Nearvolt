@@ -42,22 +42,21 @@ cd app; flutter test
 
 ## Release
 
-Releases are built, signed and published by GitHub Actions. Installed apps find
-them and update themselves.
+Every push to `main` that changes the app is tested, built, signed and published
+as a GitHub release by Actions. Pushes that only touch docs are skipped, and
+Actions › Release › Run workflow builds one on demand.
 
-1. Once: add the four repository secrets listed in the signing folder's
-   `github-secrets.txt` (`NEARVOLT_KEYSTORE_BASE64`, `NEARVOLT_KEYSTORE_PASSWORD`,
-   `NEARVOLT_KEY_ALIAS`, `NEARVOLT_KEY_PASSWORD`), and keep an offline backup of
-   the key. Without it, installed apps can never be updated again.
-2. Tag and push:
+- The version is `major.minor` from `app/pubspec.yaml` plus the commit count on
+  `main` (for example `0.1.27`); the version code is 100 plus that count.
+- The release notes list the commit subjects since the previous release.
+- In the app, **Check for updates** on the home page downloads the new version
+  and installs it. The first time, Android asks to allow installs from
+  Nearvolt; after that, Android 12 and later update without a prompt.
 
-   ```powershell
-   git tag -a v1.2.3 -m "What changed"
-   git push origin v1.2.3
-   ```
-
-The tag sets the version (`1.2.3`, version code `10203`), and the tag message
-becomes the release notes. Local release builds sign with the same key through
+The signing key lives in four repository secrets (`NEARVOLT_KEYSTORE_BASE64`,
+`NEARVOLT_KEYSTORE_PASSWORD`, `NEARVOLT_KEY_ALIAS`, `NEARVOLT_KEY_PASSWORD`).
+Keep an offline backup of it: without it, installed apps can never be updated
+again. Local release builds sign with the same key through
 `app/android/key.properties`, which Git ignores.
 
 ## Engine test tool

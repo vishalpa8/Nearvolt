@@ -11,11 +11,14 @@ enum DeviceKind {
 enum Need { permission, permissionInSettings, wifi, bluetooth, location }
 
 class DeviceProfile {
-  const DeviceProfile({required this.name, required this.kind, required this.hasNfc});
+  const DeviceProfile({required this.name, required this.kind, required this.hasNfc, required this.version});
 
   final String name;
   final DeviceKind kind;
   final bool hasNfc;
+
+  /// The installed Nearvolt version.
+  final String version;
 }
 
 /// A device with Receive open.

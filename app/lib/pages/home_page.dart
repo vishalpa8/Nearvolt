@@ -21,15 +21,8 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  String? _update;
-
-  @override
-  void initState() {
-    super.initState();
-    widget.engine.checkForUpdate().then((version) {
-      if (mounted) setState(() => _update = version);
-    });
-  }
+  /// Counts update checks, so asking again starts a fresh one; null when none is shown.
+  int? _check;
 
   void _open(Widget page) => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => page));
 
@@ -39,12 +32,22 @@ class _HomePageState extends State<HomePage> {
     final (engine, profile) = (widget.engine, widget.profile);
     return PageScaffold(
       title: 'Nearvolt',
+      trailing: TextButton(
+        onPressed: () => setState(() => _check = (_check ?? 0) + 1),
+        child: const Text('Check for updates'),
+      ),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (_update case final version?) ...[
+          if (_check case final check?) ...[
             const SizedBox(height: Space.l),
-            UpdateBanner(version: version, install: engine.installUpdate),
+            UpdateCard(
+              key: ValueKey(check),
+              current: profile.version,
+              check: engine.checkForUpdate,
+              install: engine.installUpdate,
+              onClose: () => setState(() => _check = null),
+            ),
           ],
           const Spacer(),
           Text('Move files to anyone nearby', style: text.displaySmall),

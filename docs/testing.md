@@ -83,9 +83,10 @@ Start a transfer of at least 5 GB for each of these.
 
 | # | Steps | Expected |
 |---|---|---|
-| 16 | Install release N from GitHub, then publish N+1 (see the README). Open the app. | A banner offers version N+1. |
-| 17 | Tap Update the first time. | Android asks to allow installs from Nearvolt. After allowing, tap Update again: it downloads, installs and the app restarts on N+1. |
-| 18 | On B, tap Update and, while it downloads, open Receive and accept a transfer from A. | Nothing is installed while the transfer runs; back on the Send page the banner says to finish the transfer first. |
+| 16 | Install the latest release, open the app and tap Check for updates. | "Nearvolt N is the latest version." Nothing is checked until the button is tapped. |
+| 17 | Push a change to `main` and wait for its release. Tap Check for updates. | It downloads version N+1. The first time, Android opens "Install unknown apps"; turn it on and go back, and the update continues by itself. Nearvolt closes for a moment; reopened, it runs N+1. |
+| 18 | Repeat 17 on Android 12 or later. | No prompt at all this time. |
+| 19 | On B, tap Check for updates and, while it downloads, open Receive and accept a transfer from A. | Nothing is installed while the transfer runs; the update card says to finish the transfer first. |
 
 ### Speeds
 

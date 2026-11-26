@@ -43,7 +43,7 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
     private val ble = Ble(context, emit)
     private val nfc = Nfc(activity, emit)
     private val usb = Usb(context, emit)
-    private val updater = Updater(context, emit)
+    private val updater = Updater(activity, emit)
 
     private val prefs = context.getSharedPreferences("nearvolt", Context.MODE_PRIVATE)
     private val bluetooth = context.getSystemService(BluetoothManager::class.java)?.adapter
@@ -204,7 +204,7 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
 
     override fun stopTransferService() = TransferService.stop(context)
 
-    override suspend fun checkForUpdate(): UpdateInfo? = runCatching { updater.check() }.getOrNull()
+    override suspend fun checkForUpdate(): UpdateInfo? = updater.check()
 
     override suspend fun installUpdate(update: UpdateInfo) = updater.install(update)
 

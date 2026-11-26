@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:nearvolt/engine/engine.dart';
 import 'package:nearvolt/engine/models.dart';
 
-const profile = DeviceProfile(name: 'Pixel 8', kind: DeviceKind.phone, hasNfc: true);
+const profile = DeviceProfile(name: 'Pixel 8', kind: DeviceKind.phone, hasNfc: true, version: '0.1.0');
 
 const rahul = NearbyDevice(id: 'a', name: "Rahul's Pixel 9", kind: DeviceKind.phone, link: 'Same Wi-Fi', ticket: 'NV1A');
 const tablet = NearbyDevice(id: 'b', name: 'Studio tablet', kind: DeviceKind.tablet, link: 'Bluetooth');
@@ -26,7 +26,9 @@ class FakeEngine implements TransferEngine {
   int discoveries = 0;
   int receiveSessions = 0;
   int stops = 0;
+  int updateChecks = 0;
   String? update;
+  final installing = StreamController<double>();
 
   /// What Android is missing; tests change it to simulate the user fixing things.
   List<Need> missing = const [];
@@ -89,8 +91,11 @@ class FakeEngine implements TransferEngine {
   void stopTransfer() => stops++;
 
   @override
-  Future<String?> checkForUpdate() async => update;
+  Future<String?> checkForUpdate() async {
+    updateChecks++;
+    return update;
+  }
 
   @override
-  Stream<double> installUpdate() => const Stream.empty();
+  Stream<double> installUpdate() => installing.stream;
 }

@@ -25,7 +25,12 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
     NearvoltEvents.setUp(this);
     _device = await _platform.deviceInfo();
     rust.startEngine(dataDir: _device.dataDir, deviceName: _device.name);
-    return DeviceProfile(name: _device.name, kind: DeviceKind.parse(_device.kind), hasNfc: _device.hasNfc);
+    return DeviceProfile(
+      name: _device.name,
+      kind: DeviceKind.parse(_device.kind),
+      hasNfc: _device.hasNfc,
+      version: _device.versionName,
+    );
   }
 
   @override

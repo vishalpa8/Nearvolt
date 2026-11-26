@@ -57,8 +57,9 @@ Numbers in progress views use tabular figures so they don't jitter.
 
 Golden screenshots of each one are in [app/test/goldens](../app/test/goldens).
 
-1. **Home.** Two large cards, Send and Receive, plus an update banner when there
-   is one. Nothing looks for other phones until one is chosen.
+1. **Home.** Two large cards, Send and Receive, and a "Check for updates" button
+   that downloads and installs a new version in place. Nothing looks for other
+   phones, or for updates, until asked.
 2. **Send.** Nearby devices with Receive open, as round avatars with names, plus
    "Scan code" and a tap hint. One "Choose files" button asks Files or Folder.
    Anything Android still needs (a permission, Wi-Fi, Bluetooth, Location) shows

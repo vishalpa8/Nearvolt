@@ -10,20 +10,32 @@ import android.os.Build
 import android.provider.Settings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONException
 import org.json.JSONObject
 import java.io.File
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
 
 /**
- * Updates straight from GitHub Releases. The release workflow publishes signed
- * APKs and update.json; the APK must match its SHA-256, and Android itself
- * refuses any APK not signed with the same key as the installed app.
+ * Updates straight from GitHub Releases, only when the user asks. The release
+ * workflow publishes signed APKs and update.json; the APK must match its
+ * SHA-256, and Android itself refuses any APK not signed with the same key as
+ * the installed app. On Android 12 and later the update installs without a
+ * prompt once the user has allowed Nearvolt to install apps.
  */
-class Updater(private val context: Context, private val emit: (PlatformEvent) -> Unit) {
+class Updater(private val activity: MainActivity, private val emit: (PlatformEvent) -> Unit) {
+    private val context: Context = activity.applicationContext
+
     suspend fun check(): UpdateInfo? = withContext(Dispatchers.IO) {
-        val manifest = JSONObject(open(MANIFEST_URL).inputStream.bufferedReader().use { it.readText() })
+        val manifest = try {
+            JSONObject(open(MANIFEST_URL).inputStream.bufferedReader().use { it.readText() })
+        } catch (_: IOException) {
+            throw FlutterError("offline", "Couldn't reach GitHub. Check your internet connection.")
+        } catch (_: JSONException) {
+            throw FlutterError("damaged", "The update information is damaged. Try again later.")
+        }
         if (manifest.getLong("code") <= installedCode()) return@withContext null
         val apks = manifest.getJSONObject("apks")
         val abi = Build.SUPPORTED_ABIS.firstOrNull(apks::has) ?: return@withContext null
@@ -34,20 +46,25 @@ class Updater(private val context: Context, private val emit: (PlatformEvent) ->
     suspend fun install(update: UpdateInfo) {
         requireIdle()
         if (!context.packageManager.canRequestPackageInstalls()) {
-            context.startActivity(
-                Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}"))
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            activity.settings.launch(
+                Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}")),
             )
-            throw FlutterError("permission", "Allow Nearvolt to install updates, then tap Update again.")
+            if (!context.packageManager.canRequestPackageInstalls()) {
+                throw FlutterError("permission", "Nearvolt needs permission to install its updates.")
+            }
         }
-        val apk = withContext(Dispatchers.IO) { download(update) }
+        val apk = try {
+            withContext(Dispatchers.IO) { download(update) }
+        } catch (_: IOException) {
+            throw FlutterError("offline", "The download stopped. Check your internet connection and try again.")
+        }
         requireIdle()
         withContext(Dispatchers.IO) { commit(apk) }
     }
 
     /** Installing restarts the app, so it never happens during a transfer. */
     private fun requireIdle() {
-        if (TransferService.active) throw FlutterError("busy", "Finish the transfer first, then tap Update.")
+        if (TransferService.active) throw FlutterError("busy", "Finish the transfer first, then check again.")
     }
 
     private fun download(update: UpdateInfo): File {

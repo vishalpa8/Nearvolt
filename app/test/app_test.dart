@@ -1,6 +1,7 @@
 import 'dart:ui' show Size;
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart' show LinearProgressIndicator;
 import 'package:nearvolt/app.dart';
 import 'package:nearvolt/engine/models.dart';
 
@@ -44,6 +45,39 @@ void main() {
     await tester.tap(find.text('Send'));
     await tester.pump();
     expect(engine.discoveries, 1);
+  });
+
+  testWidgets('checks for updates only when asked', (tester) async {
+    await open(tester);
+    expect(engine.updateChecks, 0);
+
+    await tester.tap(find.text('Check for updates'));
+    await tester.pump();
+    await tester.pump();
+    expect(engine.updateChecks, 1);
+    expect(find.text('Nearvolt 0.1.0 is the latest version.'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Close'));
+    await tester.pump();
+    expect(find.text('Nearvolt 0.1.0 is the latest version.'), findsNothing);
+  });
+
+  testWidgets('a new version downloads and installs without another tap', (tester) async {
+    engine.update = '0.1.9';
+    await open(tester);
+    await tester.tap(find.text('Check for updates'));
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Downloading version 0.1.9…'), findsOneWidget);
+
+    engine.installing.add(0.5);
+    await tester.pump();
+    expect(tester.widget<LinearProgressIndicator>(find.byType(LinearProgressIndicator)).value, 0.5);
+
+    await engine.installing.close();
+    await tester.pump();
+    await tester.pump();
+    expect(find.textContaining('Installing version 0.1.9'), findsOneWidget);
   });
 
   testWidgets('sends after the receiver confirms the same code', (tester) async {

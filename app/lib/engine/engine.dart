@@ -44,7 +44,8 @@ abstract interface class TransferEngine {
   /// Stops the transfer in progress. Received files stay, and it can resume.
   void stopTransfer();
 
-  /// The version of an available update, if any.
+  /// The version of an available update, if any. Throws when GitHub can't be
+  /// reached.
   Future<String?> checkForUpdate();
 
   /// Downloads and installs the update; reports download progress from 0 to 1.
