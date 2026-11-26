@@ -1,4 +1,4 @@
-//! Command-line tool for sending, receiving and stress-testing Proxima transfers.
+//! Command-line tool for sending, receiving and stress-testing Nearvolt transfers.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File};
@@ -13,7 +13,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use futures::FutureExt;
-use proxima_core::{
+use nearvolt_core::{
     human_bytes, send, Approver, Event, Identity, IncomingOffer, ReceiveOptions, Receiver, SendOptions, Stats,
     Summary, Ticket,
 };
@@ -26,7 +26,7 @@ use tokio::task::{JoinHandle, JoinSet};
 const IDENTITY_PATH: &str = ".bench/identity.bin";
 
 #[derive(Parser)]
-#[command(name = "proxima-bench", version, about = "Send, receive and stress-test Proxima transfers")]
+#[command(name = "nearvolt-bench", version, about = "Send, receive and stress-test Nearvolt transfers")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -261,7 +261,7 @@ async fn local(
         elapsed.as_secs_f64(),
         human_bytes((summary.bytes as f64 / elapsed.as_secs_f64()) as u64)
     );
-    if run_dir.join(".proxima").exists() {
+    if run_dir.join(".nearvolt").exists() {
         bail!("the receiver left its journal behind");
     }
     let received = run_dir.join(&name);

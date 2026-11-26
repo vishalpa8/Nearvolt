@@ -1,10 +1,10 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:proxima/engine/demo_engine.dart';
-import 'package:proxima/main.dart';
+import 'package:nearvolt/engine/demo_engine.dart';
+import 'package:nearvolt/main.dart';
 
 void main() {
   testWidgets('home finds nearby devices', (tester) async {
-    await tester.pumpWidget(ProximaApp(engine: DemoEngine()));
+    await tester.pumpWidget(NearvoltApp(engine: DemoEngine()));
     expect(find.text('Send to anyone nearby'), findsOneWidget);
     expect(find.text('Looking for nearby devices…'), findsOneWidget);
 
@@ -15,7 +15,7 @@ void main() {
   });
 
   testWidgets('sending runs through reconnect to verified', (tester) async {
-    await tester.pumpWidget(ProximaApp(engine: DemoEngine()));
+    await tester.pumpWidget(NearvoltApp(engine: DemoEngine()));
     await tester.pump(const Duration(seconds: 2));
 
     await tester.tap(find.text("Rahul's Pixel 9"));

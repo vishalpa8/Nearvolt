@@ -1,4 +1,4 @@
-//! Proxima core engine: device identity, pairing tickets, encrypted QUIC transport
+//! Nearvolt core engine: device identity, pairing tickets, encrypted transport
 //! and verified, resumable file transfer.
 
 pub mod identity;

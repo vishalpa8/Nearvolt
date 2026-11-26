@@ -9,7 +9,7 @@ use ring::rand::{SecureRandom, SystemRandom};
 
 use crate::identity::Fingerprint;
 
-const PREFIX: &str = "PX1";
+const PREFIX: &str = "NV1";
 const VERSION: u8 = 1;
 const MAX_ADDRS: usize = 16;
 pub const MAX_NAME_LEN: usize = 64;
@@ -55,10 +55,10 @@ impl Ticket {
 
     pub fn decode(text: &str) -> Result<Self> {
         let text = text.trim().to_ascii_uppercase();
-        let body = text.strip_prefix(PREFIX).context("this is not a Proxima ticket")?;
+        let body = text.strip_prefix(PREFIX).context("this is not a Nearvolt ticket")?;
         let bytes = BASE32_NOPAD.decode(body.as_bytes()).context("the ticket is damaged")?;
         let mut r = Reader(&bytes);
-        ensure!(r.u8()? == VERSION, "the ticket is from an unsupported version of Proxima");
+        ensure!(r.u8()? == VERSION, "the ticket is from an unsupported version of Nearvolt");
         let fingerprint = r.array::<32>()?;
         let secret = r.array::<16>()?;
         let count = r.u8()? as usize;
@@ -152,7 +152,7 @@ mod tests {
             name: "Satya's Pixel".into(),
         };
         let text = ticket.encode();
-        assert!(text.starts_with("PX1"));
+        assert!(text.starts_with("NV1"));
         assert_eq!(Ticket::decode(&text).unwrap(), ticket);
         assert_eq!(Ticket::decode(&text.to_lowercase()).unwrap(), ticket);
     }

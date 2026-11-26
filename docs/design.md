@@ -1,4 +1,4 @@
-# Proxima design
+# Nearvolt design
 
 Clean, light and calm. Anyone should be able to send 1 TB without reading
 instructions.

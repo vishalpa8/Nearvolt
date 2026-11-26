@@ -22,7 +22,7 @@ use crate::protocol::ALPN;
 pub type TlsStream = tokio_rustls::TlsStream<TcpStream>;
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
-const SERVER_NAME: &str = "proxima";
+const SERVER_NAME: &str = "nearvolt";
 
 /// Listens for senders and completes the TLS handshake with each.
 pub struct Listener {

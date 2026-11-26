@@ -1,8 +1,8 @@
-# Proxima wire protocol, version 1
+# Nearvolt wire protocol, version 1
 
 ## Transport
 
-- TLS 1.3 only, over TCP. ALPN: `proxima/1`.
+- TLS 1.3 only, over TCP. ALPN: `nearvolt/1`.
 - Both sides present a self-signed Ed25519 certificate (the device identity).
 - The sender pins the receiver's certificate: the BLAKE3 hash of its DER encoding
   must equal the fingerprint in the ticket. No certificate authorities are used.
@@ -18,7 +18,7 @@ which matters for phone battery and heat.
 ## Ticket
 
 The receiver creates a ticket for each receive session and shares it by QR code,
-NFC or Bluetooth. Text form: `PX1` followed by unpadded RFC 4648 base32, so it fits
+NFC or Bluetooth. Text form: `NV1` followed by unpadded RFC 4648 base32, so it fits
 the QR alphanumeric mode.
 
 Binary layout, all integers big-endian:
@@ -82,7 +82,7 @@ after every chunk.
 
 ## Receiver journal
 
-Stored in `<destination>/.proxima/<transfer id>/journal` while a transfer is
+Stored in `<destination>/.nearvolt/<transfer id>/journal` while a transfer is
 incomplete, and deleted once it finishes. The journal file is exclusively locked,
 so two receivers can never write the same transfer at once.
 

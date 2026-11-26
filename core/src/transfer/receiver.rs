@@ -33,8 +33,8 @@ use crate::transport::{Acceptor, Listener, TlsStream};
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const CHECKPOINT_EVERY: Duration = Duration::from_secs(2);
 const MAX_AUTH_FAILURES: u32 = 20;
-const PART_SUFFIX: &str = ".pxpart";
-const STATE_DIR: &str = ".proxima";
+const PART_SUFFIX: &str = ".nvpart";
+const STATE_DIR: &str = ".nearvolt";
 
 #[derive(Clone, Debug)]
 pub struct ReceiveOptions {
@@ -210,7 +210,7 @@ async fn authenticate(tcp: TcpStream, acceptor: Acceptor, secret: Secret) -> Res
         bail!("invalid ticket secret");
     }
     if version != PROTOCOL_VERSION {
-        let _ = write_msg(&mut stream, &reject("Update Proxima on both devices.")).await;
+        let _ = write_msg(&mut stream, &reject("Update Nearvolt on both devices.")).await;
         bail!("unsupported protocol version {version}");
     }
     let sender_name = truncate_utf8(device_name.trim(), MAX_NAME_LEN).to_string();

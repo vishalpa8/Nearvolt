@@ -1,6 +1,6 @@
 [package]
-name = "proxima-core"
-description = "Proxima engine: pairing, encrypted transport and verified, resumable file transfer"
+name = "nearvolt-core"
+description = "Nearvolt engine: pairing, encrypted transport and verified, resumable file transfer"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

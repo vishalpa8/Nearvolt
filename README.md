@@ -1,4 +1,4 @@
-# Proxima
+# Nearvolt
 
 Move files directly between nearby devices at the full speed of the link. No
 server, no account, no internet. Every byte is verified, and interrupted transfers
@@ -32,8 +32,8 @@ powershell -ExecutionPolicy Bypass -File tools\setup.ps1   # Rust, LLVM-MinGW, F
 ## Try the engine
 
 ```powershell
-cargo build --release -p proxima-bench
-$b = ".\target\release\proxima-bench.exe"
+cargo build --release -p nearvolt-bench
+$b = ".\target\release\nearvolt-bench.exe"
 
 & $b gen .bench\data                  # 2.5 GB of large files and photos
 & $b local .bench\data                # send to this PC, then verify every byte

@@ -79,7 +79,7 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(height: Space.l),
               Row(
                 children: [
-                  Text('Proxima', style: text.titleLarge),
+                  Text('Nearvolt', style: text.titleLarge),
                   const Spacer(),
                   if (engine is DemoEngine) _PreviewBadge(onLongPress: engine.simulateIncoming),
                 ],

@@ -9,18 +9,18 @@ import 'screens/transfer_screen.dart';
 import 'theme/app_theme.dart';
 
 void main() {
-  runApp(ProximaApp(engine: DemoEngine()));
+  runApp(NearvoltApp(engine: DemoEngine()));
 }
 
-class ProximaApp extends StatelessWidget {
-  const ProximaApp({super.key, required this.engine});
+class NearvoltApp extends StatelessWidget {
+  const NearvoltApp({super.key, required this.engine});
 
   final TransferEngine engine;
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Proxima',
+      title: 'Nearvolt',
       debugShowCheckedModeBanner: false,
       theme: buildTheme(),
       onGenerateRoute: (settings) => MaterialPageRoute<void>(

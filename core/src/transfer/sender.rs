@@ -41,7 +41,7 @@ pub struct SendOptions {
 impl Default for SendOptions {
     fn default() -> Self {
         Self {
-            device_name: "Proxima device".into(),
+            device_name: "Nearvolt device".into(),
             connections: 8,
             chunk_size: DEFAULT_CHUNK_SIZE,
             reconnect_for: Duration::from_secs(60),

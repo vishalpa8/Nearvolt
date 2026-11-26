@@ -8,7 +8,7 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 /// BLAKE3 hash of a device certificate (DER).
 pub type Fingerprint = [u8; 32];
 
-const MAGIC: &[u8; 5] = b"PXID1";
+const MAGIC: &[u8; 5] = b"NVID1";
 
 /// A device's long-term identity: a self-signed Ed25519 certificate and its key.
 #[derive(Clone)]
@@ -21,7 +21,7 @@ pub struct Identity {
 impl Identity {
     pub fn generate() -> Result<Self> {
         let key_pair = rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519)?;
-        let params = rcgen::CertificateParams::new(vec!["proxima".to_string()])?;
+        let params = rcgen::CertificateParams::new(vec!["nearvolt".to_string()])?;
         let cert = params.self_signed(&key_pair)?;
         Ok(Self::from_parts(cert.der().to_vec(), key_pair.serialize_der()))
     }
@@ -71,7 +71,7 @@ impl Identity {
     }
 
     fn decode(bytes: &[u8]) -> Result<Self> {
-        let rest = bytes.strip_prefix(MAGIC).context("not a Proxima identity file")?;
+        let rest = bytes.strip_prefix(MAGIC).context("not a Nearvolt identity file")?;
         let (cert, rest) = take_part(rest)?;
         let (key, rest) = take_part(rest)?;
         if !rest.is_empty() {

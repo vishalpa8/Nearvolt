@@ -6,7 +6,7 @@ use anyhow::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-pub const ALPN: &[u8] = b"proxima/1";
+pub const ALPN: &[u8] = b"nearvolt/1";
 pub const PROTOCOL_VERSION: u32 = 1;
 
 /// Both sides send a control message at least this often.

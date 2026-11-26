@@ -1,6 +1,6 @@
-# Proxima security
+# Nearvolt security
 
-Proxima has no server and no accounts, so every security decision happens on the
+Nearvolt has no server and no accounts, so every security decision happens on the
 two devices.
 
 ## Threats

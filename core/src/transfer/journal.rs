@@ -47,7 +47,7 @@ impl Journal {
                     std::thread::sleep(Duration::from_millis(100));
                 }
                 Err(TryLockError::WouldBlock) => {
-                    return Err(io::Error::other("another Proxima window is receiving this transfer"));
+                    return Err(io::Error::other("another Nearvolt window is receiving this transfer"));
                 }
                 Err(TryLockError::Error(e)) => return Err(e),
             }

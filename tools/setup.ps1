@@ -1,4 +1,4 @@
-# Downloads everything Proxima needs into .toolchain\ inside the project.
+# Downloads everything Nearvolt needs into .toolchain\ inside the project.
 # Nothing is installed system-wide and no system settings are changed.
 #
 #   powershell -ExecutionPolicy Bypass -File tools\setup.ps1

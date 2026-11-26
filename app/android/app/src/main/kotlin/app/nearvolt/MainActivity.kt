@@ -1,4 +1,4 @@
-package com.proxima.proxima
+package app.nearvolt
 
 import io.flutter.embedding.android.FlutterActivity
 

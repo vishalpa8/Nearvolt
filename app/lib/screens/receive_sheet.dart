@@ -43,7 +43,7 @@ class _ReceiveSheet extends StatelessWidget {
             ),
             const SizedBox(height: Space.s),
             Text(
-              'Saved to Downloads › Proxima. Every file is checked as it arrives.',
+              'Saved to Downloads › Nearvolt. Every file is checked as it arrives.',
               style: text.bodySmall,
               textAlign: TextAlign.center,
             ),

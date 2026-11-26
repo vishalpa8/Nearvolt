@@ -1,6 +1,6 @@
-# Proxima architecture
+# Nearvolt architecture
 
-Proxima moves files directly between nearby devices (phone, tablet, laptop) at the
+Nearvolt moves files directly between nearby devices (phone, tablet, laptop) at the
 maximum speed the link allows, with no server, no account and no internet.
 
 Goals, in priority order:
@@ -121,7 +121,7 @@ flowchart LR
     end
     W -->|"parallel TLS connections"| R
     subgraph Receiver
-        R["Stream readers: verify BLAKE3"] --> D["Positional write into a .pxpart file"]
+        R["Stream readers: verify BLAKE3"] --> D["Positional write into a .nvpart file"]
         D --> J["Journal record and checkpoint"]
         J --> F["File complete: fsync, re-read and verify, rename, keep timestamp"]
     end
@@ -140,8 +140,8 @@ flowchart LR
 ## Code layout
 
 ```
-proxima/
-├── core/                 Rust engine (proxima-core)
+Nearvolt/
+├── core/                 Rust engine (nearvolt-core)
 │   └── src/
 │       ├── identity.rs   device key and certificate
 │       ├── pairing.rs    tickets for QR, NFC and Bluetooth
@@ -172,7 +172,7 @@ and receiver share one machine), with every byte verified afterward:
 | Link cut and apps killed in the same transfer | Completed, byte-for-byte identical |
 
 Raw network ceilings on this PC: 919 MB/s for 8 TCP connections, about 300 MB/s for
-the best QUIC setup. Run `proxima-bench local <folder>` to reproduce.
+the best QUIC setup. Run `nearvolt-bench local <folder>` to reproduce.
 
 ## Build phases
 
