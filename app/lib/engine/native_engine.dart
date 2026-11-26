@@ -223,7 +223,10 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
   @override
   void answer({required bool accept}) {
     rust.answerOffer(accept: accept);
-    if (accept) _platform.startTransferService('Receiving from ${_incomingFrom ?? 'a nearby device'}');
+    if (!accept) return;
+    // Connected: the radios that found this phone have done their job.
+    _platform.stopAdvertising();
+    _platform.startTransferService('Receiving from ${_incomingFrom ?? 'a nearby device'}');
   }
 
   @override

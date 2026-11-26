@@ -156,6 +156,11 @@ abstract class NearvoltPlatform {
 
   void updateTickets(String privateTicket, String publicTicket, int port);
 
+  /// A transfer started: stops advertising this phone over Bluetooth, the local
+  /// network and NFC, and closes the Wi-Fi Direct group unless the sender
+  /// joined it. The receiver keeps listening, so the sender can still reconnect.
+  void stopAdvertising();
+
   void stopReceiving();
 
   /// Looks for receivers and listens for NFC taps while the send page is open.

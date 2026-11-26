@@ -68,6 +68,14 @@ class WifiDirect(private val context: Context) {
         channel?.let { manager?.removeGroup(it, null) }
     }
 
+    /** Closes the group unless a sender joined it, so an unused group doesn't run through a transfer. */
+    suspend fun removeGroupIfUnused() {
+        val manager = manager ?: return
+        val channel = channel ?: return
+        val group = suspendCancellableCoroutine<WifiP2pGroup?> { c -> manager.requestGroupInfo(channel) { c.resume(it) } }
+        if (group != null && group.clientList.isEmpty()) removeGroup()
+    }
+
     @Suppress("DEPRECATION") // connectionInfo is the only way to read the frequency without a network callback.
     private fun routerFrequency(): Int? =
         context.getSystemService(WifiManager::class.java)?.connectionInfo?.frequency?.takeIf { it > 0 }

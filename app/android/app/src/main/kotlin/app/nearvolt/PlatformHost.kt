@@ -195,6 +195,13 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
         if (nearbyGranted) ble.advertise(publicTicket)
     }
 
+    override fun stopAdvertising() {
+        nfc.stopServing()
+        local.stopAdvertising()
+        ble.stopAdvertising()
+        if (nearbyGranted) scope.launch { wifiDirect.removeGroupIfUnused() }
+    }
+
     override fun stopReceiving() {
         nfc.stopServing()
         local.stopAdvertising()

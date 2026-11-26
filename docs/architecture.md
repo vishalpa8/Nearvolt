@@ -60,6 +60,14 @@ Wi-Fi Direct group on the router's channel, and the ticket carries its name,
 passphrase and frequency. The sender joins it without a pop-up after 2.5 seconds
 without a connection, while the engine keeps trying every address in the ticket.
 
+Finding a phone and moving files are separate jobs. Bluetooth, NFC, the local
+network's service records and QR codes only exchange the ticket; files always
+travel over Wi-Fi (the shared network or Wi-Fi Direct) or the USB cable. Every
+finding method runs at once, only while Send or Receive is open, so the first to
+succeed wins. Once a transfer starts they all stop: the sender stops searching,
+and the receiver stops advertising and closes its Wi-Fi Direct group unless the
+sender joined it.
+
 ## Staying connected
 
 | Cause of drops | Fix |

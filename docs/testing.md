@@ -59,6 +59,7 @@ Start with a fresh install, Bluetooth off.
 | 6 | B opens Receive, A opens Send, then connect the phones with a USB cable. Answer Android's prompts ("Allow access", "Open Nearvolt"). | A shows "USB cable" (or B's model) in Nearby. Sending shows a code on both, as in 2. |
 | 7 | B closes Receive. | B disappears from A's Nearby list. |
 | 8 | B declines an offer. | A shows "Transfer stopped". |
+| 8a | During a transfer over the same Wi-Fi, look for B in a third phone's Nearvolt Send list and in its Wi-Fi Direct settings. | B is in neither: once a transfer starts, B stops advertising and closes its unused Wi-Fi Direct group. |
 
 ### Keeping the connection
 

@@ -741,6 +741,12 @@ interface NearvoltPlatform {
    */
   suspend fun startReceiving(privateTicket: String, publicTicket: String, port: Long): WifiGroup?
   fun updateTickets(privateTicket: String, publicTicket: String, port: Long)
+  /**
+   * A transfer started: stops advertising this phone over Bluetooth, the local
+   * network and NFC, and closes the Wi-Fi Direct group unless the sender
+   * joined it. The receiver keeps listening, so the sender can still reconnect.
+   */
+  fun stopAdvertising()
   fun stopReceiving()
   /** Looks for receivers and listens for NFC taps while the send page is open. */
   fun startDiscovery()
@@ -900,6 +906,22 @@ interface NearvoltPlatform {
             val portArg = args[2] as Long
             val wrapped: List<Any?> = try {
               api.updateTickets(privateTicketArg, publicTicketArg, portArg)
+              listOf(null)
+            } catch (exception: Throwable) {
+              PlatformPigeonUtils.wrapError(exception)
+            }
+            reply.reply(wrapped)
+          }
+        } else {
+          channel.setMessageHandler(null)
+        }
+      }
+      run {
+        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.nearvolt.NearvoltPlatform.stopAdvertising$separatedMessageChannelSuffix", codec)
+        if (api != null) {
+          channel.setMessageHandler { _, reply ->
+            val wrapped: List<Any?> = try {
+              api.stopAdvertising()
               listOf(null)
             } catch (exception: Throwable) {
               PlatformPigeonUtils.wrapError(exception)
