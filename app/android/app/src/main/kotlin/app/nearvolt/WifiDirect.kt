@@ -31,9 +31,8 @@ class WifiDirect(private val context: Context) {
     suspend fun createGroup(): WifiGroup? {
         val manager = manager ?: return null
         val channel = channel ?: return null
-        // Android refuses new requests while it's still removing a group, so wait for that.
-        if (groupInfo(manager, channel) != null) manager.perform("remove the old group") { removeGroup(channel, it) }
-        val name = "DIRECT-NV-" + random(4)
+        if (!clear(manager, channel)) return null
+        val name = PREFIX + random(4)
         val passphrase = random(12)
         val created = routerFrequency()?.let { frequency ->
             manager.perform("create a group on $frequency MHz") {
@@ -59,9 +58,14 @@ class WifiDirect(private val context: Context) {
         val manager = manager ?: return false
         val channel = channel ?: return false
         val config = config(group.ssid, group.passphrase) { setGroupOperatingFrequency(group.frequency.toInt()) }
-        // A phone is in one group at a time; a leftover one of its own would make joining fail.
-        if (groupInfo(manager, channel) != null) manager.perform("leave the current group") { removeGroup(channel, it) }
-        if (!manager.perform("join ${group.ssid}") { connect(channel, config, it) }) return false
+        if (!clear(manager, channel)) return false
+        var joined = manager.perform("join ${group.ssid}") { connect(channel, config, it) }
+        if (!joined) {
+            // Android can still be settling after a group closes; one more try covers it.
+            delay(1_000)
+            joined = manager.perform("join ${group.ssid} again") { connect(channel, config, it) }
+        }
+        if (!joined) return false
         repeat(75) {
             val info = withTimeoutOrNull(ANSWER_MS) {
                 suspendCancellableCoroutine<WifiP2pInfo?> { c -> manager.requestConnectionInfo(channel) { c.resume(it) } }
@@ -74,6 +78,46 @@ class WifiDirect(private val context: Context) {
 
     fun removeGroup() {
         channel?.let { manager?.removeGroup(it, null) }
+    }
+
+    /**
+     * Android keeps a group running after the app that made it stops, for
+     * example when Nearvolt updates itself. Removes one Nearvolt left behind;
+     * groups of other apps, such as screen mirroring, are left alone.
+     */
+    suspend fun removeLeftover() {
+        val manager = manager ?: return
+        val channel = channel ?: return
+        val group = groupInfo(manager, channel) ?: return
+        if (group.networkName.startsWith(PREFIX)) {
+            AppLog.write("wifi-direct", "removing a group left over from before")
+            removeAndWait(manager, channel)
+        }
+    }
+
+    /**
+     * A phone is in one group at a time, so a leftover Nearvolt group goes before
+     * a new one is made or joined. Returns false when another app's group is in
+     * the way.
+     */
+    private suspend fun clear(manager: WifiP2pManager, channel: WifiP2pManager.Channel): Boolean {
+        val group = groupInfo(manager, channel) ?: return true
+        if (!group.networkName.startsWith(PREFIX)) {
+            AppLog.write("wifi-direct", "another app's Wi-Fi Direct group is active, so Nearvolt can't use Wi-Fi Direct")
+            return false
+        }
+        return removeAndWait(manager, channel)
+    }
+
+    /** Android reports a removal before it's done; new requests fail until the group is really gone. */
+    private suspend fun removeAndWait(manager: WifiP2pManager, channel: WifiP2pManager.Channel): Boolean {
+        manager.perform("remove the old group") { removeGroup(channel, it) }
+        repeat(15) {
+            if (groupInfo(manager, channel) == null) return true
+            delay(200)
+        }
+        AppLog.write("wifi-direct", "the old group is still there after 3 s")
+        return false
     }
 
     /** Closes the group unless a sender joined it, so an unused group doesn't run through a transfer. */
@@ -106,9 +150,15 @@ class WifiDirect(private val context: Context) {
             suspendCancellableCoroutine { c -> manager.requestGroupInfo(channel) { c.resume(it) } }
         }
 
+    /**
+     * The router's channel, if a group may use it. Channels shared with radar
+     * (5250–5730 MHz) and 6 GHz are off limits to Wi-Fi Direct, so there the
+     * group picks its own channel instead.
+     */
     @Suppress("DEPRECATION") // connectionInfo is the only way to read the frequency without a network callback.
     private fun routerFrequency(): Int? =
-        context.getSystemService(WifiManager::class.java)?.connectionInfo?.frequency?.takeIf { it > 0 }
+        context.getSystemService(WifiManager::class.java)?.connectionInfo?.frequency
+            ?.takeIf { it in 2_400..2_500 || it in 5_150..5_250 || it in 5_735..5_895 }
 
     private fun config(name: String, passphrase: String, extra: WifiP2pConfig.Builder.() -> Unit) =
         WifiP2pConfig.Builder().setNetworkName(name).setPassphrase(passphrase).apply(extra).build()
@@ -158,6 +208,8 @@ class WifiDirect(private val context: Context) {
             else -> "6 GHz"
         }
 
+        /** Every group Nearvolt makes is named this way, so its leftovers can be told apart. */
+        private const val PREFIX = "DIRECT-NV-"
         private const val ANSWER_MS = 5_000L
         private const val BUSY_TRIES = 4
         private const val BUSY_WAIT_MS = 500L

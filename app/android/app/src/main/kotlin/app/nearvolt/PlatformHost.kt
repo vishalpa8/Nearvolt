@@ -53,6 +53,10 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
     private val usb = Usb(context, emit)
     private val updater = Updater(activity, emit)
 
+    init {
+        if (nearbyGranted) scope.launch { wifiDirect.removeLeftover() }
+    }
+
     // Created on first use: if Google's scanner ever fails, only Scan code is affected.
     private val modules by lazy { ModuleInstall.getClient(activity) }
     private val scanner by lazy {

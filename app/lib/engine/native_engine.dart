@@ -85,7 +85,10 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
         _found.remove(event.id);
         _publishNearby();
       case PlatformEventKind.ticketTapped:
-        if (event.ticket case final ticket?) _taps.add(ticket);
+        if (event.ticket case final ticket?) {
+          _platform.log('nfc', 'read a code by tapping phones');
+          _taps.add(ticket);
+        }
       case PlatformEventKind.updateProgress:
         _updateProgress.add(event.progress ?? 0);
       case PlatformEventKind.usbConnected:
@@ -188,7 +191,11 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
         );
 
   @override
-  Future<String?> scanCode() => _platform.scanQr();
+  Future<String?> scanCode() async {
+    final ticket = await _platform.scanQr();
+    if (ticket != null) _platform.log('scanner', 'read a code');
+    return ticket;
+  }
 
   @override
   Stream<Connection> connect(NearbyDevice to) {
