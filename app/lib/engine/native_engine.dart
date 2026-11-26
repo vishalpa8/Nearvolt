@@ -265,54 +265,71 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
   }
 
   @override
-  Stream<Connection> receive() async* {
+  Stream<Connection> receive() {
+    final out = StreamController<Connection>();
     final previous = _receiveClosed;
     final closed = Completer<void>();
     _receiveClosed = closed.future;
-    final live = _Live(const Connection());
-    final diagnostics = Diagnostics(_platform, 'receive', sending: false);
-    var serving = false;
-    try {
-      await previous;
-      await _platform.watchUsb();
-      final events = rust.receive(destDir: _device.downloadDir, journalDir: _device.journalDir);
-      await for (final event in events) {
-        diagnostics.record(event);
-        if (event.kind == rust.EventKind.ready) {
-          var tickets = rust.receiveTickets();
-          live.emit(live.state.copyWith(ticket: tickets.privateTicket));
-          yield live.state;
-          final group = await _platform.startReceiving(tickets.tapTicket, tickets.publicTicket, tickets.port);
-          if (group != null) {
-            final wifi = rust.WifiInfo(ssid: group.ssid, passphrase: group.passphrase, frequency: group.frequency);
-            tickets = rust.receiveTickets(wifi: wifi);
-            await _platform.updateTickets(tickets.tapTicket, tickets.publicTicket, tickets.port);
-            live.emit(live.state.copyWith(ticket: tickets.privateTicket));
-            yield live.state;
-          }
-          unawaited(diagnostics.network());
-          continue;
-        }
-        live.apply(event);
-        if (event.kind == rust.EventKind.connected) {
-          // Connected: the radios that found this phone have done their job.
-          await _platform.stopAdvertising();
-          if (!serving) await _platform.startTransferService('Connected to ${live.state.peer}');
-          serving = true;
-        }
-        _notify(live.state);
-        yield live.state;
-      }
-    } finally {
-      diagnostics.close();
+    var cancelled = false;
+
+    Future<void> run() async {
+      final live = _Live(const Connection(), onChange: out.add);
+      final diagnostics = Diagnostics(_platform, 'receive', sending: false);
+      var serving = false;
       try {
-        rust.stopReceiving();
-        await _platform.stopReceiving();
-        await _platform.stopTransferService();
+        await previous;
+        await _platform.watchUsb();
+        if (cancelled) return;
+        final events = rust.receive(destDir: _device.downloadDir, journalDir: _device.journalDir);
+        await for (final event in events) {
+          diagnostics.record(event);
+          if (event.kind == rust.EventKind.ready) {
+            var tickets = rust.receiveTickets();
+            live.emit(live.state.copyWith(ticket: tickets.privateTicket));
+            final group = await _platform.startReceiving(tickets.tapTicket, tickets.publicTicket, tickets.port);
+            if (group != null && !cancelled) {
+              final wifi = rust.WifiInfo(ssid: group.ssid, passphrase: group.passphrase, frequency: group.frequency);
+              tickets = rust.receiveTickets(wifi: wifi);
+              await _platform.updateTickets(tickets.tapTicket, tickets.publicTicket, tickets.port);
+              live.emit(live.state.copyWith(ticket: tickets.privateTicket));
+            }
+            unawaited(diagnostics.network());
+            continue;
+          }
+          live.apply(event);
+          if (event.kind == rust.EventKind.connected) {
+            // Connected: the radios that found this phone have done their job.
+            await _platform.stopAdvertising();
+            if (!serving) await _platform.startTransferService('Connected to ${live.state.peer}');
+            serving = true;
+          }
+          _notify(live.state);
+        }
+      } on Object catch (e) {
+        if (!cancelled) _platform.log('receive', 'stopped: $e');
       } finally {
-        closed.complete();
+        diagnostics.close();
+        try {
+          rust.stopReceiving();
+          await _platform.stopReceiving();
+          await _platform.stopTransferService();
+        } finally {
+          await out.close();
+          closed.complete();
+        }
       }
     }
+
+    out
+      ..onListen = run
+      // Leaving Receive ends it at once: stopping the engine's receiver ends its
+      // events, even while it's idle waiting for a sender.
+      ..onCancel = () {
+        cancelled = true;
+        rust.stopReceiving();
+        return closed.future;
+      };
+    return out.stream;
   }
 
   @override

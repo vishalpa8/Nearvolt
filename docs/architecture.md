@@ -81,7 +81,8 @@ unless the sender joined it.
 | Wi-Fi Direct on a different channel from the home router | The group is created on the router's channel |
 | Background Wi-Fi scans and radio power saving | Low-latency Wi-Fi lock and wake lock while connected |
 | The system killing a background app | `connectedDevice` foreground service with progress in a notification |
-| Silent link loss | Heartbeat every 500 ms; 4 seconds of silence means the link is gone |
+| Silent link loss | Heartbeat every 500 ms; 8 seconds of silence means the link is gone |
+| Short Wi-Fi stalls, for example when an unused Wi-Fi Direct group closes | Under 8 seconds, TCP carries the connection through without a reconnect |
 | A cable pulled out | The engine waits for it to be plugged back in and resumes |
 
 A **connection** outlives any number of link drops. The receiver accepts a
@@ -93,7 +94,7 @@ files whenever it likes, and they're sent one after another.
 stateDiagram-v2
     [*] --> Waiting: Sender connects
     Waiting --> Connected: Receiver accepts (a tap needs no accept)
-    Connected --> LinkLost: No heartbeat for 4 seconds
+    Connected --> LinkLost: No heartbeat for 8 seconds
     LinkLost --> Reconnecting: Sender retries the address that worked
     Reconnecting --> Connected: Let back in, the batch resumes where it stopped
     Connected --> [*]: Either phone taps Disconnect
@@ -165,7 +166,8 @@ and receiver share one machine), with every byte verified afterward:
 | One 2 GB file | 274 MB/s (one stream; includes reading it back from disk to verify) |
 | 2,000 files of 250 KB | 89 MB/s |
 | Mixed: 2 GB of large files plus 1,000 photos | 233 MB/s |
-| Link cut for 6 seconds mid-transfer | Detected in 4 s, resumed where it stopped |
+| Link cut for 6 seconds mid-transfer | Carried through without reconnecting |
+| Link cut for 12 seconds mid-transfer | Detected after 8 s, reconnected, resumed where it stopped |
 | Both apps killed mid-transfer, then restarted | Resumed from the journal |
 | Link cut and apps killed in the same transfer | Completed, byte-for-byte identical (149 MB/s including both outages) |
 

@@ -136,6 +136,8 @@ pub enum Event {
         batch: u32,
         reason: String,
     },
+    /// The link dropped and is being reconnected; once per drop, and never
+    /// before the first `Connected`.
     ConnectionLost {
         reason: String,
     },

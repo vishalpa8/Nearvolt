@@ -90,10 +90,13 @@ sender                                               receiver
 - A data stream is accepted only if its session matches the current control
   stream and its certificate matches the sender's.
 - While a phone is connected, the receiver turns away every other sender.
-- Four seconds without a message on the control stream means the link is gone.
-  The sender reconnects through the same address, with backoff from 100 ms up to
-  2 s, until it gets through or the user disconnects. The receiver lets the same
-  sender back in without asking, and the sender re-offers the batch it was on.
+- Eight seconds without a message on the control stream means the link is
+  gone; shorter pauses, such as a phone's Wi-Fi briefly stalling, are left to
+  TCP. The sender reconnects through the same address, with backoff from 100 ms
+  up to 2 s, until it gets through or the user disconnects. The backoff starts
+  over only after a connection that lasted 5 seconds, so a receiver that hangs
+  up at once is retried more and more slowly. The receiver lets the same sender
+  back in without asking, and the sender re-offers the batch it was on.
 - A batch the receiver can't take, for example for lack of space, is rejected
   on its own; the connection stays open for the next one.
 - If nothing moves for 30 seconds while a batch is open, the sender restarts the

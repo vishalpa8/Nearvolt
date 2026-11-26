@@ -12,7 +12,9 @@ pub const PROTOCOL_VERSION: u32 = 2;
 /// Both sides send a control message at least this often.
 pub const HEARTBEAT_INTERVAL: Duration = Duration::from_millis(500);
 /// Silence on the control connection for this long means the link is gone.
-pub const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(4);
+/// Phones' Wi-Fi can pause for a few seconds, for example while a Wi-Fi Direct
+/// group on the same channel closes, and TCP rides that out on its own.
+pub const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(8);
 
 pub type SessionId = [u8; 16];
 

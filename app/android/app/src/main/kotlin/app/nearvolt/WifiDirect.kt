@@ -59,6 +59,8 @@ class WifiDirect(private val context: Context) {
         val manager = manager ?: return false
         val channel = channel ?: return false
         val config = config(group.ssid, group.passphrase) { setGroupOperatingFrequency(group.frequency.toInt()) }
+        // A phone is in one group at a time; a leftover one of its own would make joining fail.
+        if (groupInfo(manager, channel) != null) manager.perform("leave the current group") { removeGroup(channel, it) }
         if (!manager.perform("join ${group.ssid}") { connect(channel, config, it) }) return false
         repeat(75) {
             val info = withTimeoutOrNull(ANSWER_MS) {

@@ -30,6 +30,9 @@ use crate::util::AbortOnDrop;
 /// With nothing left to send and no progress for this long, the session is
 /// restarted so the receiver can report exactly what it is still missing.
 const STALL_TIMEOUT: Duration = Duration::from_secs(30);
+/// A connection that lasted this long was working, so its loss isn't a reason
+/// to wait longer before the next try.
+const STABLE: Duration = Duration::from_secs(5);
 const BLOCK: usize = 1 << 20;
 
 #[derive(Clone, Debug)]
@@ -108,18 +111,41 @@ pub async fn connect<L: Link>(
     let mut batches = Batches::default();
     let mut failing_since: Option<Instant> = None;
     let mut attempt = 0;
+    // `ConnectionLost` goes out once per outage, and only once the connection
+    // has been up: before that the app is still connecting.
+    let mut up = false;
+    let mut reported = false;
     loop {
-        match open(&peer.link, &connector).await {
+        let error = match open(&peer.link, &connector).await {
             Ok(control) => {
-                attempt = 0;
-                let session =
-                    session(identity, &connector, peer, control, options, &mut batches, &mut commands, &stats, &events);
-                match session.await {
+                let opened = Instant::now();
+                let mut ready = false;
+                let result = session(
+                    identity,
+                    &connector,
+                    peer,
+                    control,
+                    options,
+                    &mut batches,
+                    &mut commands,
+                    &stats,
+                    &events,
+                    &mut ready,
+                )
+                .await;
+                if ready {
+                    (up, reported, failing_since) = (true, false, None);
+                }
+                match result {
                     Ok(()) => return Ok(batches.summary(started)),
                     Err(e) if is_fatal(&e) => return Err(e),
                     Err(e) => {
-                        emit(&events, Event::ConnectionLost { reason: format!("{e:#}") });
-                        failing_since = Some(Instant::now());
+                        // Only a connection that lasted starts the backoff over; one the
+                        // receiver drops at once is retried more and more slowly.
+                        if opened.elapsed() >= STABLE {
+                            attempt = 0;
+                        }
+                        e
                     }
                 }
             }
@@ -127,22 +153,27 @@ pub async fn connect<L: Link>(
                 if batches.finished() {
                     return Ok(batches.summary(started));
                 }
-                let since = *failing_since.get_or_insert_with(Instant::now);
-                if since.elapsed() >= options.reconnect_for {
-                    return Err(e.context("could not reach the receiver"));
-                }
-                attempt += 1;
-                // Batches still queue while offline, and Disconnect ends at once.
-                let wait = tokio::time::sleep(backoff(attempt));
-                tokio::pin!(wait);
-                loop {
-                    tokio::select! {
-                        _ = &mut wait => break,
-                        command = commands.recv(), if !batches.closed => {
-                            if batches.handle(command, &events).await.is_break() {
-                                return Ok(batches.summary(started));
-                            }
-                        }
+                e
+            }
+        };
+        if up && !reported {
+            emit(&events, Event::ConnectionLost { reason: format!("{error:#}") });
+            reported = true;
+        }
+        let since = *failing_since.get_or_insert_with(Instant::now);
+        if since.elapsed() >= options.reconnect_for {
+            return Err(error.context("could not reach the receiver"));
+        }
+        attempt += 1;
+        // Batches still queue while offline, and Disconnect ends at once.
+        let wait = tokio::time::sleep(backoff(attempt));
+        tokio::pin!(wait);
+        loop {
+            tokio::select! {
+                _ = &mut wait => break,
+                command = commands.recv(), if !batches.closed => {
+                    if batches.handle(command, &events).await.is_break() {
+                        return Ok(batches.summary(started));
                     }
                 }
             }
@@ -227,6 +258,7 @@ async fn session<L: Link>(
     commands: &mut mpsc::UnboundedReceiver<Command>,
     stats: &Arc<Stats>,
     events: &Option<EventSender>,
+    ready: &mut bool,
 ) -> Result<()> {
     let receiver = peer_fingerprint(&control).context("the receiver sent no certificate")?;
     let (mut rd, mut wr) = tokio::io::split(control);
@@ -277,6 +309,7 @@ async fn session<L: Link>(
             }
         }
     }
+    *ready = true;
     emit(events, Event::Connected { peer: peer.name.clone(), route: peer.link.route() });
 
     // Data streams open alongside everything else, so the receiver's messages,
@@ -519,4 +552,58 @@ async fn send_file(stream: &mut TlsStream, job: Job, stats: &Arc<Stats>) -> Resu
     // end of a file before an idle period would never leave the device.
     stream.flush().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use tokio::net::TcpListener;
+
+    use super::*;
+    use crate::transport::{Acceptor, RawStream};
+
+    /// A receiver that finishes the TLS handshake and reads the hello, then hangs
+    /// up: every connection "works" and fails straight away.
+    #[tokio::test]
+    async fn a_receiver_that_hangs_up_at_once_is_retried_more_and_more_slowly() {
+        let receiver = Identity::generate().unwrap();
+        let acceptor = Acceptor::new(&receiver).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let count = accepted.clone();
+        tokio::spawn(async move {
+            while let Ok((tcp, _)) = listener.accept().await {
+                count.fetch_add(1, Ordering::Relaxed);
+                let acceptor = acceptor.clone();
+                tokio::spawn(async move {
+                    let raw: RawStream = Box::new(tcp);
+                    if let Ok((mut stream, _)) = acceptor.handshake(raw).await {
+                        let _ = read_msg(&mut stream).await;
+                    }
+                });
+            }
+        });
+
+        let sender = Identity::generate().unwrap();
+        let peer = Peer {
+            link: TcpLink::new(vec![addr]),
+            name: "receiver".into(),
+            fingerprint: Some(*receiver.fingerprint()),
+            secret: Some([7; 16]),
+        };
+        let options = SendOptions { reconnect_for: Duration::from_secs(2), ..SendOptions::default() };
+        let (_commands, queue) = mpsc::unbounded_channel();
+        let (events, mut seen) = mpsc::unbounded_channel();
+        let result = connect(&sender, &peer, &options, queue, Arc::new(Stats::default()), Some(events)).await;
+
+        assert!(result.is_err());
+        // Without backoff this is hundreds of attempts in two seconds.
+        let attempts = accepted.load(Ordering::Relaxed);
+        assert!(attempts <= 8, "{attempts} attempts");
+        while let Ok(event) = seen.try_recv() {
+            assert!(!matches!(event, Event::ConnectionLost { .. }), "lost a connection that never came up");
+        }
+    }
 }
