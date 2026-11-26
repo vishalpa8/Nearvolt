@@ -8,6 +8,7 @@ import android.net.Uri
 import android.provider.DocumentsContract
 import android.provider.DocumentsContract.Document
 import android.provider.OpenableColumns
+import androidx.annotation.Keep
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
@@ -30,7 +31,11 @@ object NativeBridge {
     @JvmStatic
     private external fun register(bridge: NativeBridge)
 
-    /** Called by the engine. Returns a descriptor the engine now owns, or -1. */
+    /**
+     * Called by the engine. Returns a descriptor the engine now owns, or -1.
+     * Only native code calls it, so it must survive release-build shrinking.
+     */
+    @Keep
     fun openSource(token: Long, index: Int): Int = try {
         val uri = selections[token]?.getOrNull(index) ?: return -1
         resolver.openFileDescriptor(uri, "r")?.detachFd() ?: -1

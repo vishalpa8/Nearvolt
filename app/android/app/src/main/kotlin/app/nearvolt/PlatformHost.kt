@@ -15,20 +15,22 @@ import android.os.Build
 import android.os.Environment
 import android.os.Parcelable
 import android.provider.Settings
+import android.widget.Toast
+import com.google.android.gms.common.moduleinstall.ModuleInstall
+import com.google.android.gms.common.moduleinstall.ModuleInstallRequest
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import java.io.File
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
 
 /** Implements the Pigeon interface by delegating to one small class per radio. */
 class PlatformHost(private val activity: MainActivity, private val events: NearvoltEvents) : NearvoltPlatform {
@@ -44,6 +46,12 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
     private val nfc = Nfc(activity, emit)
     private val usb = Usb(context, emit)
     private val updater = Updater(activity, emit)
+
+    private val modules = ModuleInstall.getClient(activity)
+    private val scanner = GmsBarcodeScanning.getClient(
+        activity,
+        GmsBarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).build(),
+    )
 
     private val prefs = context.getSharedPreferences("nearvolt", Context.MODE_PRIVATE)
     private val bluetooth = context.getSystemService(BluetoothManager::class.java)?.adapter
@@ -151,13 +159,29 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
         return withContext(Dispatchers.IO) { NativeBridge.fromTree(tree) }
     }
 
-    /** Google's code scanner: no camera permission and nothing added to the app. */
-    override suspend fun scanQr(): String? = suspendCancellableCoroutine { continuation ->
-        val options = GmsBarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).build()
-        GmsBarcodeScanning.getClient(activity, options).startScan()
-            .addOnSuccessListener { continuation.resume(it.rawValue) }
-            .addOnCanceledListener { continuation.resume(null) }
-            .addOnFailureListener { continuation.resumeWithException(FlutterError("scanner", it.message)) }
+    /**
+     * Google's code scanner: no camera permission and nothing added to the app.
+     * Play services downloads it the first time, so the scan waits for that.
+     */
+    override suspend fun scanQr(): String? = try {
+        if (!modules.areModulesAvailable(scanner).await().areModulesAvailable()) {
+            Toast.makeText(context, "Getting the code scanner ready…", Toast.LENGTH_SHORT).show()
+            modules.installModules(ModuleInstallRequest.newBuilder().addApi(scanner).build()).await()
+            waitForScanner()
+        }
+        scanner.startScan().await().rawValue
+    } catch (_: CancellationException) {
+        null
+    } catch (_: Exception) {
+        throw FlutterError("scanner", "Couldn't open the code scanner. Update Google Play services, then try again.")
+    }
+
+    private suspend fun waitForScanner() {
+        repeat(120) {
+            if (modules.areModulesAvailable(scanner).await().areModulesAvailable()) return
+            delay(500)
+        }
+        throw FlutterError("scanner", "The code scanner is still downloading. Try again in a moment.")
     }
 
     override suspend fun startReceiving(privateTicket: String, publicTicket: String, port: Long): WifiGroup? {
@@ -182,6 +206,8 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
         local.browse()
         if (nearbyGranted) ble.scan()
         nfc.read()
+        // Fetch the code scanner now, so it's ready when the user taps Scan code.
+        modules.installModules(ModuleInstallRequest.newBuilder().addApi(scanner).build())
     }
 
     override fun stopDiscovery() {

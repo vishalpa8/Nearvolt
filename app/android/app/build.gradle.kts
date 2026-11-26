@@ -67,7 +67,10 @@ flutter {
 
 dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.2")
     implementation("androidx.activity:activity-ktx:1.10.1")
+    implementation("androidx.annotation:annotation:1.9.1")
+    implementation("com.google.android.gms:play-services-base:18.11.1")
     implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
 }
 

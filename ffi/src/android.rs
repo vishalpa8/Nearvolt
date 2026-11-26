@@ -6,7 +6,7 @@ use std::io;
 use std::os::fd::FromRawFd;
 use std::sync::OnceLock;
 
-use jni::objects::{GlobalRef, JClass, JObject, JValue};
+use jni::objects::{GlobalRef, JClass, JObject, JString, JValue};
 use jni::{JNIEnv, JavaVM};
 use nearvolt_core::SourceOpener;
 
@@ -33,17 +33,24 @@ impl SourceOpener for PickedFiles {
         let result = env
             .call_method(bridge, "openSource", "(JI)I", &[JValue::Long(self.token), JValue::Int(index as i32)])
             .and_then(|value| value.i());
-        let fd = match result {
-            Ok(fd) => fd,
-            Err(e) => {
-                let _ = env.exception_clear();
-                return Err(io::Error::other(e));
-            }
-        };
+        let fd = result.map_err(|e| io::Error::other(java_error(&mut env, e)))?;
         if fd < 0 {
             return Err(io::Error::new(io::ErrorKind::NotFound, "the file is no longer available"));
         }
         // Kotlin detaches the descriptor, so this File is its only owner.
         Ok(unsafe { File::from_raw_fd(fd) })
     }
+}
+
+/// The pending Java exception as text, such as `java.lang.SecurityException: …`,
+/// instead of jni's generic "Java exception was thrown". Clears it, so later
+/// calls on this thread work.
+fn java_error(env: &mut JNIEnv, error: jni::errors::Error) -> String {
+    let throwable = env.exception_occurred().ok().filter(|t| !t.is_null());
+    let _ = env.exception_clear();
+    throwable
+        .and_then(|t| env.call_method(&t, "toString", "()Ljava/lang/String;", &[]).ok())
+        .and_then(|text| text.l().ok())
+        .and_then(|text| env.get_string(&JString::from(text)).ok().map(String::from))
+        .unwrap_or_else(|| error.to_string())
 }

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/services.dart' show PlatformException;
 import 'package:material_ui/material_ui.dart';
 
 import '../engine/engine.dart';
@@ -75,15 +76,24 @@ class _SendPageState extends State<SendPage> with NeedsMixin {
   }
 
   Future<void> _scan() async {
-    final ticket = await engine.scanCode();
-    if (ticket == null || !mounted) return;
+    final String? ticket;
     try {
-      await _connect(engine.deviceFor(ticket));
-    } on Object {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("That isn't a Nearvolt code")));
-      }
+      ticket = await engine.scanCode();
+    } on PlatformException catch (e) {
+      return _tell(e.message ?? "Couldn't open the code scanner.");
     }
+    if (ticket == null || !mounted) return;
+    final NearbyDevice device;
+    try {
+      device = engine.deviceFor(ticket);
+    } on Object {
+      return _tell("That isn't a Nearvolt code.");
+    }
+    await _connect(device);
+  }
+
+  void _tell(String message) {
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _send() async {
