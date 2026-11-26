@@ -47,11 +47,14 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
     private val usb = Usb(context, emit)
     private val updater = Updater(activity, emit)
 
-    private val modules = ModuleInstall.getClient(activity)
-    private val scanner = GmsBarcodeScanning.getClient(
-        activity,
-        GmsBarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).build(),
-    )
+    // Created on first use: if Google's scanner ever fails, only Scan code is affected.
+    private val modules by lazy { ModuleInstall.getClient(activity) }
+    private val scanner by lazy {
+        GmsBarcodeScanning.getClient(
+            activity,
+            GmsBarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).build(),
+        )
+    }
 
     private val prefs = context.getSharedPreferences("nearvolt", Context.MODE_PRIVATE)
     private val bluetooth = context.getSystemService(BluetoothManager::class.java)?.adapter
@@ -174,7 +177,8 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
         scanner.startScan().await().rawValue
     } catch (_: CancellationException) {
         null
-    } catch (_: Exception) {
+    } catch (e: Exception) {
+        AppLog.error("scanner", e)
         throw FlutterError("scanner", "Couldn't open the code scanner. Update Google Play services, then try again.")
     }
 
@@ -218,7 +222,8 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
         if (nearbyGranted) ble.scan()
         nfc.read()
         // Fetch the code scanner now, so it's ready when the user taps Scan code.
-        modules.installModules(ModuleInstallRequest.newBuilder().addApi(scanner).build())
+        runCatching { modules.installModules(ModuleInstallRequest.newBuilder().addApi(scanner).build()) }
+            .onFailure { AppLog.error("scanner", it) }
     }
 
     override fun stopDiscovery() {
