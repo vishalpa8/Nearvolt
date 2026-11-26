@@ -10,6 +10,7 @@ import android.net.wifi.p2p.WifiP2pManager
 import android.os.Looper
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
 import java.security.SecureRandom
 import kotlin.coroutines.resume
 
@@ -41,7 +42,7 @@ class WifiDirect(private val context: Context) {
             if (!manager.perform { createGroup(channel, auto, it) }) return null
         }
         repeat(25) {
-            val group = suspendCancellableCoroutine<WifiP2pGroup?> { c -> manager.requestGroupInfo(channel) { c.resume(it) } }
+            val group = groupInfo(manager, channel)
             if (group != null && group.isGroupOwner) {
                 return WifiGroup(group.networkName, group.passphrase, group.frequency.toLong())
             }
@@ -57,7 +58,9 @@ class WifiDirect(private val context: Context) {
         val config = config(group.ssid, group.passphrase) { setGroupOperatingFrequency(group.frequency.toInt()) }
         if (!manager.perform { connect(channel, config, it) }) return false
         repeat(75) {
-            val info = suspendCancellableCoroutine<WifiP2pInfo?> { c -> manager.requestConnectionInfo(channel) { c.resume(it) } }
+            val info = withTimeoutOrNull(ANSWER_MS) {
+                suspendCancellableCoroutine<WifiP2pInfo?> { c -> manager.requestConnectionInfo(channel) { c.resume(it) } }
+            }
             if (info?.groupFormed == true) return true
             delay(200)
         }
@@ -72,9 +75,14 @@ class WifiDirect(private val context: Context) {
     suspend fun removeGroupIfUnused() {
         val manager = manager ?: return
         val channel = channel ?: return
-        val group = suspendCancellableCoroutine<WifiP2pGroup?> { c -> manager.requestGroupInfo(channel) { c.resume(it) } }
+        val group = groupInfo(manager, channel)
         if (group != null && group.clientList.isEmpty()) removeGroup()
     }
+
+    private suspend fun groupInfo(manager: WifiP2pManager, channel: WifiP2pManager.Channel): WifiP2pGroup? =
+        withTimeoutOrNull(ANSWER_MS) {
+            suspendCancellableCoroutine { c -> manager.requestGroupInfo(channel) { c.resume(it) } }
+        }
 
     @Suppress("DEPRECATION") // connectionInfo is the only way to read the frequency without a network callback.
     private fun routerFrequency(): Int? =
@@ -83,13 +91,23 @@ class WifiDirect(private val context: Context) {
     private fun config(name: String, passphrase: String, extra: WifiP2pConfig.Builder.() -> Unit) =
         WifiP2pConfig.Builder().setNetworkName(name).setPassphrase(passphrase).apply(extra).build()
 
+    /** Android sometimes never answers, for example just after Wi-Fi turns on, so every request has a time limit. */
     private suspend fun WifiP2pManager.perform(action: WifiP2pManager.(WifiP2pManager.ActionListener) -> Unit): Boolean =
-        suspendCancellableCoroutine { continuation ->
-            action(object : WifiP2pManager.ActionListener {
-                override fun onSuccess() = continuation.resume(true)
-                override fun onFailure(reason: Int) = continuation.resume(false)
-            })
-        }
+        withTimeoutOrNull(ANSWER_MS) {
+            suspendCancellableCoroutine { continuation ->
+                action(object : WifiP2pManager.ActionListener {
+                    override fun onSuccess() = continuation.resume(true)
+                    override fun onFailure(reason: Int) {
+                        AppLog.write("wifi-direct", "request failed, reason $reason")
+                        continuation.resume(false)
+                    }
+                })
+            }
+        } ?: false.also { AppLog.write("wifi-direct", "no answer from Android") }
+
+    private companion object {
+        const val ANSWER_MS = 5_000L
+    }
 
     private fun random(length: Int): String {
         val alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"

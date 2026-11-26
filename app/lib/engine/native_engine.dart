@@ -20,6 +20,11 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
   UpdateInfo? _update;
   String? _incomingFrom;
 
+  /// Sessions share the engine and the radios, so each waits for the previous
+  /// one to finish cleaning up; otherwise a closing session could stop the next.
+  Future<void> _sendClosed = Future.value();
+  Future<void> _receiveClosed = Future.value();
+
   @override
   Future<DeviceProfile> start() async {
     NearvoltEvents.setUp(this);
@@ -158,39 +163,54 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
   @override
   Stream<TransferProgress> send(NearbyDevice to, Selection what) async* {
     yield const TransferProgress(phase: TransferPhase.connecting);
-    final ticket = to.id == _usb ? null : to.ticket ?? await _platform.readTicket(to.id);
-    final wifi = ticket == null ? null : rust.readTicket(text: ticket).wifi;
-    await _platform.startTransferService('Sending to ${to.name}');
-    final files = [for (final f in what.files) rust.SourceFile(path: f.path, size: f.size, modifiedMs: f.modifiedMs)];
-    _platform.log('send', '${files.length} files, ${what.bytes} bytes to ${to.name} (${to.link})');
-    final events = ticket == null
-        ? rust.sendUsb(sourceToken: what.token, files: files)
-        : rust.sendFiles(ticket: ticket, sourceToken: what.token, files: files);
-    // Not on the same network: join the receiver's Wi-Fi Direct group. The engine
-    // keeps retrying every address in the ticket, including the group's.
-    var connected = false;
+    final previous = _sendClosed;
+    final closed = Completer<void>();
+    _sendClosed = closed.future;
+    Timer? fallback;
     var joined = false;
-    final fallback = wifi == null
-        ? null
-        : Timer(const Duration(milliseconds: 2500), () async {
-            if (!connected) joined = await _platform.joinWifi(WifiGroup(ssid: wifi.ssid, passphrase: wifi.passphrase, frequency: wifi.frequency));
-          });
     try {
+      await previous;
+      final ticket = to.id == _usb ? null : to.ticket ?? await _platform.readTicket(to.id);
+      final wifi = ticket == null ? null : rust.readTicket(text: ticket).wifi;
+      await _platform.startTransferService('Sending to ${to.name}');
+      final files = [for (final f in what.files) rust.SourceFile(path: f.path, size: f.size, modifiedMs: f.modifiedMs)];
+      _platform.log('send', '${files.length} files, ${what.bytes} bytes to ${to.name} (${to.link})');
+      final events = ticket == null
+          ? rust.sendUsb(sourceToken: what.token, files: files)
+          : rust.sendFiles(ticket: ticket, sourceToken: what.token, files: files);
+      // Not on the same network: join the receiver's Wi-Fi Direct group. The engine
+      // keeps retrying every address in the ticket, including the group's.
+      var connected = false;
+      if (wifi != null) {
+        fallback = Timer(const Duration(milliseconds: 2500), () async {
+          if (!connected) {
+            joined = await _platform.joinWifi(WifiGroup(ssid: wifi.ssid, passphrase: wifi.passphrase, frequency: wifi.frequency));
+          }
+        });
+      }
       yield* _track(events, onConnected: () => connected = true);
     } finally {
-      fallback?.cancel();
-      rust.stopSending();
-      await _platform.stopTransferService();
-      if (joined) await _platform.leaveWifi();
+      try {
+        fallback?.cancel();
+        rust.stopSending();
+        await _platform.stopTransferService();
+        if (joined) await _platform.leaveWifi();
+      } finally {
+        closed.complete();
+      }
     }
   }
 
   @override
   Stream<ReceiveEvent> receive() async* {
-    await _platform.watchUsb();
-    final events = rust.receive(destDir: _device.downloadDir, journalDir: _device.journalDir);
+    final previous = _receiveClosed;
+    final closed = Completer<void>();
+    _receiveClosed = closed.future;
     final tracker = _Tracker();
     try {
+      await previous;
+      await _platform.watchUsb();
+      final events = rust.receive(destDir: _device.downloadDir, journalDir: _device.journalDir);
       await for (final event in events) {
         _record('receive', event);
         switch (event.kind) {
@@ -221,15 +241,20 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
         }
       }
     } finally {
-      rust.stopReceiving();
-      await _platform.stopReceiving();
-      await _platform.stopTransferService();
+      try {
+        rust.stopReceiving();
+        await _platform.stopReceiving();
+        await _platform.stopTransferService();
+      } finally {
+        closed.complete();
+      }
     }
   }
 
   @override
   void answer({required bool accept}) {
     rust.answerOffer(accept: accept);
+    _platform.log('receive', accept ? 'accepted' : 'declined');
     if (!accept) return;
     // Connected: the radios that found this phone have done their job.
     _platform.stopAdvertising();
