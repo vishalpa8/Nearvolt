@@ -51,6 +51,69 @@ class DeviceTile extends StatelessWidget {
   }
 }
 
+/// A large choice on the home page: an icon, a title and one line of detail.
+class ActionCard extends StatelessWidget {
+  const ActionCard({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.detail,
+    required this.onTap,
+    this.primary = false,
+  });
+
+  final IconData icon;
+  final String title;
+  final String detail;
+  final VoidCallback onTap;
+
+  /// Filled with the accent color, for the main action.
+  final bool primary;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final foreground = primary ? Colors.white : AppColors.textPrimary;
+    return Material(
+      color: primary ? AppColors.accent : AppColors.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(Radii.card),
+        side: primary ? BorderSide.none : const BorderSide(color: AppColors.border),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(Space.l),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: primary ? Colors.white.withValues(alpha: 0.18) : AppColors.accentSoft,
+                ),
+                child: Icon(icon, color: primary ? Colors.white : AppColors.accent),
+              ),
+              const SizedBox(height: Space.xl),
+              Text(title, style: text.titleLarge?.copyWith(color: foreground)),
+              const SizedBox(height: Space.xs),
+              Text(
+                detail,
+                style: text.bodySmall?.copyWith(
+                  color: primary ? Colors.white.withValues(alpha: 0.8) : AppColors.textSecondary,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class FileRow extends StatelessWidget {
   const FileRow({super.key, required this.item});
 

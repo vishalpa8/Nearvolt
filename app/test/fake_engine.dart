@@ -23,15 +23,35 @@ class FakeEngine implements TransferEngine {
   StreamController<ReceiveEvent>? receiving;
   NearbyDevice? sentTo;
   bool? answered;
+  int discoveries = 0;
   int receiveSessions = 0;
   int stops = 0;
   String? update;
+
+  /// What Android is missing; tests change it to simulate the user fixing things.
+  List<Need> missing = const [];
+  final fixed = <Need>[];
 
   @override
   Future<DeviceProfile> start() async => profile;
 
   @override
-  Stream<List<NearbyDevice>> nearby() => devices.stream;
+  Future<List<Need>> prepare() async => missing;
+
+  @override
+  Future<List<Need>> needs() async => missing;
+
+  @override
+  Future<List<Need>> fix(Need need) async {
+    fixed.add(need);
+    return missing;
+  }
+
+  @override
+  Stream<List<NearbyDevice>> nearby() {
+    discoveries++;
+    return devices.stream;
+  }
 
   @override
   Stream<String> taps() => tapped.stream;

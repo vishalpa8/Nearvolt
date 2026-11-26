@@ -39,19 +39,44 @@ void main() {
 
   Future<void> shoot(String name) => expectLater(find.byType(MaterialApp), matchesGoldenFile('goldens/$name.png'));
 
-  testWidgets('start', (tester) async {
+  testWidgets('home', (tester) async {
     engine.update = '0.2.0';
     await phone(tester, NearvoltApp(engine: engine, profile: profile));
+    await tester.pumpAndSettle();
+    await shoot('home');
+  });
+
+  Future<void> openSend(WidgetTester tester) async {
+    await phone(tester, NearvoltApp(engine: engine, profile: profile));
+    await tester.tap(find.text('Send'));
+    await tester.pump();
     engine.devices.add([rahul, tablet]);
     await tester.pumpAndSettle();
-    await shoot('start');
+  }
+
+  testWidgets('send', (tester) async {
+    await openSend(tester);
+    await shoot('send');
+  });
+
+  testWidgets('needs', (tester) async {
+    engine.missing = const [Need.permission];
+    await openSend(tester);
+    await shoot('needs');
+  });
+
+  testWidgets('pick', (tester) async {
+    await openSend(tester);
+    await tester.tap(find.text('Choose files'));
+    await tester.pumpAndSettle();
+    await shoot('pick');
   });
 
   testWidgets('ready', (tester) async {
-    await phone(tester, NearvoltApp(engine: engine, profile: profile));
-    engine.devices.add([rahul, tablet]);
-    await tester.pumpAndSettle();
+    await openSend(tester);
     await tester.tap(find.text('Choose files'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Files'));
     await tester.pumpAndSettle();
     await tester.tap(find.text("Rahul's Pixel 9"));
     await tester.pumpAndSettle();

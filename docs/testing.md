@@ -33,16 +33,30 @@ adb -s <A> shell sha256sum "/sdcard/<folder>/<file>"
 adb -s <B> shell sha256sum "/sdcard/Download/Nearvolt/<file>"
 ```
 
+### Permissions and switches
+
+Start with a fresh install, Bluetooth off.
+
+| # | Steps | Expected |
+|---|---|---|
+| P1 | Open the app. | Home with Send and Receive; no permission prompt yet. |
+| P2 | Tap Send. | Android asks for Nearby devices and notifications, then asks to turn on Bluetooth. Allow all: no notice on the page. |
+| P3 | Reinstall, tap Send and deny Nearby devices. | A notice asks to allow it. Tap Allow and grant it: the notice goes away and Bluetooth phones start appearing. |
+| P4 | Deny Nearby devices twice. | The notice's button says Settings and opens Nearvolt's app settings; granting it there and coming back clears the notice. |
+| P5 | Turn Wi-Fi off, open Send. | A Wi-Fi notice; Turn on opens Android's Wi-Fi panel. |
+| P6 | Android 11 or 12 only: turn Location off, open Send. | A Location notice; Turn on opens Location settings. |
+| P7 | With Send open, turn Bluetooth off from quick settings. | The Bluetooth notice appears without leaving the page. |
+
 ### Ways to connect
 
 | # | Steps | Expected |
 |---|---|---|
-| 1 | Both on the same Wi-Fi. B opens Receive. | B appears in A's Nearby list within 3 s, marked "Same Wi-Fi". |
+| 1 | Both on the same Wi-Fi. B opens Receive, A opens Send. | B appears in A's Nearby list within 3 s, marked "Same Wi-Fi". |
 | 2 | On A, tap B, choose files, tap Send. | Both screens show the same 4-digit code. B accepts; the transfer runs and ends with "All N files verified". Hashes match. |
 | 3 | Both with Wi-Fi on but not connected to the same network (or none). B opens Receive. | B appears on A marked "Bluetooth". Sending joins B's Wi-Fi Direct group with no pop-up and transfers as in 2. |
 | 4 | B opens Receive. On A, choose files, tap Scan code, scan B's QR code. | Sending starts at once with no code; B is asked to accept. |
 | 5 | B opens Receive. On A, choose files, then hold the backs of the phones together. | Sending starts at once with no code. |
-| 6 | Connect the phones with a USB cable. Answer Android's prompts ("Allow access", "Open Nearvolt"). B opens Receive. | A shows "USB cable" (or B's model) in Nearby. Sending shows a code on both, as in 2. |
+| 6 | B opens Receive, A opens Send, then connect the phones with a USB cable. Answer Android's prompts ("Allow access", "Open Nearvolt"). | A shows "USB cable" (or B's model) in Nearby. Sending shows a code on both, as in 2. |
 | 7 | B closes Receive. | B disappears from A's Nearby list. |
 | 8 | B declines an offer. | A shows "Transfer stopped". |
 

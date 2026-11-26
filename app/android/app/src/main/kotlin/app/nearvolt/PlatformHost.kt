@@ -1,9 +1,15 @@
 package app.nearvolt
 
 import android.Manifest
+import android.app.Activity
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.location.LocationManager
+import android.net.Uri
+import android.net.wifi.WifiManager
 import android.nfc.NfcAdapter
 import android.os.Build
 import android.os.Environment
@@ -16,6 +22,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -38,6 +45,11 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
     private val usb = Usb(context, emit)
     private val updater = Updater(context, emit)
 
+    private val prefs = context.getSharedPreferences("nearvolt", Context.MODE_PRIVATE)
+    private val bluetooth = context.getSystemService(BluetoothManager::class.java)?.adapter
+    private val wifi = context.getSystemService(WifiManager::class.java)
+    private val location = context.getSystemService(LocationManager::class.java)
+
     private val name: String =
         Settings.Global.getString(context.contentResolver, Settings.Global.DEVICE_NAME) ?: Build.MODEL
     private val kind: String =
@@ -54,12 +66,56 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
         versionName = context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "",
     )
 
-    override suspend fun requestPermissions(features: List<String>): Boolean {
-        val needed = features.flatMap(::permissionsFor).distinct()
-            .filter { activity.checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
-        if (needed.isEmpty()) return true
-        return activity.permissions.launch(needed.toTypedArray()).values.all { it }
+    override fun readiness(): Readiness {
+        val missing = permissionsFor("nearby").filterNot(::granted)
+        return Readiness(
+            permission = missing.isEmpty(),
+            permissionInSettings = missing.isNotEmpty() && prefs.getBoolean(ASKED, false) &&
+                missing.none(activity::shouldShowRequestPermissionRationale),
+            bluetooth = bluetooth?.isEnabled ?: true,
+            wifi = wifi.isWifiEnabled,
+            location = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU || location.isLocationEnabled,
+        )
     }
+
+    override suspend fun fix(requirement: Requirement): Readiness {
+        when (requirement) {
+            Requirement.PERMISSIONS -> {
+                val missing = (permissionsFor("nearby") + permissionsFor("notifications")).filterNot(::granted)
+                if (missing.isNotEmpty()) {
+                    prefs.edit().putBoolean(ASKED, true).apply()
+                    activity.permissions.launch(missing.toTypedArray())
+                }
+            }
+            Requirement.APP_SETTINGS -> activity.settings.launch(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null)),
+            )
+            // Android's "turn on Bluetooth" dialog needs the Nearby devices permission.
+            Requirement.BLUETOOTH -> if (nearbyGranted) {
+                val answer = activity.settings.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE))
+                if (answer.resultCode == Activity.RESULT_OK) settle { bluetooth?.isEnabled == false }
+            }
+            Requirement.WIFI -> {
+                activity.settings.launch(Intent(Settings.Panel.ACTION_WIFI))
+                settle { wifi.wifiState == WifiManager.WIFI_STATE_ENABLING }
+            }
+            Requirement.LOCATION -> activity.settings.launch(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+        }
+        return readiness()
+    }
+
+    /** A radio takes a moment to come up after the user turns it on. */
+    private suspend fun settle(turningOn: () -> Boolean) {
+        repeat(30) {
+            if (!turningOn()) return
+            delay(100)
+        }
+    }
+
+    private fun granted(permission: String) = activity.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
+
+    /** Bluetooth and Wi-Fi Direct stay off without it; the local network, QR codes and NFC still work. */
+    private val nearbyGranted get() = permissionsFor("nearby").all(::granted)
 
     private fun permissionsFor(feature: String): List<String> = when (feature) {
         "nearby" -> when {
@@ -106,13 +162,13 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
 
     override suspend fun startReceiving(privateTicket: String, publicTicket: String, port: Long): WifiGroup? {
         updateTickets(privateTicket, publicTicket, port)
-        return wifiDirect.createGroup()
+        return if (nearbyGranted) wifiDirect.createGroup() else null
     }
 
     override fun updateTickets(privateTicket: String, publicTicket: String, port: Long) {
         nfc.serve(privateTicket)
         local.advertise(name, kind, publicTicket, port.toInt())
-        ble.advertise(publicTicket)
+        if (nearbyGranted) ble.advertise(publicTicket)
     }
 
     override fun stopReceiving() {
@@ -124,7 +180,7 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
 
     override fun startDiscovery() {
         local.browse()
-        ble.scan()
+        if (nearbyGranted) ble.scan()
         nfc.read()
     }
 
@@ -138,7 +194,7 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
 
     override suspend fun readTicket(receiverId: String): String = ble.readTicket(receiverId)
 
-    override suspend fun joinWifi(group: WifiGroup): Boolean = wifiDirect.join(group)
+    override suspend fun joinWifi(group: WifiGroup): Boolean = nearbyGranted && wifiDirect.join(group)
 
     override fun leaveWifi() = wifiDirect.removeGroup()
 
@@ -162,6 +218,11 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
         stopReceiving()
         usb.close()
         scope.cancel()
+    }
+
+    private companion object {
+        /** Set once the permission dialogs have been shown, to tell "never asked" from "refused for good". */
+        const val ASKED = "asked_permissions"
     }
 }
 

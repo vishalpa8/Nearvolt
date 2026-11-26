@@ -22,19 +22,21 @@ class ReceivePage extends StatefulWidget {
   State<ReceivePage> createState() => _ReceivePageState();
 }
 
-class _ReceivePageState extends State<ReceivePage> {
+class _ReceivePageState extends State<ReceivePage> with NeedsMixin {
   StreamSubscription<ReceiveEvent>? _session;
   StreamController<TransferProgress>? _transfer;
   String? _ticket;
 
   @override
-  void initState() {
-    super.initState();
-    _open();
-  }
+  TransferEngine get engine => widget.engine;
 
-  void _open() {
-    _session = widget.engine.receive().listen(_onEvent);
+  /// A new session, so the code and what's advertised match what's on now.
+  @override
+  Future<void> restart() async {
+    await _session?.cancel();
+    if (!mounted) return;
+    setState(() => _ticket = null);
+    _session = engine.receive().listen(_onEvent);
   }
 
   Future<void> _onEvent(ReceiveEvent event) async {
@@ -43,7 +45,7 @@ class _ReceivePageState extends State<ReceivePage> {
         setState(() => _ticket = ticket);
       case ReceiveOffer(:final offer):
         final accepted = await showReceivePrompt(context, offer);
-        widget.engine.answer(accept: accepted);
+        engine.answer(accept: accepted);
         if (accepted && mounted) await _follow(offer);
       case ReceiveProgress(:final progress):
         _transfer?.add(progress);
@@ -58,15 +60,12 @@ class _ReceivePageState extends State<ReceivePage> {
         progress: transfer.stream,
         peerName: offer.from.name,
         incoming: true,
-        onStop: widget.engine.stopTransfer,
+        onStop: engine.stopTransfer,
       ),
     ));
     await transfer.close();
     _transfer = null;
-    await _session?.cancel();
-    if (!mounted) return;
-    setState(() => _ticket = null);
-    _open();
+    await restart();
   }
 
   @override
@@ -86,6 +85,7 @@ class _ReceivePageState extends State<ReceivePage> {
       body: SingleChildScrollView(
         child: Column(
           children: [
+            if (needNotice case final notice?) ...[const SizedBox(height: Space.l), notice],
             const SizedBox(height: Space.xl),
             Panel(
               padding: const EdgeInsets.all(Space.l),

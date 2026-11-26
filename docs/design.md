@@ -57,14 +57,18 @@ Numbers in progress views use tabular figures so they don't jitter.
 
 Golden screenshots of each one are in [app/test/goldens](../app/test/goldens).
 
-1. **Send.** Nearby devices with Receive open, as round avatars with names, plus
-   "Scan code" and a tap hint. "Choose files" and "Choose a folder" at the bottom.
-2. **Ready to send.** Total size and file count, the devices to send to, and the
+1. **Home.** Two large cards, Send and Receive, plus an update banner when there
+   is one. Nothing looks for other phones until one is chosen.
+2. **Send.** Nearby devices with Receive open, as round avatars with names, plus
+   "Scan code" and a tap hint. One "Choose files" button asks Files or Folder.
+   Anything Android still needs (a permission, Wi-Fi, Bluetooth, Location) shows
+   as one notice at the top with the button that fixes it; Receive shows the same.
+3. **Ready to send.** Total size and file count, the devices to send to, and the
    picked files and folders. One "Send to …" button.
-3. **Receive.** A large QR code, the name others see, and the ways to connect.
-4. **Receive prompt.** One sheet, for example "Rahul's Pixel 9 wants to send you
+4. **Receive.** A large QR code, the name others see, and the ways to connect.
+5. **Receive prompt.** One sheet, for example "Rahul's Pixel 9 wants to send you
    4 files · 821 MB", with the 4-digit code when there is one, and Accept and
    Decline.
-5. **Transfer.** A large progress ring with percent, speed, time left and file
+6. **Transfer.** A large progress ring with percent, speed, time left and file
    count. While waiting for the receiver it shows the 4-digit code to compare. It
    ends with "All 4 files verified".

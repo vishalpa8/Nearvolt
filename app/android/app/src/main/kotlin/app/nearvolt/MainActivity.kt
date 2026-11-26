@@ -15,6 +15,7 @@ class MainActivity : FlutterFragmentActivity() {
     val pickFiles = ResultLauncher(this, ActivityResultContracts.OpenMultipleDocuments())
     val pickFolder = ResultLauncher(this, ActivityResultContracts.OpenDocumentTree())
     val permissions = ResultLauncher(this, ActivityResultContracts.RequestMultiplePermissions())
+    val settings = ResultLauncher(this, ActivityResultContracts.StartActivityForResult())
 
     private var host: PlatformHost? = null
 

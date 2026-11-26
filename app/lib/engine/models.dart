@@ -6,6 +6,10 @@ enum DeviceKind {
   static DeviceKind parse(String? value) => values.firstWhere((k) => k.name == value, orElse: () => phone);
 }
 
+/// Something off that Send and Receive need to reach other phones, most
+/// important first.
+enum Need { permission, permissionInSettings, wifi, bluetooth, location }
+
 class DeviceProfile {
   const DeviceProfile({required this.name, required this.kind, required this.hasNfc});
 

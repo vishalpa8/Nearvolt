@@ -107,6 +107,17 @@ int _deepHash(Object? value) {
 }
 
 
+/// Something Android can be asked to turn on.
+enum Requirement {
+  /// Nearby devices and notifications, through Android's permission dialogs.
+  permissions,
+  /// The app's settings page, for permissions refused for good.
+  appSettings,
+  bluetooth,
+  wifi,
+  location;
+}
+
 enum PlatformEventKind {
   /// A device with Receive open was found (`id`, `name`, `deviceKind`, `link`,
   /// and `ticket` when it was found on the local network).
@@ -366,6 +377,76 @@ class WifiGroup {
   }
 }
 
+/// What Send and Receive need from Android, as it is right now.
+class Readiness {
+  Readiness({
+    required this.permission,
+    required this.permissionInSettings,
+    required this.bluetooth,
+    required this.wifi,
+    required this.location,
+  });
+
+  /// The Nearby devices permissions are granted.
+  bool permission;
+
+  /// They were refused for good, so only the app's settings can grant them.
+  bool permissionInSettings;
+
+  /// On, or the device has no Bluetooth.
+  bool bluetooth;
+
+  bool wifi;
+
+  /// Location is on, or not needed (Android 13 and later).
+  bool location;
+
+  List<Object?> _toList() {
+    return <Object?>[
+      permission,
+      permissionInSettings,
+      bluetooth,
+      wifi,
+      location,
+    ];
+  }
+
+  Object encode() {
+    return _toList();  }
+
+  static Readiness decode(Object result) {
+    result as List<Object?>;
+    return Readiness(
+      permission: result[0]! as bool,
+      permissionInSettings: result[1]! as bool,
+      bluetooth: result[2]! as bool,
+      wifi: result[3]! as bool,
+      location: result[4]! as bool,
+    );
+  }
+
+  @override
+  // ignore: avoid_equals_and_hash_code_on_mutable_classes
+  bool operator ==(Object other) {
+    if (other is! Readiness || other.runtimeType != runtimeType) {
+      return false;
+    }
+    if (identical(this, other)) {
+      return true;
+    }
+    return _deepEquals(permission, other.permission) && _deepEquals(permissionInSettings, other.permissionInSettings) && _deepEquals(bluetooth, other.bluetooth) && _deepEquals(wifi, other.wifi) && _deepEquals(location, other.location);
+  }
+
+  @override
+  // ignore: avoid_equals_and_hash_code_on_mutable_classes
+  int get hashCode => _deepHash(<Object?>[runtimeType, ..._toList()]);
+
+  @override
+  String toString() {
+    return 'Readiness(permission: $permission, permissionInSettings: $permissionInSettings, bluetooth: $bluetooth, wifi: $wifi, location: $location)';
+  }
+}
+
 class UpdateInfo {
   UpdateInfo({
     required this.version,
@@ -519,26 +600,32 @@ class _PigeonCodec extends StandardMessageCodec {
     if (value is int) {
       buffer.putUint8(4);
       buffer.putInt64(value);
-    }    else if (value is PlatformEventKind) {
+    }    else if (value is Requirement) {
       buffer.putUint8(129);
       writeValue(buffer, value.index);
-    }    else if (value is DeviceInfo) {
+    }    else if (value is PlatformEventKind) {
       buffer.putUint8(130);
-      writeValue(buffer, value.encode());
-    }    else if (value is PickedFile) {
+      writeValue(buffer, value.index);
+    }    else if (value is DeviceInfo) {
       buffer.putUint8(131);
       writeValue(buffer, value.encode());
-    }    else if (value is PickResult) {
+    }    else if (value is PickedFile) {
       buffer.putUint8(132);
       writeValue(buffer, value.encode());
-    }    else if (value is WifiGroup) {
+    }    else if (value is PickResult) {
       buffer.putUint8(133);
       writeValue(buffer, value.encode());
-    }    else if (value is UpdateInfo) {
+    }    else if (value is WifiGroup) {
       buffer.putUint8(134);
       writeValue(buffer, value.encode());
-    }    else if (value is PlatformEvent) {
+    }    else if (value is Readiness) {
       buffer.putUint8(135);
+      writeValue(buffer, value.encode());
+    }    else if (value is UpdateInfo) {
+      buffer.putUint8(136);
+      writeValue(buffer, value.encode());
+    }    else if (value is PlatformEvent) {
+      buffer.putUint8(137);
       writeValue(buffer, value.encode());
     } else {
       super.writeValue(buffer, value);
@@ -550,18 +637,23 @@ class _PigeonCodec extends StandardMessageCodec {
     switch (type) {
       case 129:
         final value = readValue(buffer) as int?;
-        return value == null ? null : PlatformEventKind.values[value];
+        return value == null ? null : Requirement.values[value];
       case 130:
-        return DeviceInfo.decode(readValue(buffer)!);
+        final value = readValue(buffer) as int?;
+        return value == null ? null : PlatformEventKind.values[value];
       case 131:
-        return PickedFile.decode(readValue(buffer)!);
+        return DeviceInfo.decode(readValue(buffer)!);
       case 132:
-        return PickResult.decode(readValue(buffer)!);
+        return PickedFile.decode(readValue(buffer)!);
       case 133:
-        return WifiGroup.decode(readValue(buffer)!);
+        return PickResult.decode(readValue(buffer)!);
       case 134:
-        return UpdateInfo.decode(readValue(buffer)!);
+        return WifiGroup.decode(readValue(buffer)!);
       case 135:
+        return Readiness.decode(readValue(buffer)!);
+      case 136:
+        return UpdateInfo.decode(readValue(buffer)!);
+      case 137:
         return PlatformEvent.decode(readValue(buffer)!);
       default:
         return super.readValueOfType(type, buffer);
@@ -604,15 +696,14 @@ class NearvoltPlatform {
     return pigeonVar_replyValue! as DeviceInfo;
   }
 
-  /// `features`: "nearby" (Wi-Fi Direct, Bluetooth) and "notifications".
-  Future<bool> requestPermissions(List<String> features) async {
-    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.requestPermissions$pigeonVar_messageChannelSuffix';
+  Future<Readiness> readiness() async {
+    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.readiness$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
       binaryMessenger: pigeonVar_binaryMessenger,
     );
-    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[features]);
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(null);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
     final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
         pigeonVar_replyList,
@@ -620,7 +711,27 @@ class NearvoltPlatform {
         isNullValid: false,
     )
     ;
-    return pigeonVar_replyValue! as bool;
+    return pigeonVar_replyValue! as Readiness;
+  }
+
+  /// Shows Android's prompt or settings page for `requirement` and returns once
+  /// the user is back.
+  Future<Readiness> fix(Requirement requirement) async {
+    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.fix$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channel = BasicMessageChannel<Object?>(
+      pigeonVar_channelName,
+      pigeonChannelCodec,
+      binaryMessenger: pigeonVar_binaryMessenger,
+    );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[requirement]);
+    final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
+    final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: false,
+    )
+    ;
+    return pigeonVar_replyValue! as Readiness;
   }
 
   Future<PickResult?> pickFiles() async {

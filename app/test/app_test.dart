@@ -19,17 +19,42 @@ void main() {
     await tester.pump();
   }
 
-  testWidgets('sends after the receiver confirms the same code', (tester) async {
+  Future<void> openSend(WidgetTester tester) async {
     await open(tester);
-    expect(find.text('Send to anyone nearby'), findsOneWidget);
+    await tester.tap(find.text('Send'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+  }
+
+  Future<void> chooseFiles(WidgetTester tester) async {
+    await tester.tap(find.text('Choose files'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.text('Files'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+  }
+
+  testWidgets('nothing looks for phones until Send or Receive is chosen', (tester) async {
+    await open(tester);
+    expect(find.text('Move files to anyone nearby'), findsOneWidget);
+    expect(engine.discoveries, 0);
+    expect(engine.receiveSessions, 0);
+
+    await tester.tap(find.text('Send'));
+    await tester.pump();
+    expect(engine.discoveries, 1);
+  });
+
+  testWidgets('sends after the receiver confirms the same code', (tester) async {
+    await openSend(tester);
     expect(find.text('Looking for devices with Receive open…'), findsOneWidget);
 
     engine.devices.add([rahul, tablet]);
     await tester.pumpAndSettle();
     expect(find.text('Studio tablet'), findsOneWidget);
 
-    await tester.tap(find.text('Choose files'));
-    await tester.pumpAndSettle();
+    await chooseFiles(tester);
     expect(find.text('Ready to send'), findsOneWidget);
     expect(find.text('4 files'), findsOneWidget);
     expect(find.text('Choose who to send to'), findsOneWidget);
@@ -69,13 +94,12 @@ void main() {
 
     await tester.tap(find.text('Done'));
     await tester.pumpAndSettle();
-    expect(find.text('Send to anyone nearby'), findsOneWidget);
+    expect(find.text('Nearby'), findsOneWidget);
   });
 
   testWidgets('tapping phones with files chosen starts sending at once', (tester) async {
-    await open(tester);
-    await tester.tap(find.text('Choose files'));
-    await tester.pump(const Duration(milliseconds: 400));
+    await openSend(tester);
+    await chooseFiles(tester);
 
     engine.tapped.add('NV1TAP');
     await tester.pump();
@@ -85,10 +109,13 @@ void main() {
   });
 
   testWidgets('cancelling a transfer stops the engine', (tester) async {
-    await open(tester);
+    await openSend(tester);
     engine.devices.add([rahul]);
     await tester.pumpAndSettle();
     await tester.tap(find.text("Rahul's Pixel 9"));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.text('Files'));
     await tester.pumpAndSettle();
     await tester.tap(find.text("Send to Rahul's Pixel 9"));
     await tester.pumpAndSettle();
@@ -99,6 +126,20 @@ void main() {
     await tester.pumpAndSettle();
     expect(engine.stops, 1);
     expect(find.text('Ready to send'), findsOneWidget);
+  });
+
+  testWidgets('a missing permission shows a notice, and fixing it restarts the search', (tester) async {
+    engine.missing = const [Need.permission, Need.bluetooth];
+    await openSend(tester);
+    expect(find.text('Allow Nearby devices so Nearvolt can find phones and be found.'), findsOneWidget);
+    expect(engine.discoveries, 1);
+
+    engine.missing = const [];
+    await tester.tap(find.text('Allow'));
+    await tester.pump();
+    expect(engine.fixed, [Need.permission]);
+    expect(find.text('Allow'), findsNothing);
+    expect(engine.discoveries, 2);
   });
 
   testWidgets('receives after accepting, then opens Receive again', (tester) async {

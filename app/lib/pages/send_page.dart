@@ -8,10 +8,10 @@ import '../theme.dart';
 import '../ui/molecules.dart';
 import '../ui/organisms.dart';
 import '../ui/templates.dart';
-import 'receive_page.dart';
 import 'transfer_page.dart';
 
-/// Start page: choose what to send, then who to send it to.
+/// Finds phones with Receive open while it's visible. Choose what to send and
+/// who to send it to, in either order.
 class SendPage extends StatefulWidget {
   const SendPage({super.key, required this.engine, required this.profile});
 
@@ -22,29 +22,25 @@ class SendPage extends StatefulWidget {
   State<SendPage> createState() => _SendPageState();
 }
 
-class _SendPageState extends State<SendPage> {
+class _SendPageState extends State<SendPage> with NeedsMixin {
   List<NearbyDevice> _devices = const [];
   Selection? _selection;
   NearbyDevice? _target;
-  String? _update;
   StreamSubscription<List<NearbyDevice>>? _nearby;
   StreamSubscription<String>? _taps;
 
-  TransferEngine get _engine => widget.engine;
+  @override
+  TransferEngine get engine => widget.engine;
 
   @override
-  void initState() {
-    super.initState();
+  void restart() {
+    _pause();
     _listen();
-    _engine.checkForUpdate().then((version) {
-      if (mounted) setState(() => _update = version);
-    });
   }
 
-  /// Discovery and NFC run only while this page is visible.
   void _listen() {
-    _nearby = _engine.nearby().listen((devices) => setState(() => _devices = devices));
-    _taps = _engine.taps().listen((ticket) => _connect(_engine.deviceFor(ticket)));
+    _nearby = engine.nearby().listen((devices) => setState(() => _devices = devices));
+    _taps = engine.taps().listen((ticket) => _connect(engine.deviceFor(ticket)));
   }
 
   void _pause() {
@@ -58,8 +54,10 @@ class _SendPageState extends State<SendPage> {
     super.dispose();
   }
 
-  Future<void> _pick({bool folder = false}) async {
-    final selection = folder ? await _engine.pickFolder() : await _engine.pickFiles();
+  Future<void> _pick() async {
+    final kind = await showPickMenu(context);
+    if (kind == null) return;
+    final selection = kind == PickKind.folder ? await engine.pickFolder() : await engine.pickFiles();
     if (selection != null && mounted) setState(() => _selection = selection);
   }
 
@@ -77,10 +75,10 @@ class _SendPageState extends State<SendPage> {
   }
 
   Future<void> _scan() async {
-    final ticket = await _engine.scanCode();
+    final ticket = await engine.scanCode();
     if (ticket == null || !mounted) return;
     try {
-      await _connect(_engine.deviceFor(ticket));
+      await _connect(engine.deviceFor(ticket));
     } on Object {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("That isn't a Nearvolt code")));
@@ -94,11 +92,11 @@ class _SendPageState extends State<SendPage> {
     _pause();
     final sent = await Navigator.of(context).push(MaterialPageRoute<bool>(
       builder: (_) => TransferPage(
-        progress: _engine.send(target, selection),
+        progress: engine.send(target, selection),
         peerName: target.name,
         link: target.link,
         incoming: false,
-        onStop: _engine.stopTransfer,
+        onStop: engine.stopTransfer,
       ),
     ));
     if (!mounted) return;
@@ -112,42 +110,33 @@ class _SendPageState extends State<SendPage> {
     _listen();
   }
 
-  Future<void> _openReceive() async {
-    _pause();
-    await Navigator.of(context).push(MaterialPageRoute<void>(
-      builder: (_) => ReceivePage(engine: _engine, profile: widget.profile),
-    ));
-    if (mounted) _listen();
+  @override
+  Widget build(BuildContext context) {
+    final selection = _selection;
+    return PopScope(
+      canPop: selection == null,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) setState(() => _selection = null);
+      },
+      child: selection == null ? _start(context) : _ready(context, selection),
+    );
   }
 
-  @override
-  Widget build(BuildContext context) => _selection == null ? _start(context) : _ready(context, _selection!);
+  List<Widget> get _notice => [
+        if (needNotice case final notice?) ...[const SizedBox(height: Space.l), notice],
+      ];
 
   Widget _start(BuildContext context) {
     final text = Theme.of(context).textTheme;
     return PageScaffold(
-      title: 'Nearvolt',
-      trailing: TextButton.icon(
-        onPressed: _openReceive,
-        icon: const Icon(Icons.download_rounded, size: 20),
-        label: const Text('Receive'),
-      ),
+      title: 'Send',
+      onBack: () => Navigator.of(context).maybePop(),
       body: SingleChildScrollView(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (_update case final version?) ...[
-              const SizedBox(height: Space.l),
-              UpdateBanner(version: version, install: _engine.installUpdate),
-            ],
-            const SizedBox(height: Space.xxl),
-            Text('Send to anyone nearby', style: text.displaySmall),
-            const SizedBox(height: Space.s),
-            Text(
-              'No internet or account needed. Every file arrives exactly as it was sent.',
-              style: text.bodyLarge?.copyWith(color: AppColors.textSecondary),
-            ),
-            const SizedBox(height: Space.xxl),
+            ..._notice,
+            const SizedBox(height: Space.xl),
             Text('Nearby', style: text.titleMedium),
             const SizedBox(height: Space.m),
             DeviceList(devices: _devices, onTap: _choose),
@@ -156,17 +145,10 @@ class _SendPageState extends State<SendPage> {
           ],
         ),
       ),
-      bottom: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          FilledButton.icon(
-            onPressed: _pick,
-            icon: const Icon(Icons.add_rounded),
-            label: const Text('Choose files'),
-          ),
-          const SizedBox(height: Space.s),
-          TextButton(onPressed: () => _pick(folder: true), child: const Text('Choose a folder')),
-        ],
+      bottom: FilledButton.icon(
+        onPressed: _pick,
+        icon: const Icon(Icons.add_rounded),
+        label: const Text('Choose files'),
       ),
     );
   }
@@ -178,8 +160,10 @@ class _SendPageState extends State<SendPage> {
       title: 'Ready to send',
       onBack: () => setState(() => _selection = null),
       body: ListView(
-        padding: const EdgeInsets.only(top: Space.l, bottom: Space.xl),
+        padding: const EdgeInsets.only(bottom: Space.xl),
         children: [
+          ..._notice,
+          const SizedBox(height: Space.l),
           SummaryCard(files: selection.files.length, bytes: selection.bytes),
           const SizedBox(height: Space.xxl),
           Text('Send to', style: text.titleMedium),

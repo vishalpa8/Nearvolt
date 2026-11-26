@@ -201,6 +201,25 @@ class FlutterError (
   val details: Any? = null
 ) : RuntimeException()
 
+/** Something Android can be asked to turn on. */
+enum class Requirement(val raw: Int) {
+  /** Nearby devices and notifications, through Android's permission dialogs. */
+  PERMISSIONS(0),
+  /** The app's settings page, for permissions refused for good. */
+  APP_SETTINGS(1),
+  BLUETOOTH(2),
+  WIFI(3),
+  LOCATION(4);
+
+  companion object {
+    private val pigeonValues = values()
+
+    fun ofRaw(raw: Int): Requirement? {
+      return pigeonValues.getOrNull(raw)
+    }
+  }
+}
+
 enum class PlatformEventKind(val raw: Int) {
   /**
    * A device with Receive open was found (`id`, `name`, `deviceKind`, `link`,
@@ -431,6 +450,67 @@ data class WifiGroup (
   }
 }
 
+/**
+ * What Send and Receive need from Android, as it is right now.
+ *
+ * Generated class from Pigeon that represents data sent in messages.
+ */
+data class Readiness (
+  /** The Nearby devices permissions are granted. */
+  val permission: Boolean,
+  /** They were refused for good, so only the app's settings can grant them. */
+  val permissionInSettings: Boolean,
+  /** On, or the device has no Bluetooth. */
+  val bluetooth: Boolean,
+  val wifi: Boolean,
+  /** Location is on, or not needed (Android 13 and later). */
+  val location: Boolean
+)
+ {
+  companion object {
+    fun fromList(pigeonVar_list: List<Any?>): Readiness {
+      val permission = pigeonVar_list[0] as Boolean
+      val permissionInSettings = pigeonVar_list[1] as Boolean
+      val bluetooth = pigeonVar_list[2] as Boolean
+      val wifi = pigeonVar_list[3] as Boolean
+      val location = pigeonVar_list[4] as Boolean
+      return Readiness(permission, permissionInSettings, bluetooth, wifi, location)
+    }
+  }
+  fun toList(): List<Any?> {
+    return listOf(
+      permission,
+      permissionInSettings,
+      bluetooth,
+      wifi,
+      location,
+    )
+  }
+  override fun equals(other: Any?): Boolean {
+    if (other == null || other.javaClass != javaClass) {
+      return false
+    }
+    if (this === other) {
+      return true
+    }
+    val other = other as Readiness
+    return PlatformPigeonUtils.deepEquals(this.permission, other.permission) && PlatformPigeonUtils.deepEquals(this.permissionInSettings, other.permissionInSettings) && PlatformPigeonUtils.deepEquals(this.bluetooth, other.bluetooth) && PlatformPigeonUtils.deepEquals(this.wifi, other.wifi) && PlatformPigeonUtils.deepEquals(this.location, other.location)
+  }
+
+  override fun hashCode(): Int {
+    var result = javaClass.hashCode()
+    result = 31 * result + PlatformPigeonUtils.deepHash(this.permission)
+    result = 31 * result + PlatformPigeonUtils.deepHash(this.permissionInSettings)
+    result = 31 * result + PlatformPigeonUtils.deepHash(this.bluetooth)
+    result = 31 * result + PlatformPigeonUtils.deepHash(this.wifi)
+    result = 31 * result + PlatformPigeonUtils.deepHash(this.location)
+    return result
+  }
+  override fun toString(): String {
+    return "Readiness(permission=$permission, permissionInSettings=$permissionInSettings, bluetooth=$bluetooth, wifi=$wifi, location=$location)"
+  }
+}
+
 /** Generated class from Pigeon that represents data sent in messages. */
 data class UpdateInfo (
   val version: String,
@@ -553,35 +633,45 @@ private open class PlatformPigeonCodec : StandardMessageCodec() {
     return when (type) {
       129.toByte() -> {
         (readValue(buffer) as Long?)?.let {
-          PlatformEventKind.ofRaw(it.toInt())
+          Requirement.ofRaw(it.toInt())
         }
       }
       130.toByte() -> {
-        (readValue(buffer) as? List<Any?>)?.let {
-          DeviceInfo.fromList(it)
+        (readValue(buffer) as Long?)?.let {
+          PlatformEventKind.ofRaw(it.toInt())
         }
       }
       131.toByte() -> {
         (readValue(buffer) as? List<Any?>)?.let {
-          PickedFile.fromList(it)
+          DeviceInfo.fromList(it)
         }
       }
       132.toByte() -> {
         (readValue(buffer) as? List<Any?>)?.let {
-          PickResult.fromList(it)
+          PickedFile.fromList(it)
         }
       }
       133.toByte() -> {
         (readValue(buffer) as? List<Any?>)?.let {
-          WifiGroup.fromList(it)
+          PickResult.fromList(it)
         }
       }
       134.toByte() -> {
         (readValue(buffer) as? List<Any?>)?.let {
-          UpdateInfo.fromList(it)
+          WifiGroup.fromList(it)
         }
       }
       135.toByte() -> {
+        (readValue(buffer) as? List<Any?>)?.let {
+          Readiness.fromList(it)
+        }
+      }
+      136.toByte() -> {
+        (readValue(buffer) as? List<Any?>)?.let {
+          UpdateInfo.fromList(it)
+        }
+      }
+      137.toByte() -> {
         (readValue(buffer) as? List<Any?>)?.let {
           PlatformEvent.fromList(it)
         }
@@ -591,32 +681,40 @@ private open class PlatformPigeonCodec : StandardMessageCodec() {
   }
   override fun writeValue(stream: ByteArrayOutputStream, value: Any?)   {
     when (value) {
-      is PlatformEventKind -> {
+      is Requirement -> {
         stream.write(129)
         writeValue(stream, value.raw.toLong())
       }
-      is DeviceInfo -> {
+      is PlatformEventKind -> {
         stream.write(130)
-        writeValue(stream, value.toList())
+        writeValue(stream, value.raw.toLong())
       }
-      is PickedFile -> {
+      is DeviceInfo -> {
         stream.write(131)
         writeValue(stream, value.toList())
       }
-      is PickResult -> {
+      is PickedFile -> {
         stream.write(132)
         writeValue(stream, value.toList())
       }
-      is WifiGroup -> {
+      is PickResult -> {
         stream.write(133)
         writeValue(stream, value.toList())
       }
-      is UpdateInfo -> {
+      is WifiGroup -> {
         stream.write(134)
         writeValue(stream, value.toList())
       }
-      is PlatformEvent -> {
+      is Readiness -> {
         stream.write(135)
+        writeValue(stream, value.toList())
+      }
+      is UpdateInfo -> {
+        stream.write(136)
+        writeValue(stream, value.toList())
+      }
+      is PlatformEvent -> {
+        stream.write(137)
         writeValue(stream, value.toList())
       }
       else -> super.writeValue(stream, value)
@@ -628,8 +726,12 @@ private open class PlatformPigeonCodec : StandardMessageCodec() {
 /** Generated interface from Pigeon that represents a handler of messages from Flutter. */
 interface NearvoltPlatform {
   fun deviceInfo(): DeviceInfo
-  /** `features`: "nearby" (Wi-Fi Direct, Bluetooth) and "notifications". */
-  suspend fun requestPermissions(features: List<String>): Boolean
+  fun readiness(): Readiness
+  /**
+   * Shows Android's prompt or settings page for `requirement` and returns once
+   * the user is back.
+   */
+  suspend fun fix(requirement: Requirement): Readiness
   suspend fun pickFiles(): PickResult?
   suspend fun pickFolder(): PickResult?
   suspend fun scanQr(): String?
@@ -683,14 +785,29 @@ interface NearvoltPlatform {
         }
       }
       run {
-        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.nearvolt.NearvoltPlatform.requestPermissions$separatedMessageChannelSuffix", codec)
+        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.nearvolt.NearvoltPlatform.readiness$separatedMessageChannelSuffix", codec)
+        if (api != null) {
+          channel.setMessageHandler { _, reply ->
+            val wrapped: List<Any?> = try {
+              listOf(api.readiness())
+            } catch (exception: Throwable) {
+              PlatformPigeonUtils.wrapError(exception)
+            }
+            reply.reply(wrapped)
+          }
+        } else {
+          channel.setMessageHandler(null)
+        }
+      }
+      run {
+        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.nearvolt.NearvoltPlatform.fix$separatedMessageChannelSuffix", codec)
         if (api != null) {
           channel.setMessageHandler { message, reply ->
             val args = message as List<Any?>
-            val featuresArg = args[0] as List<String>
+            val requirementArg = args[0] as Requirement
             CoroutineScope(Dispatchers.Main).launch {
               val wrapped: List<Any?> = try {
-                listOf(api.requestPermissions(featuresArg))
+                listOf(api.fix(requirementArg))
               } catch (exception: Throwable) {
                 PlatformPigeonUtils.wrapError(exception)
               }

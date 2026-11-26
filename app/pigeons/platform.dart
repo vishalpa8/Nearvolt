@@ -57,6 +57,36 @@ class WifiGroup {
   int frequency;
 }
 
+/// What Send and Receive need from Android, as it is right now.
+class Readiness {
+  Readiness(this.permission, this.permissionInSettings, this.bluetooth, this.wifi, this.location);
+
+  /// The Nearby devices permissions are granted.
+  bool permission;
+
+  /// They were refused for good, so only the app's settings can grant them.
+  bool permissionInSettings;
+
+  /// On, or the device has no Bluetooth.
+  bool bluetooth;
+  bool wifi;
+
+  /// Location is on, or not needed (Android 13 and later).
+  bool location;
+}
+
+/// Something Android can be asked to turn on.
+enum Requirement {
+  /// Nearby devices and notifications, through Android's permission dialogs.
+  permissions,
+
+  /// The app's settings page, for permissions refused for good.
+  appSettings,
+  bluetooth,
+  wifi,
+  location,
+}
+
 class UpdateInfo {
   UpdateInfo(this.version, this.notes, this.url, this.sha256);
 
@@ -103,9 +133,12 @@ class PlatformEvent {
 abstract class NearvoltPlatform {
   DeviceInfo deviceInfo();
 
-  /// `features`: "nearby" (Wi-Fi Direct, Bluetooth) and "notifications".
+  Readiness readiness();
+
+  /// Shows Android's prompt or settings page for `requirement` and returns once
+  /// the user is back.
   @async
-  bool requestPermissions(List<String> features);
+  Readiness fix(Requirement requirement);
 
   @async
   PickResult? pickFiles();

@@ -1,6 +1,10 @@
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:material_ui/material_ui.dart';
 
+import '../engine/engine.dart';
+import '../engine/models.dart';
 import '../theme.dart';
+import 'organisms.dart';
 
 /// The layout every page shares: an optional back row, scrollable content and a
 /// bottom action that stays in reach of the thumb.
@@ -50,5 +54,51 @@ class PageScaffold extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// For pages that reach other phones. When the page opens, asks Android for
+/// permissions and Bluetooth, then calls [restart]; keeps what's still missing
+/// in [needs], and calls [restart] again whenever that changes, including after
+/// the user flips a switch outside the app.
+mixin NeedsMixin<T extends StatefulWidget> on State<T> {
+  List<Need> needs = const [];
+  late final AppLifecycleListener _lifecycle;
+  var _busy = false;
+
+  TransferEngine get engine;
+
+  /// Starts, or starts again, with whatever is available now.
+  void restart();
+
+  @override
+  void initState() {
+    super.initState();
+    _lifecycle = AppLifecycleListener(onResume: _recheck);
+    _update(engine.prepare(), always: true);
+  }
+
+  @override
+  void dispose() {
+    _lifecycle.dispose();
+    super.dispose();
+  }
+
+  /// The notice for the most important missing thing, if any.
+  Widget? get needNotice =>
+      needs.isEmpty ? null : NeedNotice(need: needs.first, onFix: () => _update(engine.fix(needs.first)));
+
+  /// Only while this page is on top, so a running transfer is never restarted.
+  void _recheck() {
+    if (!_busy && (ModalRoute.of(context)?.isCurrent ?? true)) _update(engine.needs());
+  }
+
+  Future<void> _update(Future<List<Need>> next, {bool always = false}) async {
+    _busy = true;
+    final now = await next;
+    _busy = false;
+    if (!mounted || (!always && listEquals(now, needs))) return;
+    setState(() => needs = now);
+    restart();
   }
 }

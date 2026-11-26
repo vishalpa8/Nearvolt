@@ -25,9 +25,34 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
     NearvoltEvents.setUp(this);
     _device = await _platform.deviceInfo();
     rust.startEngine(dataDir: _device.dataDir, deviceName: _device.name);
-    await _platform.watchUsb();
     return DeviceProfile(name: _device.name, kind: DeviceKind.parse(_device.kind), hasNfc: _device.hasNfc);
   }
+
+  @override
+  Future<List<Need>> prepare() async {
+    var readiness = await _platform.fix(Requirement.permissions);
+    if (readiness.permission && !readiness.bluetooth) readiness = await _platform.fix(Requirement.bluetooth);
+    return _needs(readiness);
+  }
+
+  @override
+  Future<List<Need>> needs() async => _needs(await _platform.readiness());
+
+  @override
+  Future<List<Need>> fix(Need need) async => _needs(await _platform.fix(switch (need) {
+        Need.permission => Requirement.permissions,
+        Need.permissionInSettings => Requirement.appSettings,
+        Need.wifi => Requirement.wifi,
+        Need.bluetooth => Requirement.bluetooth,
+        Need.location => Requirement.location,
+      }));
+
+  List<Need> _needs(Readiness r) => [
+        if (!r.permission) r.permissionInSettings ? Need.permissionInSettings : Need.permission,
+        if (!r.wifi) Need.wifi,
+        if (!r.bluetooth) Need.bluetooth,
+        if (!r.location) Need.location,
+      ];
 
   @override
   void onEvent(PlatformEvent event) {
@@ -84,7 +109,8 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
         forward = _nearby.stream.listen(controller.add);
         _found.removeWhere((id, _) => id != _usb);
         _publishNearby();
-        if (await _platform.requestPermissions(['nearby'])) await _platform.startDiscovery();
+        await _platform.watchUsb();
+        await _platform.startDiscovery();
       },
       onCancel: () async {
         await forward?.cancel();
@@ -124,7 +150,6 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
     yield const TransferProgress(phase: TransferPhase.connecting);
     final ticket = to.id == _usb ? null : to.ticket ?? await _platform.readTicket(to.id);
     final wifi = ticket == null ? null : rust.readTicket(text: ticket).wifi;
-    await _platform.requestPermissions(['notifications']);
     await _platform.startTransferService('Sending to ${to.name}');
     final files = [for (final f in what.files) rust.SourceFile(path: f.path, size: f.size, modifiedMs: f.modifiedMs)];
     final events = ticket == null
@@ -151,7 +176,7 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
 
   @override
   Stream<ReceiveEvent> receive() async* {
-    await _platform.requestPermissions(['nearby', 'notifications']);
+    await _platform.watchUsb();
     final events = rust.receive(destDir: _device.downloadDir, journalDir: _device.journalDir);
     final tracker = _Tracker();
     try {

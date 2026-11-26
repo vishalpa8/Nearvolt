@@ -162,6 +162,78 @@ class _ReceivePrompt extends StatelessWidget {
   }
 }
 
+/// The most important thing stopping Nearvolt from reaching other phones, with
+/// the one button that fixes it.
+class NeedNotice extends StatelessWidget {
+  const NeedNotice({super.key, required this.need, required this.onFix});
+
+  final Need need;
+  final VoidCallback onFix;
+
+  @override
+  Widget build(BuildContext context) {
+    final (icon, message, action) = switch (need) {
+      Need.permission => (
+          Icons.devices_other_rounded,
+          'Allow Nearby devices so Nearvolt can find phones and be found.',
+          'Allow',
+        ),
+      Need.permissionInSettings => (
+          Icons.devices_other_rounded,
+          'Nearby devices is off for Nearvolt. Turn it on under Permissions.',
+          'Settings',
+        ),
+      Need.wifi => (Icons.wifi_off_rounded, 'Wi-Fi is off. Transfers need it, except over a USB cable.', 'Turn on'),
+      Need.bluetooth => (
+          Icons.bluetooth_disabled_rounded,
+          "Bluetooth is off, so phones on another network won't show up.",
+          'Turn on',
+        ),
+      Need.location => (Icons.location_off_rounded, 'This Android version needs Location on to find phones.', 'Turn on'),
+    };
+    return Panel(
+      padding: const EdgeInsets.fromLTRB(Space.l, Space.s, Space.s, Space.s),
+      child: Row(
+        children: [
+          Icon(icon, color: AppColors.warning),
+          const SizedBox(width: Space.m),
+          Expanded(child: Text(message, style: Theme.of(context).textTheme.bodyMedium)),
+          TextButton(onPressed: onFix, child: Text(action)),
+        ],
+      ),
+    );
+  }
+}
+
+enum PickKind { files, folder }
+
+/// Asks whether to pick files or a whole folder.
+Future<PickKind?> showPickMenu(BuildContext context) => showModalBottomSheet<PickKind>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(Space.s, 0, Space.s, Space.l),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.insert_drive_file_rounded, color: AppColors.accent),
+                title: const Text('Files'),
+                subtitle: const Text('Photos, videos, documents and more'),
+                onTap: () => Navigator.of(context).pop(PickKind.files),
+              ),
+              ListTile(
+                leading: const Icon(Icons.folder_rounded, color: AppColors.accent),
+                title: const Text('Folder'),
+                subtitle: const Text('Everything inside, with its folders'),
+                onTap: () => Navigator.of(context).pop(PickKind.folder),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
 /// The other ways to reach a receiver: scan its code, or tap the phones together.
 class ConnectOptions extends StatelessWidget {
   const ConnectOptions({super.key, required this.onScan, required this.hasNfc});

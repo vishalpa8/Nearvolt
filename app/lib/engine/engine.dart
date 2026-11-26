@@ -6,6 +6,17 @@ abstract interface class TransferEngine {
   /// This device. Call once before anything else.
   Future<DeviceProfile> start();
 
+  /// Asks Android for the permissions Send and Receive use and to turn on
+  /// Bluetooth, then returns what's still missing.
+  Future<List<Need>> prepare();
+
+  /// What's missing right now.
+  Future<List<Need>> needs();
+
+  /// Shows Android's prompt or settings page for `need`, then returns what's
+  /// still missing.
+  Future<List<Need>> fix(Need need);
+
   /// Devices with Receive open, while listened to.
   Stream<List<NearbyDevice>> nearby();
 

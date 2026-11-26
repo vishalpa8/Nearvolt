@@ -2,7 +2,7 @@ import 'package:material_ui/material_ui.dart';
 
 import 'engine/engine.dart';
 import 'engine/models.dart';
-import 'pages/send_page.dart';
+import 'pages/home_page.dart';
 import 'theme.dart';
 
 class NearvoltApp extends StatelessWidget {
@@ -17,7 +17,7 @@ class NearvoltApp extends StatelessWidget {
       title: 'Nearvolt',
       debugShowCheckedModeBanner: false,
       theme: buildTheme(),
-      home: SendPage(engine: engine, profile: profile),
+      home: HomePage(engine: engine, profile: profile),
     );
   }
 }
