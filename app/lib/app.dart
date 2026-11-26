@@ -49,7 +49,7 @@ class StartupFailure extends StatelessWidget {
                 const SizedBox(height: Space.s),
                 Text(
                   'Installing the latest version from GitHub usually fixes this. If it doesn\'t, share '
-                  'Download › Nearvolt › nearvolt-log.txt.',
+                  'Download › Nearvolt › nearvolt.log.',
                   style: text.bodyMedium?.copyWith(color: AppColors.textSecondary),
                   textAlign: TextAlign.center,
                 ),

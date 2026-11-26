@@ -14,12 +14,20 @@ Golden screenshots are rendered on Windows, so CI on Linux skips them
 
 ## When something goes wrong
 
-- **The log:** Files app › Downloads › Nearvolt › `nearvolt-log.txt`. It records
+- **The log:** Files app › Downloads › Nearvolt › `nearvolt.log`. It records
   each start (app version, phone, Android version), every crash with its stack
-  trace,   each update step with Android's reason when an install fails, and each
-  connection's milestones (connected, each batch, drops, disconnect). It holds
-  no file contents and no codes. Share it, or
-  with USB debugging: `adb pull /sdcard/Download/Nearvolt/nearvolt-log.txt`.
+  trace, what Android was missing when a permission or switch was asked for,
+  each update step with Android's reason when an install fails, and each
+  connection's milestones: connected, each batch with its size, time and speed,
+  drops, reconnects and disconnect. It holds no file contents and no codes.
+  It keeps the last 7 days and stays under 1 MB, so it never fills the phone.
+  Share it, or with USB debugging:
+  `adb pull /sdcard/Download/Nearvolt/nearvolt.log`.
+- **More than one log file:** Android ties a file in Downloads to the install
+  that created it. After Nearvolt is uninstalled and installed again, it can't
+  write or delete the old log, so it starts `nearvolt-2.log` and keeps to that.
+  Delete old ones by hand in the Files app; logs named `nearvolt-log….txt` are
+  from older versions and can all go.
 - **The app won't open, so it can't update itself:** in the phone's browser open
   <https://github.com/vishalpa8/Nearvolt/releases/latest>, download the
   `arm64-v8a` APK and install it over the old one. If Android says "App not

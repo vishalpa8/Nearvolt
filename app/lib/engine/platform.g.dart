@@ -703,7 +703,7 @@ class NearvoltPlatform {
     return pigeonVar_replyValue! as DeviceInfo;
   }
 
-  /// Adds a line to the log users can share, Download/Nearvolt/nearvolt-log.txt.
+  /// Adds a line to the log users can share, Download/Nearvolt/nearvolt.log.
   Future<void> log(String tag, String message) async {
     final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.log$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(

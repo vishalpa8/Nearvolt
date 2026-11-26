@@ -137,7 +137,7 @@ class PlatformEvent {
 abstract class NearvoltPlatform {
   DeviceInfo deviceInfo();
 
-  /// Adds a line to the log users can share, Download/Nearvolt/nearvolt-log.txt.
+  /// Adds a line to the log users can share, Download/Nearvolt/nearvolt.log.
   void log(String tag, String message);
 
   Readiness readiness();

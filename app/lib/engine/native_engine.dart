@@ -344,22 +344,36 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
     return controller.stream;
   }
 
+  /// When each batch started, by log tag and batch, for its speed in the log.
+  final _batchStarted = <String, DateTime>{};
+
   /// The milestones of a connection, for the log; progress ticks are left out.
   void _record(String tag, rust.TransferEvent e) {
+    final key = '$tag ${e.batch}';
     final line = switch (e.kind) {
       rust.EventKind.request => 'request from ${e.text}',
       rust.EventKind.code => 'showing a confirmation code',
       rust.EventKind.connected => 'connected to ${e.text}',
-      rust.EventKind.started => 'batch ${e.batch}: ${e.totalFiles} files, ${e.totalBytes} bytes',
-      rust.EventKind.completed => 'batch ${e.batch} completed',
+      rust.EventKind.started => 'batch ${e.batch}: ${e.totalFiles} files, ${formatBytes(e.totalBytes)}',
+      rust.EventKind.completed => 'batch ${e.batch} completed: ${e.totalFiles} files, ${formatBytes(e.totalBytes)}'
+          '${_speed(e.totalBytes, _batchStarted.remove(key))}',
       rust.EventKind.batchFailed => 'batch ${e.batch} failed: ${e.text}',
       rust.EventKind.connectionLost => 'connection lost: ${e.text}',
       rust.EventKind.peerLeft => 'the other phone disconnected',
-      rust.EventKind.disconnected => 'disconnected after ${e.doneFiles} files, ${e.doneBytes} bytes',
+      rust.EventKind.disconnected => 'disconnected after ${e.doneFiles} files, ${formatBytes(e.doneBytes)}',
       rust.EventKind.failed => 'failed: ${e.text}',
       rust.EventKind.ready || rust.EventKind.progress => null,
     };
+    // A batch resumed after a reconnect keeps its first start.
+    if (e.kind == rust.EventKind.started) _batchStarted.putIfAbsent(key, DateTime.now);
     if (line != null) _platform.log(tag, line);
+  }
+
+  static String _speed(int bytes, DateTime? started) {
+    if (started == null) return '';
+    final seconds = DateTime.now().difference(started).inMilliseconds / 1000;
+    if (seconds <= 0) return '';
+    return ' in ${seconds.toStringAsFixed(1)} s, ${formatBytes((bytes / seconds).round())}/s';
   }
 
   DateTime _notified = DateTime(0);

@@ -732,7 +732,7 @@ private open class PlatformPigeonCodec : StandardMessageCodec() {
 /** Generated interface from Pigeon that represents a handler of messages from Flutter. */
 interface NearvoltPlatform {
   fun deviceInfo(): DeviceInfo
-  /** Adds a line to the log users can share, Download/Nearvolt/nearvolt-log.txt. */
+  /** Adds a line to the log users can share, Download/Nearvolt/nearvolt.log. */
   fun log(tag: String, message: String)
   fun readiness(): Readiness
   /**
