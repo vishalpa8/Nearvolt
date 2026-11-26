@@ -11,8 +11,8 @@ use futures::FutureExt;
 use nearvolt_core::protocol::FileEntry;
 use nearvolt_core::util::AbortOnDrop;
 use nearvolt_core::{
-    send, Approver, Event, EventSender, FileSet, Identity, IncomingOffer, Link, MuxLink, Peer, Progress, RawStream,
-    ReceiveOptions, Receiver, SendOptions, SourceOpener, Stats, Summary, Ticket, WifiDirect,
+    connect as connect_peer, Approver, Command, Event, EventSender, FileSet, Identity, Link, MuxLink, Peer, Progress,
+    RawStream, ReceiveOptions, Receiver, Request, SendOptions, SourceOpener, Stats, Summary, Ticket, WifiDirect,
 };
 use tokio::runtime::Runtime;
 use tokio::sync::{mpsc, oneshot};
@@ -37,9 +37,11 @@ pub struct TicketInfo {
 }
 
 pub struct ReceiveTickets {
-    /// For the QR code and NFC: includes the one-time secret.
+    /// For the QR code: includes the secret, and the receiver still asks.
     pub private_ticket: String,
-    /// For the local network and Bluetooth: no secret, so senders confirm a code.
+    /// For NFC: its own secret, so a tap connects without asking.
+    pub tap_ticket: String,
+    /// For the local network and Bluetooth: no secret, so both phones confirm a code.
     pub public_ticket: String,
     pub port: u16,
 }
@@ -55,24 +57,38 @@ pub struct SourceFile {
 pub enum EventKind {
     /// Receive is open; `receive_tickets` is ready.
     Ready,
-    Connected,
-    /// The sender shows `code`; the receiver shows the same code in its offer.
+    /// Receiver: a phone named `text` asks to connect; answer with
+    /// `answer_request`. `code` is set when both screens must show the same one.
+    Request,
+    /// Sender: show `code` while the receiver decides.
     Code,
-    /// An incoming transfer waits for `answer_offer`.
-    Offer,
+    /// Connected and accepted, also after every reconnect. `text` is the other phone.
+    Connected,
+    /// A batch started sending or arriving: `batch` and its totals.
+    Started,
     Progress,
-    ConnectionLost,
+    /// Every file of `batch` arrived and was verified.
     Completed,
+    /// `batch` couldn't be sent, for the reason in `text`. The connection stays.
+    BatchFailed,
+    /// The link dropped and is reconnecting; `text` says why.
+    ConnectionLost,
+    /// The other phone disconnected.
+    PeerLeft,
+    /// The connection is over. Always the last event, unless `Failed` is.
+    Disconnected,
+    /// The connection failed for good, for the reason in `text`.
     Failed,
 }
 
-/// `text` is the peer name, the reason for a lost connection or the error,
-/// depending on `kind`. Counts are filled for offers, progress and completion.
+/// `text` and `code` depend on `kind`. `batch` is -1 when no batch is meant.
+/// Counts are filled for batches, progress and the end of a connection.
 #[derive(Clone)]
 pub struct TransferEvent {
     pub kind: EventKind,
     pub text: Option<String>,
     pub code: Option<String>,
+    pub batch: i64,
     pub done_bytes: i64,
     pub total_bytes: i64,
     pub done_files: i64,
@@ -81,7 +97,15 @@ pub struct TransferEvent {
 
 impl TransferEvent {
     fn new(kind: EventKind, text: Option<String>) -> Self {
-        Self { kind, text, code: None, done_bytes: 0, total_bytes: 0, done_files: 0, total_files: 0 }
+        Self { kind, text, code: None, batch: -1, done_bytes: 0, total_bytes: 0, done_files: 0, total_files: 0 }
+    }
+
+    fn batch(kind: EventKind, batch: u32, files: u64, bytes: u64) -> Self {
+        let mut event = Self::new(kind, None);
+        event.batch = batch as i64;
+        event.total_files = files as i64;
+        event.total_bytes = bytes as i64;
+        event
     }
 
     fn with_progress(mut self, p: Progress) -> Self {
@@ -98,7 +122,7 @@ struct Engine {
     device_name: String,
     runtime: Runtime,
     receiving: Mutex<Option<Receiving>>,
-    sending: Mutex<Option<AbortOnDrop<()>>>,
+    sending: Mutex<Option<Sending>>,
     usb: MuxLink,
     usb_session: Mutex<Option<AbortOnDrop<()>>>,
 }
@@ -106,6 +130,11 @@ struct Engine {
 struct Receiving {
     receiver: Arc<Receiver>,
     pending: Arc<Mutex<Option<oneshot::Sender<bool>>>>,
+    _task: AbortOnDrop<()>,
+}
+
+struct Sending {
+    commands: mpsc::UnboundedSender<Command>,
     _task: AbortOnDrop<()>,
 }
 
@@ -150,8 +179,9 @@ pub fn read_ticket(text: String) -> Result<TicketInfo> {
     })
 }
 
-/// Opens Receive: listens for senders until `stop_receiving`. Files go to
-/// `dest_dir`; journals for interrupted transfers go to `journal_dir`.
+/// Opens Receive: waits for one phone to connect, then receives its batches until
+/// either phone disconnects. Files go to `dest_dir`; journals for interrupted
+/// transfers go to `journal_dir`.
 pub fn receive(dest_dir: String, journal_dir: String, events: StreamSink<TransferEvent>) -> Result<()> {
     let engine = engine()?;
     let _context = engine.runtime.enter();
@@ -159,20 +189,17 @@ pub fn receive(dest_dir: String, journal_dir: String, events: StreamSink<Transfe
         dir: dest_dir.into(),
         journal_dir: Some(journal_dir.into()),
         device_name: engine.device_name.clone(),
-        verify_on_disk: true,
         allow_code_pairing: true,
     };
     let receiver = Arc::new(Receiver::bind(&engine.identity, SocketAddr::from(([0, 0, 0, 0], 0)), options)?);
     let pending: Arc<Mutex<Option<oneshot::Sender<bool>>>> = Arc::default();
     let approve: Approver = {
         let (pending, sink) = (pending.clone(), events.clone());
-        Arc::new(move |offer: IncomingOffer| {
+        Arc::new(move |request: Request| {
             let (tx, rx) = oneshot::channel();
             *pending.lock().unwrap() = Some(tx);
-            let mut event = TransferEvent::new(EventKind::Offer, Some(offer.sender_name));
-            event.code = offer.code;
-            event.total_bytes = offer.bytes as i64;
-            event.total_files = offer.files as i64;
+            let mut event = TransferEvent::new(EventKind::Request, Some(request.sender_name));
+            event.code = request.code;
             let _ = sink.add(event);
             async move { rx.await.unwrap_or(false) }.boxed()
         })
@@ -193,17 +220,19 @@ pub fn receive(dest_dir: String, journal_dir: String, events: StreamSink<Transfe
 pub fn receive_tickets(wifi: Option<WifiInfo>) -> Result<ReceiveTickets> {
     let receiving = engine()?.receiving.lock().unwrap();
     let receiver = &receiving.as_ref().context("Receive is not open")?.receiver;
-    let mut ticket = receiver.ticket();
-    ticket.wifi = wifi.map(|w| WifiDirect { ssid: w.ssid, passphrase: w.passphrase, frequency: w.frequency });
+    let wifi = wifi.map(|w| WifiDirect { ssid: w.ssid, passphrase: w.passphrase, frequency: w.frequency });
+    let ticket = Ticket { wifi: wifi.clone(), ..receiver.ticket() };
     Ok(ReceiveTickets {
         private_ticket: ticket.encode(),
+        tap_ticket: Ticket { wifi, ..receiver.tap_ticket() }.encode(),
         public_ticket: ticket.public().encode(),
         port: receiver.local_addr().port(),
     })
 }
 
+/// Answers the last `Request` event.
 #[frb(sync)]
-pub fn answer_offer(accept: bool) {
+pub fn answer_request(accept: bool) {
     let Ok(engine) = engine() else { return };
     if let Some(receiving) = engine.receiving.lock().unwrap().as_ref() {
         if let Some(answer) = receiving.pending.lock().unwrap().take() {
@@ -212,6 +241,18 @@ pub fn answer_offer(accept: bool) {
     }
 }
 
+/// Ends the receiving side's connection; the sender is told, so it stops
+/// reconnecting. Receive then ends with `Disconnected`.
+#[frb(sync)]
+pub fn disconnect_receiving() {
+    if let Ok(engine) = engine() {
+        if let Some(receiving) = engine.receiving.lock().unwrap().as_ref() {
+            receiving.receiver.disconnect();
+        }
+    }
+}
+
+/// Closes Receive at once, for example when the page goes away.
 #[frb(sync)]
 pub fn stop_receiving() {
     if let Ok(engine) = engine() {
@@ -219,21 +260,41 @@ pub fn stop_receiving() {
     }
 }
 
-/// Sends the picked files (`source_token` from the platform picker) to the
-/// receiver in `ticket`, reconnecting and resuming on its own.
-pub fn send_files(
-    ticket: String,
-    source_token: i64,
-    files: Vec<SourceFile>,
-    events: StreamSink<TransferEvent>,
-) -> Result<()> {
-    start_send(Peer::from_ticket(&Ticket::decode(&ticket)?), source_token, files, events)
+/// Connects to the receiver in `ticket` and keeps the connection, reconnecting
+/// the same way whenever the link drops, until `disconnect`.
+pub fn connect(ticket: String, events: StreamSink<TransferEvent>) -> Result<()> {
+    start_connection(Peer::from_ticket(&Ticket::decode(&ticket)?), events)
 }
 
-/// Sends over the USB cable. With no ticket to pin, both phones confirm a code.
-pub fn send_usb(source_token: i64, files: Vec<SourceFile>, events: StreamSink<TransferEvent>) -> Result<()> {
+/// Connects over the USB cable. With no ticket to pin, both phones confirm a code.
+pub fn connect_usb(events: StreamSink<TransferEvent>) -> Result<()> {
     let peer = Peer { link: engine()?.usb.clone(), name: "USB".into(), fingerprint: None, secret: None };
-    start_send(peer, source_token, files, events)
+    start_connection(peer, events)
+}
+
+/// Queues the picked files (`source_token` from the platform picker) on the open
+/// connection. Batches are sent one after another, numbered from 0.
+#[frb(sync)]
+pub fn queue_files(source_token: i64, files: Vec<SourceFile>) -> Result<()> {
+    let sending = engine()?.sending.lock().unwrap();
+    let sending = sending.as_ref().context("not connected")?;
+    let files = files
+        .into_iter()
+        .map(|f| FileEntry { path: f.path, size: f.size as u64, modified: f.modified_ms.map(|m| m as u64) })
+        .collect();
+    let set = FileSet::Opened { files, opener: picked_files(source_token) };
+    sending.commands.send(Command::Send(set)).ok().context("the connection has ended")
+}
+
+/// Ends the sending side's connection, even in the middle of a batch; the
+/// receiver is told. The connection then ends with `Disconnected`.
+#[frb(sync)]
+pub fn disconnect() {
+    if let Ok(engine) = engine() {
+        if let Some(sending) = engine.sending.lock().unwrap().as_ref() {
+            let _ = sending.commands.send(Command::Disconnect);
+        }
+    }
 }
 
 /// A USB cable to another phone is ready: `fd` is a stream socket the engine now
@@ -253,32 +314,20 @@ pub fn attach_usb(fd: i32, host: bool) -> Result<()> {
     Ok(())
 }
 
-fn start_send<L: Link + 'static>(
-    peer: Peer<L>,
-    source_token: i64,
-    files: Vec<SourceFile>,
-    events: StreamSink<TransferEvent>,
-) -> Result<()> {
+fn start_connection<L: Link + 'static>(peer: Peer<L>, events: StreamSink<TransferEvent>) -> Result<()> {
     let engine = engine()?;
-    let files = files
-        .into_iter()
-        .map(|f| FileEntry { path: f.path, size: f.size as u64, modified: f.modified_ms.map(|m| m as u64) })
-        .collect();
-    let set = FileSet::Opened { files, opener: picked_files(source_token) };
-    let options = SendOptions { device_name: engine.device_name.clone(), ..Default::default() };
+    // Reconnecting never gives up on its own; only the user disconnects.
+    let options =
+        SendOptions { device_name: engine.device_name.clone(), reconnect_for: Duration::MAX, ..Default::default() };
+    let (commands, queue) = mpsc::unbounded_channel();
     let task = engine.runtime.spawn(drive(
-        move |stats, events| async move { send(&engine.identity, &peer, set, &options, stats, Some(events)).await },
+        move |stats, events| async move {
+            connect_peer(&engine.identity, &peer, &options, queue, stats, Some(events)).await
+        },
         events,
     ));
-    *engine.sending.lock().unwrap() = Some(AbortOnDrop(task));
+    *engine.sending.lock().unwrap() = Some(Sending { commands, _task: AbortOnDrop(task) });
     Ok(())
-}
-
-#[frb(sync)]
-pub fn stop_sending() {
-    if let Ok(engine) = engine() {
-        engine.sending.lock().unwrap().take();
-    }
 }
 
 #[cfg(unix)]
@@ -311,8 +360,8 @@ fn picked_files(_token: i64) -> Arc<dyn SourceOpener> {
     Arc::new(Unsupported)
 }
 
-/// Runs a transfer and streams its events to the app, with progress throttled
-/// to `PROGRESS_INTERVAL` and a final `Completed` or `Failed`.
+/// Runs a connection and streams its events to the app, with progress throttled
+/// to `PROGRESS_INTERVAL` and a final `Disconnected` or `Failed`.
 async fn drive<W, F>(work: W, sink: StreamSink<TransferEvent>)
 where
     W: FnOnce(Arc<Stats>, EventSender) -> F,
@@ -340,23 +389,31 @@ where
     while let Ok(event) = events_rx.try_recv() {
         forward(&sink, event);
     }
-    let progress = stats.snapshot();
     let _ = sink.add(match result {
-        Ok(_) => TransferEvent::new(EventKind::Completed, None).with_progress(progress),
-        Err(e) => TransferEvent::new(EventKind::Failed, Some(format!("{e:#}"))).with_progress(progress),
+        Ok(total) => TransferEvent {
+            done_files: total.files as i64,
+            done_bytes: total.bytes as i64,
+            ..TransferEvent::new(EventKind::Disconnected, None)
+        },
+        Err(e) => TransferEvent::new(EventKind::Failed, Some(format!("{e:#}"))),
     });
 }
 
 fn forward(sink: &StreamSink<TransferEvent>, event: Event) {
     let event = match event {
         Event::Connected { peer } => TransferEvent::new(EventKind::Connected, Some(peer)),
-        Event::Code { code } => {
-            let mut event = TransferEvent::new(EventKind::Code, None);
-            event.code = Some(code);
-            event
+        Event::Code { code } => TransferEvent { code: Some(code), ..TransferEvent::new(EventKind::Code, None) },
+        Event::Started { batch, files, bytes } | Event::Incoming { batch, files, bytes } => {
+            TransferEvent::batch(EventKind::Started, batch, files, bytes)
+        }
+        Event::Completed { batch, summary } => {
+            TransferEvent::batch(EventKind::Completed, batch, summary.files, summary.bytes)
+        }
+        Event::BatchFailed { batch, reason } => {
+            TransferEvent { text: Some(reason), ..TransferEvent::batch(EventKind::BatchFailed, batch, 0, 0) }
         }
         Event::ConnectionLost { reason } => TransferEvent::new(EventKind::ConnectionLost, Some(reason)),
-        Event::Resumed { .. } | Event::Completed(_) => return,
+        Event::PeerLeft => TransferEvent::new(EventKind::PeerLeft, None),
     };
     let _ = sink.add(event);
 }

@@ -7,8 +7,8 @@ import 'frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `drive`, `engine`, `forward`, `new`, `picked_files`, `start_send`, `usb_stream`, `with_progress`
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Engine`, `Receiving`
+// These functions are ignored because they are not marked as `pub`: `batch`, `drive`, `engine`, `forward`, `new`, `picked_files`, `start_connection`, `usb_stream`, `with_progress`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Engine`, `Receiving`, `Sending`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`
 
 /// Loads or creates this device's identity in `data_dir`. Safe to call again.
@@ -21,8 +21,9 @@ void startEngine({required String dataDir, required String deviceName}) =>
 TicketInfo readTicket({required String text}) =>
     RustLib.instance.api.crateApiReadTicket(text: text);
 
-/// Opens Receive: listens for senders until `stop_receiving`. Files go to
-/// `dest_dir`; journals for interrupted transfers go to `journal_dir`.
+/// Opens Receive: waits for one phone to connect, then receives its batches until
+/// either phone disconnects. Files go to `dest_dir`; journals for interrupted
+/// transfers go to `journal_dir`.
 Stream<TransferEvent> receive({
   required String destDir,
   required String journalDir,
@@ -36,31 +37,39 @@ Stream<TransferEvent> receive({
 ReceiveTickets receiveTickets({WifiInfo? wifi}) =>
     RustLib.instance.api.crateApiReceiveTickets(wifi: wifi);
 
-void answerOffer({required bool accept}) =>
-    RustLib.instance.api.crateApiAnswerOffer(accept: accept);
+/// Answers the last `Request` event.
+void answerRequest({required bool accept}) =>
+    RustLib.instance.api.crateApiAnswerRequest(accept: accept);
 
+/// Ends the receiving side's connection; the sender is told, so it stops
+/// reconnecting. Receive then ends with `Disconnected`.
+void disconnectReceiving() =>
+    RustLib.instance.api.crateApiDisconnectReceiving();
+
+/// Closes Receive at once, for example when the page goes away.
 void stopReceiving() => RustLib.instance.api.crateApiStopReceiving();
 
-/// Sends the picked files (`source_token` from the platform picker) to the
-/// receiver in `ticket`, reconnecting and resuming on its own.
-Stream<TransferEvent> sendFiles({
-  required String ticket,
+/// Connects to the receiver in `ticket` and keeps the connection, reconnecting
+/// the same way whenever the link drops, until `disconnect`.
+Stream<TransferEvent> connect({required String ticket}) =>
+    RustLib.instance.api.crateApiConnect(ticket: ticket);
+
+/// Connects over the USB cable. With no ticket to pin, both phones confirm a code.
+Stream<TransferEvent> connectUsb() => RustLib.instance.api.crateApiConnectUsb();
+
+/// Queues the picked files (`source_token` from the platform picker) on the open
+/// connection. Batches are sent one after another, numbered from 0.
+void queueFiles({
   required PlatformInt64 sourceToken,
   required List<SourceFile> files,
-}) => RustLib.instance.api.crateApiSendFiles(
-  ticket: ticket,
+}) => RustLib.instance.api.crateApiQueueFiles(
   sourceToken: sourceToken,
   files: files,
 );
 
-/// Sends over the USB cable. With no ticket to pin, both phones confirm a code.
-Stream<TransferEvent> sendUsb({
-  required PlatformInt64 sourceToken,
-  required List<SourceFile> files,
-}) => RustLib.instance.api.crateApiSendUsb(
-  sourceToken: sourceToken,
-  files: files,
-);
+/// Ends the sending side's connection, even in the middle of a batch; the
+/// receiver is told. The connection then ends with `Disconnected`.
+void disconnect() => RustLib.instance.api.crateApiDisconnect();
 
 /// A USB cable to another phone is ready: `fd` is a stream socket the engine now
 /// owns. `host` is true on the phone powering the cable, so the two ends differ.
@@ -68,41 +77,67 @@ Stream<TransferEvent> sendUsb({
 void attachUsb({required int fd, required bool host}) =>
     RustLib.instance.api.crateApiAttachUsb(fd: fd, host: host);
 
-void stopSending() => RustLib.instance.api.crateApiStopSending();
-
 enum EventKind {
   /// Receive is open; `receive_tickets` is ready.
   ready,
-  connected,
 
-  /// The sender shows `code`; the receiver shows the same code in its offer.
+  /// Receiver: a phone named `text` asks to connect; answer with
+  /// `answer_request`. `code` is set when both screens must show the same one.
+  request,
+
+  /// Sender: show `code` while the receiver decides.
   code,
 
-  /// An incoming transfer waits for `answer_offer`.
-  offer,
+  /// Connected and accepted, also after every reconnect. `text` is the other phone.
+  connected,
+
+  /// A batch started sending or arriving: `batch` and its totals.
+  started,
   progress,
-  connectionLost,
+
+  /// Every file of `batch` arrived and was verified.
   completed,
+
+  /// `batch` couldn't be sent, for the reason in `text`. The connection stays.
+  batchFailed,
+
+  /// The link dropped and is reconnecting; `text` says why.
+  connectionLost,
+
+  /// The other phone disconnected.
+  peerLeft,
+
+  /// The connection is over. Always the last event, unless `Failed` is.
+  disconnected,
+
+  /// The connection failed for good, for the reason in `text`.
   failed,
 }
 
 class ReceiveTickets {
-  /// For the QR code and NFC: includes the one-time secret.
+  /// For the QR code: includes the secret, and the receiver still asks.
   final String privateTicket;
 
-  /// For the local network and Bluetooth: no secret, so senders confirm a code.
+  /// For NFC: its own secret, so a tap connects without asking.
+  final String tapTicket;
+
+  /// For the local network and Bluetooth: no secret, so both phones confirm a code.
   final String publicTicket;
   final int port;
 
   const ReceiveTickets({
     required this.privateTicket,
+    required this.tapTicket,
     required this.publicTicket,
     required this.port,
   });
 
   @override
   int get hashCode =>
-      privateTicket.hashCode ^ publicTicket.hashCode ^ port.hashCode;
+      privateTicket.hashCode ^
+      tapTicket.hashCode ^
+      publicTicket.hashCode ^
+      port.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -110,6 +145,7 @@ class ReceiveTickets {
       other is ReceiveTickets &&
           runtimeType == other.runtimeType &&
           privateTicket == other.privateTicket &&
+          tapTicket == other.tapTicket &&
           publicTicket == other.publicTicket &&
           port == other.port;
 }
@@ -157,12 +193,13 @@ class TicketInfo {
           wifi == other.wifi;
 }
 
-/// `text` is the peer name, the reason for a lost connection or the error,
-/// depending on `kind`. Counts are filled for offers, progress and completion.
+/// `text` and `code` depend on `kind`. `batch` is -1 when no batch is meant.
+/// Counts are filled for batches, progress and the end of a connection.
 class TransferEvent {
   final EventKind kind;
   final String? text;
   final String? code;
+  final PlatformInt64 batch;
   final PlatformInt64 doneBytes;
   final PlatformInt64 totalBytes;
   final PlatformInt64 doneFiles;
@@ -172,6 +209,7 @@ class TransferEvent {
     required this.kind,
     this.text,
     this.code,
+    required this.batch,
     required this.doneBytes,
     required this.totalBytes,
     required this.doneFiles,
@@ -183,6 +221,7 @@ class TransferEvent {
       kind.hashCode ^
       text.hashCode ^
       code.hashCode ^
+      batch.hashCode ^
       doneBytes.hashCode ^
       totalBytes.hashCode ^
       doneFiles.hashCode ^
@@ -196,6 +235,7 @@ class TransferEvent {
           kind == other.kind &&
           text == other.text &&
           code == other.code &&
+          batch == other.batch &&
           doneBytes == other.doneBytes &&
           totalBytes == other.totalBytes &&
           doneFiles == other.doneFiles &&

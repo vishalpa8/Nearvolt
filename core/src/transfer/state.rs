@@ -1,7 +1,6 @@
-//! Everything the receiver knows about one incoming transfer: which chunks have
-//! arrived, where they are on disk, and the journal that survives crashes.
+//! Everything the receiver knows about one incoming batch: how much of each file
+//! has arrived, where it is on disk, and the journal that survives crashes.
 
-use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -16,14 +15,12 @@ use super::disk;
 use super::journal::{Journal, Replay};
 use super::{human_bytes, Fatal, Stats, Summary};
 use crate::identity::Fingerprint;
-use crate::protocol::{
-    bit_clear, bit_get, bit_set, bitmap_len, chunk_count, chunk_range, ChunkHeader, ChunkRef, FileHave, Offer,
-    MAX_CHUNK_SIZE, MAX_FILES, MIN_CHUNK_SIZE,
-};
+use crate::protocol::{FileHave, Offer, MAX_FILES};
 use crate::safety;
 
 const CHECKPOINT_EVERY: Duration = Duration::from_secs(2);
 const PART_SUFFIX: &str = ".nvpart";
+const READ_BLOCK: usize = 1 << 20;
 
 /// The receiver derives the ID itself, so a re-offer of the same files from the
 /// same sender always maps to the same journal.
@@ -37,42 +34,33 @@ pub(super) fn transfer_id(sender: &Fingerprint, offer: &Offer) -> String {
 pub(super) struct RecvFile {
     rel: PathBuf,
     size: u64,
-    chunks: u32,
     modified: Option<u64>,
 }
 
 pub(super) fn plan_files(offer: &Offer) -> Result<Vec<RecvFile>> {
-    ensure!(
-        (MIN_CHUNK_SIZE..=MAX_CHUNK_SIZE).contains(&offer.chunk_size),
-        "unsupported chunk size {}",
-        offer.chunk_size
-    );
     ensure!(!offer.files.is_empty() && offer.files.len() <= MAX_FILES, "invalid number of files");
-    let mut cleaned = Vec::with_capacity(offer.files.len());
-    for f in &offer.files {
-        ensure!(f.size / (offer.chunk_size as u64) < u32::MAX as u64, "{} is too large", f.path);
-        cleaned.push(safety::clean_relative_path(&f.path)?);
-    }
+    let cleaned = offer.files.iter().map(|f| safety::clean_relative_path(&f.path)).collect::<Result<Vec<_>>>()?;
     let paths = safety::unique_paths(cleaned)?;
-    Ok(offer
-        .files
-        .iter()
-        .zip(paths)
-        .map(|(f, rel)| RecvFile {
-            rel,
-            size: f.size,
-            chunks: chunk_count(f.size, offer.chunk_size),
-            modified: f.modified,
-        })
-        .collect())
+    Ok(offer.files.iter().zip(paths).map(|(f, rel)| RecvFile { rel, size: f.size, modified: f.modified }).collect())
 }
 
+#[derive(Default)]
 struct Slot {
-    have: Vec<u8>,
-    hashes: Vec<[u8; 32]>,
-    remaining: u32,
+    /// Bytes written so far, from the start of the file.
+    written: u64,
+    /// Counts the streams that have started this file. A write from a stream that
+    /// was replaced, after a reconnect, still lands but no longer moves `written`.
+    epoch: u64,
+    /// Written to since the last checkpoint.
+    dirty: bool,
     handle: Option<Arc<File>>,
     done: bool,
+}
+
+/// One stream's turn at writing a file, from [`TransferState::begin`].
+pub(super) struct Writing {
+    file: Arc<File>,
+    epoch: u64,
 }
 
 /// Shared by every connection the sender makes, so reconnects pick up exactly
@@ -81,13 +69,9 @@ pub(super) struct TransferState {
     pub(super) id: String,
     root: PathBuf,
     state_dir: PathBuf,
-    chunk_size: u32,
-    verify_on_disk: bool,
     files: Vec<RecvFile>,
     slots: Vec<Mutex<Slot>>,
     journal: Mutex<Journal>,
-    /// Part files written since the last checkpoint.
-    dirty: Mutex<HashMap<u32, Arc<File>>>,
     remaining_files: AtomicU64,
     pub(super) complete: watch::Sender<bool>,
     stats: Arc<Stats>,
@@ -98,160 +82,76 @@ impl TransferState {
     /// `root` receives the files; the journal lives in `journal_root/<transfer id>`.
     pub(super) fn open(
         id: String,
-        chunk_size: u32,
         files: Vec<RecvFile>,
         root: &Path,
         journal_root: &Path,
-        verify_on_disk: bool,
         stats: Arc<Stats>,
     ) -> Result<Arc<Self>> {
         let state_dir = journal_root.join(&id[..32]);
         fs::create_dir_all(&state_dir)?;
         let (journal, replay) = Journal::open(&state_dir.join("journal"))?;
-        let slots = files
-            .iter()
-            .map(|f| {
-                Mutex::new(Slot {
-                    have: vec![0; bitmap_len(f.chunks)],
-                    hashes: vec![[0; 32]; f.chunks as usize],
-                    remaining: f.chunks,
-                    handle: None,
-                    done: false,
-                })
-            })
-            .collect();
-        let file_count = files.len() as u64;
         let state = Self {
             id,
             root: root.to_path_buf(),
             state_dir,
-            chunk_size,
-            verify_on_disk,
+            slots: files.iter().map(|_| Mutex::new(Slot::default())).collect(),
+            remaining_files: AtomicU64::new(files.len() as u64),
             files,
-            slots,
             journal: Mutex::new(journal),
-            dirty: Mutex::new(HashMap::new()),
-            remaining_files: AtomicU64::new(file_count),
             complete: watch::channel(false).0,
             stats,
             started: Instant::now(),
         };
-        let with_parts = state.replay(replay);
-        state.check_space(&with_parts)?;
-        for i in 0..state.files.len() as u32 {
-            let ready = {
-                let slot = state.slot(i);
-                !slot.done && slot.remaining == 0
-            };
-            if ready {
-                state.finish_file(i)?;
-            }
-        }
+        state.replay(replay);
+        state.check_space()?;
         state.publish_progress();
+        if state.remaining_files.load(Ordering::Acquire) == 0 {
+            state.complete.send_replace(true);
+        }
         let state = Arc::new(state);
         spawn_checkpointer(Arc::downgrade(&state));
         Ok(state)
     }
 
-    /// Applies the journal. Returns the files that already have a part file.
-    fn replay(&self, replay: Replay) -> HashSet<u32> {
-        let count = self.files.len();
-        let mut finished = HashSet::new();
+    /// Finished files stay finished, and partly received ones resume from the
+    /// last byte known to be on disk.
+    fn replay(&self, replay: Replay) {
         for (i, name) in replay.done {
-            if i as usize >= count {
-                continue;
-            }
-            finished.insert(i);
-            let f = &self.files[i as usize];
-            let on_disk = safety::clean_relative_path(&name)
-                .ok()
-                .map(|parts| self.root.join(parts.iter().collect::<PathBuf>()))
-                .and_then(|path| fs::metadata(path).ok())
-                .is_some_and(|meta| meta.len() == f.size);
-            if on_disk {
+            let Some(f) = self.files.get(i as usize) else { continue };
+            let Ok(parts) = safety::clean_relative_path(&name) else { continue };
+            let target = self.root.join(parts.iter().collect::<PathBuf>());
+            let part = self.part_path(i);
+            // A crash between the journal record and the rename leaves the part file.
+            let saved = has_size(&target, f.size) || (has_size(&part, f.size) && fs::rename(&part, &target).is_ok());
+            if saved && !self.slot(i).done {
                 self.mark_done(i);
             }
         }
-
-        let mut with_parts = HashSet::new();
-        let mut part_exists = HashMap::new();
-        let mut unverified: HashMap<u32, Vec<(u32, [u8; 32])>> = HashMap::new();
-        let mut without_part: HashMap<u32, HashMap<u32, [u8; 32]>> = HashMap::new();
-        for rec in replay.chunks {
-            let i = rec.file;
-            if i as usize >= count || rec.chunk >= self.files[i as usize].chunks || finished.contains(&i) {
-                continue;
-            }
-            if !*part_exists.entry(i).or_insert_with(|| self.part_path(i).exists()) {
-                without_part.entry(i).or_default().insert(rec.chunk, rec.hash);
-                continue;
-            }
-            with_parts.insert(i);
-            if rec.trusted {
-                self.mark(i, rec.chunk, rec.hash);
-            } else {
-                unverified.entry(i).or_default().push((rec.chunk, rec.hash));
+        for (i, durable) in replay.durable {
+            let Some(f) = self.files.get(i as usize) else { continue };
+            let mut slot = self.slot(i);
+            if !slot.done && has_size(&self.part_path(i), f.size) {
+                slot.written = durable.min(f.size);
             }
         }
-
-        // Chunks after the last checkpoint may not have reached the disk before a
-        // crash, so only count the ones whose bytes still match.
-        for (i, chunks) in unverified {
-            let Ok(file) = File::open(self.part_path(i)) else { continue };
-            let size = self.files[i as usize].size;
-            let mut buf = Vec::new();
-            for (c, hash) in chunks {
-                let (offset, len) = chunk_range(size, self.chunk_size, c);
-                buf.resize(len as usize, 0);
-                if disk::read_exact_at(&file, &mut buf, offset).is_ok()
-                    && blake3::hash(&buf) == blake3::Hash::from(hash)
-                {
-                    self.mark(i, c, hash);
-                }
-            }
-        }
-
-        // A file whose done record was lost in a crash is already under its final
-        // name. Recognize it by its chunk hashes instead of receiving it again.
-        for (i, chunks) in without_part {
-            let f = &self.files[i as usize];
-            if chunks.len() != f.chunks as usize {
-                continue;
-            }
-            let Ok(file) = File::open(self.root.join(&f.rel)) else { continue };
-            if file.metadata().map(|m| m.len()).ok() != Some(f.size) {
-                continue;
-            }
-            let hashes: Vec<[u8; 32]> = (0..f.chunks).map(|c| chunks[&c]).collect();
-            if matches!(verify_part(&file, f.size, self.chunk_size, &hashes), Ok(bad) if bad.is_empty()) {
-                self.mark_done(i);
-                let _ = self.journal.lock().unwrap().file_done(i, &rel_string(&f.rel));
-            }
-        }
-        with_parts
     }
 
     fn mark_done(&self, i: u32) {
-        let chunks = self.files[i as usize].chunks;
         let mut slot = self.slot(i);
         slot.done = true;
-        slot.remaining = 0;
-        slot.hashes = Vec::new();
-        for c in 0..chunks {
-            bit_set(&mut slot.have, c);
-        }
+        slot.written = self.files[i as usize].size;
         drop(slot);
-        self.remaining_files.fetch_sub(1, Ordering::Relaxed);
+        self.remaining_files.fetch_sub(1, Ordering::AcqRel);
     }
 
-    fn check_space(&self, with_parts: &HashSet<u32>) -> Result<()> {
+    fn check_space(&self) -> Result<()> {
         let needed = (0..self.files.len() as u32)
-            .filter(|i| !with_parts.contains(i) && !self.slot(*i).done)
+            .filter(|&i| !self.slot(i).done && !self.part_path(i).exists())
             .fold(0u64, |sum, i| sum.saturating_add(self.files[i as usize].size));
         let free = disk::available_space(&self.root).unwrap_or(u64::MAX);
         if needed > free {
             return Err(Fatal(format!(
-                "Not enough free space: this transfer needs {}, but only {} is free.",
+                "Not enough free space: these files need {}, but only {} is free.",
                 human_bytes(needed),
                 human_bytes(free)
             ))
@@ -260,93 +160,95 @@ impl TransferState {
         Ok(())
     }
 
-    pub(super) fn expected_len(&self, h: &ChunkHeader) -> Result<u32> {
-        let f = self.files.get(h.file as usize).context("chunk for an unknown file")?;
-        ensure!(h.chunk < f.chunks, "chunk index out of range");
-        let (_, len) = chunk_range(f.size, self.chunk_size, h.chunk);
-        ensure!(h.len == len, "chunk has the wrong length");
-        Ok(len)
-    }
-
-    /// Verifies and writes one chunk. Returns chunks that must be sent again.
-    pub(super) fn store_chunk(&self, h: ChunkHeader, data: &[u8]) -> Result<Vec<ChunkRef>> {
-        ensure!(blake3::hash(data) == blake3::Hash::from(h.hash), "a chunk failed verification");
-        let file = {
-            let mut slot = self.slot(h.file);
-            if slot.done || bit_get(&slot.have, h.chunk) {
-                return Ok(Vec::new());
-            }
-            self.handle(h.file, &mut slot)?
-        };
-        let (offset, _) = chunk_range(self.files[h.file as usize].size, self.chunk_size, h.chunk);
-        disk::write_all_at(&file, data, offset)?;
-        self.dirty.lock().unwrap().insert(h.file, file);
-        self.journal.lock().unwrap().chunk(h.file, h.chunk, &h.hash)?;
-        let finished = {
-            let mut slot = self.slot(h.file);
-            if slot.done || bit_get(&slot.have, h.chunk) {
-                return Ok(Vec::new());
-            }
-            bit_set(&mut slot.have, h.chunk);
-            slot.hashes[h.chunk as usize] = h.hash;
-            slot.remaining -= 1;
-            slot.remaining == 0
-        };
-        self.stats.add_bytes(data.len() as u64);
-        if finished {
-            self.finish_file(h.file)
-        } else {
-            Ok(Vec::new())
-        }
-    }
-
-    /// Flushes, optionally re-verifies from disk, restores the timestamp and moves
-    /// the part file to its final name.
-    fn finish_file(&self, i: u32) -> Result<Vec<ChunkRef>> {
-        let f = &self.files[i as usize];
-        let (file, hashes) = {
-            let mut slot = self.slot(i);
-            let file = self.handle(i, &mut slot)?;
-            slot.handle = None;
-            let hashes = if self.verify_on_disk { slot.hashes.clone() } else { Vec::new() };
-            (file, hashes)
-        };
-        self.dirty.lock().unwrap().remove(&i);
-        file.sync_all()?;
-        if self.verify_on_disk {
-            let bad = verify_part(&file, f.size, self.chunk_size, &hashes)?;
-            if !bad.is_empty() {
-                let mut slot = self.slot(i);
-                for &c in &bad {
-                    if bit_get(&slot.have, c) {
-                        bit_clear(&mut slot.have, c);
-                        slot.remaining += 1;
-                        self.stats.sub_bytes(chunk_range(f.size, self.chunk_size, c).1 as u64);
-                    }
+    pub(super) fn have_list(&self) -> Vec<FileHave> {
+        self.slots
+            .iter()
+            .map(|slot| {
+                let slot = slot.lock().unwrap();
+                match (slot.done, slot.written) {
+                    (true, _) => FileHave::Complete,
+                    (false, 0) => FileHave::None,
+                    (false, offset) => FileHave::Partial { offset },
                 }
-                return Ok(bad.into_iter().map(|chunk| ChunkRef { file: i, chunk }).collect());
+            })
+            .collect()
+    }
+
+    /// Checks a file header and gets the part file ready for bytes from `offset`.
+    /// `None` means the file is already saved, so the data is only read and dropped.
+    pub(super) fn begin(&self, i: u32, offset: u64, len: u64) -> Result<Option<Writing>> {
+        let f = self.files.get(i as usize).context("data for an unknown file")?;
+        ensure!(offset.checked_add(len) == Some(f.size), "data for {} has the wrong length", f.rel.display());
+        let mut slot = self.slot(i);
+        if slot.done {
+            return Ok(None);
+        }
+        ensure!(offset <= slot.written, "data for {} skips ahead", f.rel.display());
+        if offset < slot.written {
+            self.stats.sub_bytes(slot.written - offset);
+            slot.written = offset;
+        }
+        slot.epoch += 1;
+        let epoch = slot.epoch;
+        Ok(Some(Writing { file: self.handle(i, &mut slot)?, epoch }))
+    }
+
+    /// Writes the next bytes of file `i`, which start at `pos`.
+    pub(super) fn write(&self, i: u32, writing: &Writing, pos: u64, data: &[u8]) -> Result<()> {
+        disk::write_all_at(&writing.file, data, pos)?;
+        let mut slot = self.slot(i);
+        if slot.epoch == writing.epoch {
+            slot.written = pos + data.len() as u64;
+            slot.dirty = true;
+            drop(slot);
+            self.stats.add_bytes(data.len() as u64);
+        }
+        Ok(())
+    }
+
+    /// The whole file has arrived: flushes it, re-reads it from disk and checks
+    /// it against the sender's hash, then saves it under its final name. Returns
+    /// false when the bytes on disk don't match, so the sender sends it again.
+    pub(super) fn finish(&self, i: u32, expected: [u8; 32]) -> Result<bool> {
+        let f = &self.files[i as usize];
+        let file = {
+            let mut slot = self.slot(i);
+            if slot.done {
+                return Ok(true);
             }
+            ensure!(slot.written == f.size, "{} ended early", f.rel.display());
+            self.handle(i, &mut slot)?
+        };
+        file.sync_all()?;
+        if hash_file(&file, f.size)? != expected {
+            let mut slot = self.slot(i);
+            self.stats.sub_bytes(slot.written);
+            slot.written = 0;
+            return Ok(false);
         }
         if let Some(ms) = f.modified {
             let _ = file.set_modified(UNIX_EPOCH + Duration::from_millis(ms));
         }
-        drop(file);
-        let name = self.place(i)?;
-        self.journal.lock().unwrap().file_done(i, &name)?;
+        let target = self.free_name(i)?;
+        self.journal.lock().unwrap().file_done(i, &rel_string(&target))?;
         {
             let mut slot = self.slot(i);
-            slot.done = true;
-            slot.hashes = Vec::new();
+            slot.handle = None;
+            slot.dirty = false;
         }
+        drop(file);
+        fs::rename(self.part_path(i), self.root.join(&target))
+            .with_context(|| format!("can't save {}", target.display()))?;
+        self.slot(i).done = true;
         self.stats.add_file();
         if self.remaining_files.fetch_sub(1, Ordering::AcqRel) == 1 {
             self.complete.send_replace(true);
         }
-        Ok(Vec::new())
+        Ok(true)
     }
 
     /// Never overwrites an existing file: `photo.jpg` becomes `photo (1).jpg`.
-    fn place(&self, i: u32) -> Result<String> {
+    fn free_name(&self, i: u32) -> Result<PathBuf> {
         let rel = &self.files[i as usize].rel;
         let name = rel.file_name().and_then(|n| n.to_str()).context("invalid file name")?;
         let mut target = rel.clone();
@@ -355,9 +257,7 @@ impl TransferState {
             target = rel.with_file_name(safety::numbered(name, n));
             n += 1;
         }
-        fs::rename(self.part_path(i), self.root.join(&target))
-            .with_context(|| format!("can't save {}", target.display()))?;
-        Ok(rel_string(&target))
+        Ok(target)
     }
 
     fn handle(&self, i: u32, slot: &mut Slot) -> Result<Arc<File>> {
@@ -391,45 +291,12 @@ impl TransferState {
         path.with_file_name(name)
     }
 
-    fn mark(&self, i: u32, c: u32, hash: [u8; 32]) {
-        let mut slot = self.slot(i);
-        if !bit_get(&slot.have, c) {
-            bit_set(&mut slot.have, c);
-            slot.hashes[c as usize] = hash;
-            slot.remaining -= 1;
-        }
-    }
-
-    pub(super) fn have_list(&self) -> Vec<FileHave> {
-        self.slots
-            .iter()
-            .map(|slot| {
-                let slot = slot.lock().unwrap();
-                if slot.done {
-                    FileHave::Complete
-                } else if slot.have.iter().all(|b| *b == 0) {
-                    FileHave::None
-                } else {
-                    FileHave::Partial { bitmap: slot.have.clone() }
-                }
-            })
-            .collect()
-    }
-
     fn publish_progress(&self) {
         let (mut files, mut bytes) = (0u64, 0u64);
-        for (i, f) in self.files.iter().enumerate() {
-            let slot = self.slots[i].lock().unwrap();
-            if slot.done {
-                files += 1;
-                bytes += f.size;
-                continue;
-            }
-            for c in 0..f.chunks {
-                if bit_get(&slot.have, c) {
-                    bytes += chunk_range(f.size, self.chunk_size, c).1 as u64;
-                }
-            }
+        for slot in &self.slots {
+            let slot = slot.lock().unwrap();
+            files += slot.done as u64;
+            bytes += slot.written;
         }
         self.stats.set_totals(self.files.len() as u64, self.total_bytes());
         self.stats.set_done(files, bytes);
@@ -443,26 +310,32 @@ impl TransferState {
         Summary { files: self.files.len() as u64, bytes: self.total_bytes(), elapsed: self.started.elapsed() }
     }
 
-    /// Flushes the part files written since the last checkpoint, then marks the
-    /// chunk records written before the snapshot as durable. Writers keep going
-    /// during the flush: every chunk record counted in `covered` had its data
-    /// written and its file marked dirty before the snapshot was taken.
+    /// Flushes the part files written since the last checkpoint, then records how
+    /// much of each is on disk. Writers keep going during the flush: the recorded
+    /// length was taken before it, so it never claims bytes that weren't flushed.
     fn checkpoint(&self) -> io::Result<()> {
-        let (dirty, covered) = {
-            let journal = self.journal.lock().unwrap();
-            let dirty = std::mem::take(&mut *self.dirty.lock().unwrap());
-            (dirty, journal.chunk_records())
-        };
-        if dirty.is_empty() {
+        let mut flushed = Vec::new();
+        for (i, slot) in self.slots.iter().enumerate() {
+            let (file, written) = {
+                let mut slot = slot.lock().unwrap();
+                let Some(file) = slot.handle.clone().filter(|_| slot.dirty && !slot.done) else { continue };
+                slot.dirty = false;
+                (file, slot.written)
+            };
+            file.sync_data()?;
+            flushed.push((i as u32, written));
+        }
+        if flushed.is_empty() {
             return Ok(());
         }
-        for file in dirty.values() {
-            file.sync_data()?;
+        let mut journal = self.journal.lock().unwrap();
+        for (i, written) in flushed {
+            journal.durable(i, written)?;
         }
-        self.journal.lock().unwrap().checkpoint(covered)
+        journal.sync()
     }
 
-    /// Deletes the journal once the transfer is complete.
+    /// Deletes the journal once the batch is complete.
     pub(super) fn cleanup(&self) {
         self.journal.lock().unwrap().close();
         let _ = fs::remove_dir_all(&self.state_dir);
@@ -476,45 +349,32 @@ impl TransferState {
     }
 }
 
+fn has_size(path: &Path, size: u64) -> bool {
+    fs::metadata(path).is_ok_and(|meta| meta.len() == size)
+}
+
 fn rel_string(path: &Path) -> String {
     path.iter().map(|c| c.to_string_lossy()).collect::<Vec<_>>().join("/")
 }
 
-/// Re-reads a file and returns the chunks whose bytes don't match their hashes.
-/// Large files are checked on several threads.
-fn verify_part(file: &File, size: u64, chunk_size: u32, hashes: &[[u8; 32]]) -> io::Result<Vec<u32>> {
-    const CHUNKS_PER_THREAD: usize = 16;
-    let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).min(8);
-    let per_thread = hashes.len().div_ceil(threads).max(CHUNKS_PER_THREAD);
-    let check = |first: usize, group: &[[u8; 32]]| -> io::Result<Vec<u32>> {
-        let mut bad = Vec::new();
-        let mut buf = Vec::new();
-        for (i, expected) in group.iter().enumerate() {
-            let c = (first + i) as u32;
-            let (offset, len) = chunk_range(size, chunk_size, c);
-            buf.resize(len as usize, 0);
-            disk::read_exact_at(file, &mut buf, offset)?;
-            if blake3::hash(&buf) != blake3::Hash::from(*expected) {
-                bad.push(c);
-            }
-        }
-        Ok(bad)
-    };
-    if hashes.len() <= per_thread {
-        return check(0, hashes);
+/// BLAKE3 of the first `size` bytes of `file`, read back from disk.
+pub(super) fn hash_file(file: &File, size: u64) -> io::Result<[u8; 32]> {
+    let mut hasher = blake3::Hasher::new();
+    hash_range(file, 0, size, &mut hasher)?;
+    Ok(*hasher.finalize().as_bytes())
+}
+
+/// Feeds bytes `start..end` of `file` into `hasher`.
+pub(super) fn hash_range(file: &File, start: u64, end: u64, hasher: &mut blake3::Hasher) -> io::Result<()> {
+    let mut buf = vec![0u8; READ_BLOCK.min((end - start) as usize)];
+    let mut pos = start;
+    while pos < end {
+        let n = (end - pos).min(READ_BLOCK as u64) as usize;
+        disk::read_exact_at(file, &mut buf[..n], pos)?;
+        hasher.update(&buf[..n]);
+        pos += n as u64;
     }
-    std::thread::scope(|scope| {
-        let handles: Vec<_> = hashes
-            .chunks(per_thread)
-            .enumerate()
-            .map(|(n, group)| scope.spawn(move || check(n * per_thread, group)))
-            .collect();
-        let mut bad = Vec::new();
-        for handle in handles {
-            bad.extend(handle.join().expect("verify thread panicked")?);
-        }
-        Ok(bad)
-    })
+    Ok(())
 }
 
 fn spawn_checkpointer(weak: Weak<TransferState>) {

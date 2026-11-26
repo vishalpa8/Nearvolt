@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 pub const ALPN: &[u8] = b"nearvolt/1";
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// Both sides send a control message at least this often.
 pub const HEARTBEAT_INTERVAL: Duration = Duration::from_millis(500);
@@ -16,9 +16,6 @@ pub const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(4);
 
 pub type SessionId = [u8; 16];
 
-pub const DEFAULT_CHUNK_SIZE: u32 = 4 * 1024 * 1024;
-pub const MIN_CHUNK_SIZE: u32 = 64 * 1024;
-pub const MAX_CHUNK_SIZE: u32 = 64 * 1024 * 1024;
 pub const MAX_FILES: usize = 10_000_000;
 const MAX_CONTROL_LEN: usize = 64 * 1024 * 1024;
 
@@ -32,9 +29,9 @@ pub struct FileEntry {
     pub modified: Option<u64>,
 }
 
+/// One batch of files.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct Offer {
-    pub chunk_size: u32,
     pub files: Vec<FileEntry>,
 }
 
@@ -42,33 +39,27 @@ impl Offer {
     pub fn total_bytes(&self) -> u64 {
         self.files.iter().fold(0u64, |sum, f| sum.saturating_add(f.size))
     }
-
-    pub fn chunk_count(&self, file: usize) -> u32 {
-        chunk_count(self.files[file].size, self.chunk_size)
-    }
 }
 
+/// What the receiver already has of one offered file.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum FileHave {
     None,
     Complete,
-    Partial { bitmap: Vec<u8> },
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ChunkRef {
-    pub file: u32,
-    pub chunk: u32,
+    /// The first `offset` bytes are on disk; send the rest.
+    Partial {
+        offset: u64,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Control {
-    /// First message on every connection. `session` is absent on the control
-    /// connection and names the session on data connections. Without a ticket
-    /// secret, the control connection carries a commitment to the sender's nonce
-    /// and both devices confirm a code (see `pairing::pairing_code`).
+    /// First message on every stream. `session` is absent on the control stream
+    /// and names the connection on data streams. Without a ticket secret, the
+    /// control stream carries a commitment to the sender's nonce and both devices
+    /// confirm a code (see `pairing::pairing_code`).
     Hello {
         version: u32,
         #[serde(default)]
@@ -89,27 +80,38 @@ pub enum Control {
     Reveal {
         nonce: [u8; 16],
     },
+    /// The receiver accepted the connection; batches can follow.
+    Ready,
     Reject {
         reason: String,
     },
-    Offer(Offer),
+    /// A batch of files. Batches are numbered from 0 within a connection.
+    Offer {
+        batch: u32,
+        files: Vec<FileEntry>,
+    },
     Accept {
+        batch: u32,
         have: Vec<FileHave>,
     },
     /// Sender heartbeat.
     Ping,
-    /// Receiver heartbeat: verified progress so far.
+    /// Receiver heartbeat: progress of the current batch, as written so far.
     Progress {
         files: u64,
         bytes: u64,
     },
+    /// These files failed verification on disk; send them again from the start.
     Resend {
-        chunks: Vec<ChunkRef>,
+        files: Vec<u32>,
     },
     Complete {
+        batch: u32,
         files: u64,
         bytes: u64,
     },
+    /// Ends the connection on purpose; the other side stops reconnecting.
+    Bye,
 }
 
 pub async fn write_msg<W: AsyncWrite + Unpin>(stream: &mut W, msg: &Control) -> Result<()> {
@@ -131,9 +133,9 @@ pub async fn read_msg<R: AsyncRead + Unpin>(stream: &mut R) -> Result<Control> {
     serde_json::from_slice(&body).context("malformed control message")
 }
 
-/// Reads the next chunk header. Returns `false` if the peer closed the connection
-/// cleanly between frames.
-pub async fn read_header<R: AsyncRead + Unpin>(stream: &mut R, buf: &mut [u8; CHUNK_HEADER_LEN]) -> Result<bool> {
+/// Reads the next file header. Returns `false` if the peer closed the stream
+/// cleanly between files.
+pub async fn read_header<R: AsyncRead + Unpin>(stream: &mut R, buf: &mut [u8; FILE_HEADER_LEN]) -> Result<bool> {
     let mut filled = 0;
     while filled < buf.len() {
         let n = stream.read(&mut buf[filled..]).await?;
@@ -141,68 +143,44 @@ pub async fn read_header<R: AsyncRead + Unpin>(stream: &mut R, buf: &mut [u8; CH
             if filled == 0 {
                 return Ok(false);
             }
-            bail!("the connection closed in the middle of a chunk");
+            bail!("the connection closed in the middle of a file header");
         }
         filled += n;
     }
     Ok(true)
 }
 
-pub const CHUNK_HEADER_LEN: usize = 44;
+/// On a data stream, every file is this header, then `len` bytes of the file
+/// starting at `offset`, then the BLAKE3 hash of the whole file.
+pub const FILE_HEADER_LEN: usize = 24;
+pub const HASH_LEN: usize = 32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ChunkHeader {
+pub struct FileHeader {
+    pub batch: u32,
     pub file: u32,
-    pub chunk: u32,
-    pub len: u32,
-    pub hash: [u8; 32],
+    pub offset: u64,
+    pub len: u64,
 }
 
-impl ChunkHeader {
-    pub fn encode(&self) -> [u8; CHUNK_HEADER_LEN] {
-        let mut b = [0u8; CHUNK_HEADER_LEN];
-        b[0..4].copy_from_slice(&self.file.to_le_bytes());
-        b[4..8].copy_from_slice(&self.chunk.to_le_bytes());
-        b[8..12].copy_from_slice(&self.len.to_le_bytes());
-        b[12..44].copy_from_slice(&self.hash);
+impl FileHeader {
+    pub fn encode(&self) -> [u8; FILE_HEADER_LEN] {
+        let mut b = [0u8; FILE_HEADER_LEN];
+        b[0..4].copy_from_slice(&self.batch.to_le_bytes());
+        b[4..8].copy_from_slice(&self.file.to_le_bytes());
+        b[8..16].copy_from_slice(&self.offset.to_le_bytes());
+        b[16..24].copy_from_slice(&self.len.to_le_bytes());
         b
     }
 
-    pub fn decode(b: &[u8; CHUNK_HEADER_LEN]) -> Self {
+    pub fn decode(b: &[u8; FILE_HEADER_LEN]) -> Self {
         Self {
-            file: u32::from_le_bytes(b[0..4].try_into().unwrap()),
-            chunk: u32::from_le_bytes(b[4..8].try_into().unwrap()),
-            len: u32::from_le_bytes(b[8..12].try_into().unwrap()),
-            hash: b[12..44].try_into().unwrap(),
+            batch: u32::from_le_bytes(b[0..4].try_into().unwrap()),
+            file: u32::from_le_bytes(b[4..8].try_into().unwrap()),
+            offset: u64::from_le_bytes(b[8..16].try_into().unwrap()),
+            len: u64::from_le_bytes(b[16..24].try_into().unwrap()),
         }
     }
-}
-
-pub fn chunk_count(size: u64, chunk_size: u32) -> u32 {
-    size.div_ceil(chunk_size as u64) as u32
-}
-
-/// Byte offset and length of one chunk of a file.
-pub fn chunk_range(size: u64, chunk_size: u32, chunk: u32) -> (u64, u32) {
-    let offset = chunk as u64 * chunk_size as u64;
-    let len = (size - offset).min(chunk_size as u64) as u32;
-    (offset, len)
-}
-
-pub fn bitmap_len(chunks: u32) -> usize {
-    (chunks as usize).div_ceil(8)
-}
-
-pub fn bit_get(bitmap: &[u8], i: u32) -> bool {
-    bitmap.get(i as usize / 8).is_some_and(|b| b & (1 << (i % 8)) != 0)
-}
-
-pub fn bit_set(bitmap: &mut [u8], i: u32) {
-    bitmap[i as usize / 8] |= 1 << (i % 8);
-}
-
-pub fn bit_clear(bitmap: &mut [u8], i: u32) {
-    bitmap[i as usize / 8] &= !(1 << (i % 8));
 }
 
 #[cfg(test)]
@@ -210,22 +188,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn chunk_math() {
-        assert_eq!(chunk_count(0, 4), 0);
-        assert_eq!(chunk_count(8, 4), 2);
-        assert_eq!(chunk_count(9, 4), 3);
-        assert_eq!(chunk_range(9, 4, 2), (8, 1));
-    }
-
-    #[test]
     fn header_round_trips() {
-        let h = ChunkHeader { file: 3, chunk: 9, len: 77, hash: [5; 32] };
-        assert_eq!(ChunkHeader::decode(&h.encode()), h);
+        let h = FileHeader { batch: 2, file: 9, offset: 5_000_000_000, len: 77 };
+        assert_eq!(FileHeader::decode(&h.encode()), h);
     }
 
     #[test]
     fn control_messages_are_tagged() {
-        let json = serde_json::to_string(&Control::Accept { have: vec![FileHave::Complete] }).unwrap();
-        assert_eq!(json, r#"{"type":"accept","have":[{"state":"complete"}]}"#);
+        let json =
+            serde_json::to_string(&Control::Accept { batch: 1, have: vec![FileHave::Partial { offset: 7 }] }).unwrap();
+        assert_eq!(json, r#"{"type":"accept","batch":1,"have":[{"state":"partial","offset":7}]}"#);
     }
 }

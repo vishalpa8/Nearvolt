@@ -92,6 +92,7 @@ pub struct Summary {
 
 #[derive(Debug, Clone)]
 pub enum Event {
+    /// Connected and accepted, including after every reconnect.
     Connected {
         peer: String,
     },
@@ -99,13 +100,33 @@ pub enum Event {
     Code {
         code: String,
     },
+    /// Sender: the receiver took a batch and it is being sent.
+    Started {
+        batch: u32,
+        files: u64,
+        bytes: u64,
+    },
+    /// Receiver: a batch started arriving.
+    Incoming {
+        batch: u32,
+        files: u64,
+        bytes: u64,
+    },
+    Completed {
+        batch: u32,
+        summary: Summary,
+    },
+    /// One batch couldn't be sent or received, for example for lack of space.
+    /// The connection stays.
+    BatchFailed {
+        batch: u32,
+        reason: String,
+    },
     ConnectionLost {
         reason: String,
     },
-    Resumed {
-        done_bytes: u64,
-    },
-    Completed(Summary),
+    /// The other device ended the connection.
+    PeerLeft,
 }
 
 pub type EventSender = tokio::sync::mpsc::UnboundedSender<Event>;

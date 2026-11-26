@@ -44,8 +44,9 @@ pub trait Link: Send + Sync {
     fn open_stream(&self) -> impl Future<Output = Result<RawStream>> + Send;
 }
 
-/// TCP over whatever network both devices share. Remembers the address that
-/// answered first and tries all of them again only if it stops answering.
+/// TCP over whatever network both devices share. The first connection tries
+/// every address at once; after that, only the address that answered is used,
+/// so reconnects take the same route instead of switching to another.
 pub struct TcpLink {
     addrs: Vec<SocketAddr>,
     preferred: Mutex<Option<SocketAddr>>,
@@ -61,9 +62,7 @@ impl Link for TcpLink {
     async fn open_stream(&self) -> Result<RawStream> {
         let preferred = *self.preferred.lock().unwrap();
         if let Some(addr) = preferred {
-            if let Ok(stream) = connect_tcp(addr).await {
-                return Ok(stream);
-            }
+            return connect_tcp(addr).await;
         }
         ensure!(!self.addrs.is_empty(), "the code has no addresses");
         let (stream, addr) = race(&self.addrs).await?;

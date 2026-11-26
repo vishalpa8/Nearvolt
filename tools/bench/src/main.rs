@@ -15,8 +15,8 @@ use clap::{Parser, Subcommand};
 use futures::FutureExt;
 use nearvolt_core::util::AbortOnDrop;
 use nearvolt_core::{
-    human_bytes, send, Approver, Event, FileSet, Identity, IncomingOffer, Peer, ReceiveOptions, Receiver, SendOptions,
-    Stats, Summary, Ticket,
+    human_bytes, send, Approver, Event, FileSet, Identity, Peer, ReceiveOptions, Receiver, Request, SendOptions, Stats,
+    Summary, Ticket,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
@@ -46,9 +46,6 @@ enum Command {
         /// Accept without asking
         #[arg(long)]
         yes: bool,
-        /// Skip re-reading finished files from disk
-        #[arg(long)]
-        no_disk_verify: bool,
     },
     /// Send files or folders using a receiver's ticket
     Send {
@@ -99,7 +96,7 @@ enum Command {
 #[tokio::main]
 async fn main() -> Result<()> {
     match Cli::parse().command {
-        Command::Receive { dir, port, yes, no_disk_verify } => receive(dir, port, yes, !no_disk_verify).await,
+        Command::Receive { dir, port, yes } => receive(dir, port, yes).await,
         Command::Send { ticket, paths, connections } => send_files(&ticket, paths, connections).await,
         Command::Gen { dir, big_gb, big_files, small_files, small_kb } => {
             tokio::task::spawn_blocking(move || generate(&dir, big_gb, big_files, small_files, small_kb)).await?
@@ -111,15 +108,10 @@ async fn main() -> Result<()> {
     }
 }
 
-async fn receive(dir: PathBuf, port: u16, yes: bool, verify_on_disk: bool) -> Result<()> {
+async fn receive(dir: PathBuf, port: u16, yes: bool) -> Result<()> {
     let identity = Identity::load_or_create(Path::new(IDENTITY_PATH))?;
-    let options = ReceiveOptions {
-        dir: dir.clone(),
-        journal_dir: None,
-        device_name: device_name(),
-        verify_on_disk,
-        allow_code_pairing: false,
-    };
+    let options =
+        ReceiveOptions { dir: dir.clone(), journal_dir: None, device_name: device_name(), allow_code_pairing: false };
     let receiver = Receiver::bind(&identity, SocketAddr::from(([0, 0, 0, 0], port)), options)?;
     println!("Ready to receive into {}", dir.display());
     for addr in &receiver.ticket().addrs {
@@ -128,7 +120,7 @@ async fn receive(dir: PathBuf, port: u16, yes: bool, verify_on_disk: bool) -> Re
     println!("\nTicket for the sender:\n\n  {}\n", receiver.ticket().encode());
 
     let approve: Approver =
-        if yes { Arc::new(|_| async { true }.boxed()) } else { Arc::new(|offer| ask(offer).boxed()) };
+        if yes { Arc::new(|_| async { true }.boxed()) } else { Arc::new(|request| ask(request).boxed()) };
     let stats = Arc::new(Stats::default());
     let (tx, rx) = mpsc::unbounded_channel();
     let summary = with_progress("Receiving", stats.clone(), rx, receiver.run(approve, stats.clone(), Some(tx))).await?;
@@ -136,10 +128,10 @@ async fn receive(dir: PathBuf, port: u16, yes: bool, verify_on_disk: bool) -> Re
     Ok(())
 }
 
-async fn ask(offer: IncomingOffer) -> bool {
-    println!("\n{} wants to send {} files ({}):", offer.sender_name, offer.files, human_bytes(offer.bytes));
-    for name in &offer.sample {
-        println!("  {name}");
+async fn ask(request: Request) -> bool {
+    println!("\n{} wants to connect.", request.sender_name);
+    if let Some(code) = &request.code {
+        println!("Check that it shows the code {code}.");
     }
     print!("Accept? [y/N] ");
     let _ = io::stdout().flush();
@@ -199,7 +191,6 @@ async fn local(
                 dir: run_dir.clone(),
                 journal_dir: None,
                 device_name: "Receiver".into(),
-                verify_on_disk: true,
                 allow_code_pairing: false,
             },
         )?;
@@ -344,8 +335,9 @@ fn print_event(event: Event) {
         Event::Connected { peer } => note(&format!("Connected to {peer}")),
         Event::Code { code } => note(&format!("Pairing code {code}: check the receiver shows the same")),
         Event::ConnectionLost { reason } => note(&format!("Connection lost ({reason}). Reconnecting")),
-        Event::Resumed { done_bytes } => note(&format!("Resumed with {} already transferred", human_bytes(done_bytes))),
-        Event::Completed(_) => {}
+        Event::BatchFailed { reason, .. } => note(&format!("Batch refused: {reason}")),
+        Event::PeerLeft => note("The other side disconnected"),
+        Event::Started { .. } | Event::Incoming { .. } | Event::Completed { .. } => {}
     }
 }
 

@@ -69,7 +69,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => -203930832;
+  int get rustContentHash => 1661368913;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -81,11 +81,24 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
 }
 
 abstract class RustLibApi extends BaseApi {
-  void crateApiAnswerOffer({required bool accept});
+  void crateApiAnswerRequest({required bool accept});
 
   void crateApiAttachUsb({required int fd, required bool host});
 
+  Stream<TransferEvent> crateApiConnect({required String ticket});
+
+  Stream<TransferEvent> crateApiConnectUsb();
+
+  void crateApiDisconnect();
+
+  void crateApiDisconnectReceiving();
+
   Future<void> crateApiInitApp();
+
+  void crateApiQueueFiles({
+    required PlatformInt64 sourceToken,
+    required List<SourceFile> files,
+  });
 
   TicketInfo crateApiReadTicket({required String text});
 
@@ -96,25 +109,12 @@ abstract class RustLibApi extends BaseApi {
 
   ReceiveTickets crateApiReceiveTickets({WifiInfo? wifi});
 
-  Stream<TransferEvent> crateApiSendFiles({
-    required String ticket,
-    required PlatformInt64 sourceToken,
-    required List<SourceFile> files,
-  });
-
-  Stream<TransferEvent> crateApiSendUsb({
-    required PlatformInt64 sourceToken,
-    required List<SourceFile> files,
-  });
-
   void crateApiStartEngine({
     required String dataDir,
     required String deviceName,
   });
 
   void crateApiStopReceiving();
-
-  void crateApiStopSending();
 }
 
 class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
@@ -126,7 +126,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   });
 
   @override
-  void crateApiAnswerOffer({required bool accept}) {
+  void crateApiAnswerRequest({required bool accept}) {
     return handler.executeSync(
       SyncTask(
         callFfi: () {
@@ -138,15 +138,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeSuccessData: sse_decode_unit,
           decodeErrorData: null,
         ),
-        constMeta: kCrateApiAnswerOfferConstMeta,
+        constMeta: kCrateApiAnswerRequestConstMeta,
         argValues: [accept],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kCrateApiAnswerOfferConstMeta =>
-      const TaskConstMeta(debugName: "answer_offer", argNames: ["accept"]);
+  TaskConstMeta get kCrateApiAnswerRequestConstMeta =>
+      const TaskConstMeta(debugName: "answer_request", argNames: ["accept"]);
 
   @override
   void crateApiAttachUsb({required int fd, required bool host}) {
@@ -173,6 +173,115 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "attach_usb", argNames: ["fd", "host"]);
 
   @override
+  Stream<TransferEvent> crateApiConnect({required String ticket}) {
+    final events = RustStreamSink<TransferEvent>();
+    unawaited(
+      handler.executeNormal(
+        NormalTask(
+          callFfi: (port_) {
+            final serializer = SseSerializer(generalizedFrbRustBinding);
+            sse_encode_String(ticket, serializer);
+            sse_encode_StreamSink_transfer_event_Sse(events, serializer);
+            pdeCallFfi(
+              generalizedFrbRustBinding,
+              serializer,
+              funcId: 3,
+              port: port_,
+            );
+          },
+          codec: SseCodec(
+            decodeSuccessData: sse_decode_unit,
+            decodeErrorData: sse_decode_AnyhowException,
+          ),
+          constMeta: kCrateApiConnectConstMeta,
+          argValues: [ticket, events],
+          apiImpl: this,
+        ),
+      ),
+    );
+    return events.stream;
+  }
+
+  TaskConstMeta get kCrateApiConnectConstMeta =>
+      const TaskConstMeta(debugName: "connect", argNames: ["ticket", "events"]);
+
+  @override
+  Stream<TransferEvent> crateApiConnectUsb() {
+    final events = RustStreamSink<TransferEvent>();
+    unawaited(
+      handler.executeNormal(
+        NormalTask(
+          callFfi: (port_) {
+            final serializer = SseSerializer(generalizedFrbRustBinding);
+            sse_encode_StreamSink_transfer_event_Sse(events, serializer);
+            pdeCallFfi(
+              generalizedFrbRustBinding,
+              serializer,
+              funcId: 4,
+              port: port_,
+            );
+          },
+          codec: SseCodec(
+            decodeSuccessData: sse_decode_unit,
+            decodeErrorData: sse_decode_AnyhowException,
+          ),
+          constMeta: kCrateApiConnectUsbConstMeta,
+          argValues: [events],
+          apiImpl: this,
+        ),
+      ),
+    );
+    return events.stream;
+  }
+
+  TaskConstMeta get kCrateApiConnectUsbConstMeta =>
+      const TaskConstMeta(debugName: "connect_usb", argNames: ["events"]);
+
+  @override
+  void crateApiDisconnect() {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 5)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiDisconnectConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiDisconnectConstMeta =>
+      const TaskConstMeta(debugName: "disconnect", argNames: []);
+
+  @override
+  void crateApiDisconnectReceiving() {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 6)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiDisconnectReceivingConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiDisconnectReceivingConstMeta =>
+      const TaskConstMeta(debugName: "disconnect_receiving", argNames: []);
+
+  @override
   Future<void> crateApiInitApp() {
     return handler.executeNormal(
       NormalTask(
@@ -181,7 +290,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 3,
+            funcId: 7,
             port: port_,
           );
         },
@@ -200,13 +309,42 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "init_app", argNames: []);
 
   @override
+  void crateApiQueueFiles({
+    required PlatformInt64 sourceToken,
+    required List<SourceFile> files,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_i_64(sourceToken, serializer);
+          sse_encode_list_source_file(files, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 8)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+        constMeta: kCrateApiQueueFilesConstMeta,
+        argValues: [sourceToken, files],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiQueueFilesConstMeta => const TaskConstMeta(
+    debugName: "queue_files",
+    argNames: ["sourceToken", "files"],
+  );
+
+  @override
   TicketInfo crateApiReadTicket({required String text}) {
     return handler.executeSync(
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(text, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 4)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 9)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_ticket_info,
@@ -239,7 +377,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 5,
+              funcId: 10,
               port: port_,
             );
           },
@@ -268,7 +406,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_opt_box_autoadd_wifi_info(wifi, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 6)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 11)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_receive_tickets,
@@ -285,86 +423,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "receive_tickets", argNames: ["wifi"]);
 
   @override
-  Stream<TransferEvent> crateApiSendFiles({
-    required String ticket,
-    required PlatformInt64 sourceToken,
-    required List<SourceFile> files,
-  }) {
-    final events = RustStreamSink<TransferEvent>();
-    unawaited(
-      handler.executeNormal(
-        NormalTask(
-          callFfi: (port_) {
-            final serializer = SseSerializer(generalizedFrbRustBinding);
-            sse_encode_String(ticket, serializer);
-            sse_encode_i_64(sourceToken, serializer);
-            sse_encode_list_source_file(files, serializer);
-            sse_encode_StreamSink_transfer_event_Sse(events, serializer);
-            pdeCallFfi(
-              generalizedFrbRustBinding,
-              serializer,
-              funcId: 7,
-              port: port_,
-            );
-          },
-          codec: SseCodec(
-            decodeSuccessData: sse_decode_unit,
-            decodeErrorData: sse_decode_AnyhowException,
-          ),
-          constMeta: kCrateApiSendFilesConstMeta,
-          argValues: [ticket, sourceToken, files, events],
-          apiImpl: this,
-        ),
-      ),
-    );
-    return events.stream;
-  }
-
-  TaskConstMeta get kCrateApiSendFilesConstMeta => const TaskConstMeta(
-    debugName: "send_files",
-    argNames: ["ticket", "sourceToken", "files", "events"],
-  );
-
-  @override
-  Stream<TransferEvent> crateApiSendUsb({
-    required PlatformInt64 sourceToken,
-    required List<SourceFile> files,
-  }) {
-    final events = RustStreamSink<TransferEvent>();
-    unawaited(
-      handler.executeNormal(
-        NormalTask(
-          callFfi: (port_) {
-            final serializer = SseSerializer(generalizedFrbRustBinding);
-            sse_encode_i_64(sourceToken, serializer);
-            sse_encode_list_source_file(files, serializer);
-            sse_encode_StreamSink_transfer_event_Sse(events, serializer);
-            pdeCallFfi(
-              generalizedFrbRustBinding,
-              serializer,
-              funcId: 8,
-              port: port_,
-            );
-          },
-          codec: SseCodec(
-            decodeSuccessData: sse_decode_unit,
-            decodeErrorData: sse_decode_AnyhowException,
-          ),
-          constMeta: kCrateApiSendUsbConstMeta,
-          argValues: [sourceToken, files, events],
-          apiImpl: this,
-        ),
-      ),
-    );
-    return events.stream;
-  }
-
-  TaskConstMeta get kCrateApiSendUsbConstMeta => const TaskConstMeta(
-    debugName: "send_usb",
-    argNames: ["sourceToken", "files", "events"],
-  );
-
-  @override
   void crateApiStartEngine({
     required String dataDir,
     required String deviceName,
@@ -375,7 +433,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(dataDir, serializer);
           sse_encode_String(deviceName, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 9)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 12)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -399,7 +457,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 10)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 13)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -414,28 +472,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiStopReceivingConstMeta =>
       const TaskConstMeta(debugName: "stop_receiving", argNames: []);
-
-  @override
-  void crateApiStopSending() {
-    return handler.executeSync(
-      SyncTask(
-        callFfi: () {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 11)!;
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_unit,
-          decodeErrorData: null,
-        ),
-        constMeta: kCrateApiStopSendingConstMeta,
-        argValues: [],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kCrateApiStopSendingConstMeta =>
-      const TaskConstMeta(debugName: "stop_sending", argNames: []);
 
   @protected
   AnyhowException dco_decode_AnyhowException(dynamic raw) {
@@ -527,12 +563,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ReceiveTickets dco_decode_receive_tickets(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 3)
-      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
     return ReceiveTickets(
       privateTicket: dco_decode_String(arr[0]),
-      publicTicket: dco_decode_String(arr[1]),
-      port: dco_decode_u_16(arr[2]),
+      tapTicket: dco_decode_String(arr[1]),
+      publicTicket: dco_decode_String(arr[2]),
+      port: dco_decode_u_16(arr[3]),
     );
   }
 
@@ -566,16 +603,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TransferEvent dco_decode_transfer_event(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 7)
-      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
+    if (arr.length != 8)
+      throw Exception('unexpected arr length: expect 8 but see ${arr.length}');
     return TransferEvent(
       kind: dco_decode_event_kind(arr[0]),
       text: dco_decode_opt_String(arr[1]),
       code: dco_decode_opt_String(arr[2]),
-      doneBytes: dco_decode_i_64(arr[3]),
-      totalBytes: dco_decode_i_64(arr[4]),
-      doneFiles: dco_decode_i_64(arr[5]),
-      totalFiles: dco_decode_i_64(arr[6]),
+      batch: dco_decode_i_64(arr[3]),
+      doneBytes: dco_decode_i_64(arr[4]),
+      totalBytes: dco_decode_i_64(arr[5]),
+      doneFiles: dco_decode_i_64(arr[6]),
+      totalFiles: dco_decode_i_64(arr[7]),
     );
   }
 
@@ -725,10 +763,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ReceiveTickets sse_decode_receive_tickets(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_privateTicket = sse_decode_String(deserializer);
+    var var_tapTicket = sse_decode_String(deserializer);
     var var_publicTicket = sse_decode_String(deserializer);
     var var_port = sse_decode_u_16(deserializer);
     return ReceiveTickets(
       privateTicket: var_privateTicket,
+      tapTicket: var_tapTicket,
       publicTicket: var_publicTicket,
       port: var_port,
     );
@@ -762,6 +802,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_kind = sse_decode_event_kind(deserializer);
     var var_text = sse_decode_opt_String(deserializer);
     var var_code = sse_decode_opt_String(deserializer);
+    var var_batch = sse_decode_i_64(deserializer);
     var var_doneBytes = sse_decode_i_64(deserializer);
     var var_totalBytes = sse_decode_i_64(deserializer);
     var var_doneFiles = sse_decode_i_64(deserializer);
@@ -770,6 +811,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       kind: var_kind,
       text: var_text,
       code: var_code,
+      batch: var_batch,
       doneBytes: var_doneBytes,
       totalBytes: var_totalBytes,
       doneFiles: var_doneFiles,
@@ -946,6 +988,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.privateTicket, serializer);
+    sse_encode_String(self.tapTicket, serializer);
     sse_encode_String(self.publicTicket, serializer);
     sse_encode_u_16(self.port, serializer);
   }
@@ -972,6 +1015,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_event_kind(self.kind, serializer);
     sse_encode_opt_String(self.text, serializer);
     sse_encode_opt_String(self.code, serializer);
+    sse_encode_i_64(self.batch, serializer);
     sse_encode_i_64(self.doneBytes, serializer);
     sse_encode_i_64(self.totalBytes, serializer);
     sse_encode_i_64(self.doneFiles, serializer);

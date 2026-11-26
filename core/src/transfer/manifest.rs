@@ -37,7 +37,7 @@ pub struct Manifest {
 }
 
 impl Manifest {
-    pub fn build(set: FileSet, chunk_size: u32) -> Result<Self> {
+    pub fn build(set: FileSet) -> Result<Self> {
         let (files, sources) = match set {
             FileSet::Paths(paths) => {
                 let (files, paths) = scan(&paths)?;
@@ -47,7 +47,7 @@ impl Manifest {
         };
         ensure!(!files.is_empty(), "there are no files to send");
         ensure!(files.len() <= MAX_FILES, "too many files (limit {MAX_FILES})");
-        Ok(Self { offer: Offer { chunk_size, files }, sources })
+        Ok(Self { offer: Offer { files }, sources })
     }
 
     /// Opens file `index` and checks it hasn't changed since it was offered.
