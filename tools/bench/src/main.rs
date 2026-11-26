@@ -21,7 +21,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
-use tokio::task::{JoinHandle, JoinSet};
+use nearvolt_core::util::AbortOnDrop;
+use tokio::task::JoinSet;
 
 const IDENTITY_PATH: &str = ".bench/identity.bin";
 
@@ -112,7 +113,7 @@ async fn main() -> Result<()> {
 
 async fn receive(dir: PathBuf, port: u16, yes: bool, verify_on_disk: bool) -> Result<()> {
     let identity = Identity::load_or_create(Path::new(IDENTITY_PATH))?;
-    let options = ReceiveOptions { dir: dir.clone(), device_name: device_name(), verify_on_disk };
+    let options = ReceiveOptions { dir: dir.clone(), journal_dir: None, device_name: device_name(), verify_on_disk };
     let receiver = Receiver::bind(&identity, SocketAddr::from(([0, 0, 0, 0], port)), options)?;
     println!("Ready to receive into {}", dir.display());
     for addr in &receiver.ticket().addrs {
@@ -190,7 +191,12 @@ async fn local(
         let receiver = Receiver::bind(
             &receiver_id,
             SocketAddr::from(([127, 0, 0, 1], 0)),
-            ReceiveOptions { dir: run_dir.clone(), device_name: "Receiver".into(), verify_on_disk: true },
+            ReceiveOptions {
+                dir: run_dir.clone(),
+                journal_dir: None,
+                device_name: "Receiver".into(),
+                verify_on_disk: true,
+            },
         )?;
         let mut ticket = receiver.ticket().clone();
         let _proxy = match drop_link_at_mb {
@@ -355,14 +361,6 @@ fn device_name() -> String {
     std::env::var("COMPUTERNAME")
         .or_else(|_| std::env::var("HOSTNAME"))
         .unwrap_or_else(|_| "This computer".into())
-}
-
-struct AbortOnDrop<T>(JoinHandle<T>);
-
-impl<T> Drop for AbortOnDrop<T> {
-    fn drop(&mut self) {
-        self.0.abort();
-    }
 }
 
 /// A TCP relay between sender and receiver that can stop all traffic on demand,

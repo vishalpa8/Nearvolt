@@ -3,6 +3,7 @@ mod journal;
 pub mod manifest;
 pub mod receiver;
 pub mod sender;
+mod state;
 
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};

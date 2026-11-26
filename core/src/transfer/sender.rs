@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, bail, ensure, Result};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, watch};
-use tokio::task::{JoinHandle, JoinSet};
+use tokio::task::JoinSet;
 
 use super::disk;
 use super::manifest::{unix_millis, Manifest};
@@ -22,6 +22,7 @@ use crate::protocol::{
     DEFAULT_CHUNK_SIZE, HEARTBEAT_INTERVAL, HEARTBEAT_TIMEOUT, PROTOCOL_VERSION,
 };
 use crate::transport::{Connector, TlsStream};
+use crate::util::AbortOnDrop;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 /// With nothing left to send and no verified progress for this long, the session
@@ -323,12 +324,4 @@ fn read_chunk(
     buf.resize(len as usize, 0);
     disk::read_exact_at(file, buf, offset).map_err(unreadable)?;
     Ok(*blake3::hash(buf).as_bytes())
-}
-
-struct AbortOnDrop<T>(JoinHandle<T>);
-
-impl<T> Drop for AbortOnDrop<T> {
-    fn drop(&mut self) {
-        self.0.abort();
-    }
 }

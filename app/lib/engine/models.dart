@@ -51,9 +51,12 @@ class TransferProgress {
 }
 
 class IncomingOffer {
-  const IncomingOffer({required this.from, required this.files, required this.bytes});
+  const IncomingOffer({required this.from, required this.files, required this.bytes, this.code});
 
   final NearbyDevice from;
   final int files;
   final int bytes;
+
+  /// Shown on both devices when they connected without a QR code or NFC tap.
+  final String? code;
 }

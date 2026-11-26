@@ -7,6 +7,7 @@ pub mod protocol;
 pub mod safety;
 pub mod transfer;
 pub mod transport;
+pub mod util;
 
 pub use identity::{Fingerprint, Identity};
 pub use pairing::Ticket;

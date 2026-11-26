@@ -1,12 +1,12 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nearvolt/app.dart';
 import 'package:nearvolt/engine/demo_engine.dart';
-import 'package:nearvolt/main.dart';
 
 void main() {
-  testWidgets('home finds nearby devices', (tester) async {
+  testWidgets('start page finds devices with Receive open', (tester) async {
     await tester.pumpWidget(NearvoltApp(engine: DemoEngine()));
     expect(find.text('Send to anyone nearby'), findsOneWidget);
-    expect(find.text('Looking for nearby devices…'), findsOneWidget);
+    expect(find.text('Looking for devices with Receive open…'), findsOneWidget);
 
     await tester.pump(const Duration(seconds: 4));
     expect(find.text("Rahul's Pixel 9"), findsOneWidget);
@@ -16,7 +16,7 @@ void main() {
 
   testWidgets('sending runs through reconnect to verified', (tester) async {
     await tester.pumpWidget(NearvoltApp(engine: DemoEngine()));
-    await tester.pump(const Duration(seconds: 2));
+    await tester.pump(const Duration(seconds: 4));
 
     await tester.tap(find.text("Rahul's Pixel 9"));
     await tester.pumpAndSettle();
