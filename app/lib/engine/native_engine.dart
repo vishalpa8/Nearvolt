@@ -8,6 +8,9 @@ import 'rust/api.dart' as rust;
 
 /// The real engine: transfers run in Rust, radios and system services in Kotlin.
 class NativeEngine implements TransferEngine, NearvoltEvents {
+  /// The phone at the other end of a USB cable, when one is plugged in.
+  static const _usb = 'usb';
+
   final _platform = NearvoltPlatform();
   final _found = <String, NearbyDevice>{};
   final _nearby = StreamController<List<NearbyDevice>>.broadcast();
@@ -22,6 +25,7 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
     NearvoltEvents.setUp(this);
     _device = await _platform.deviceInfo();
     rust.startEngine(dataDir: _device.dataDir, deviceName: _device.name);
+    await _platform.watchUsb();
     return DeviceProfile(name: _device.name, kind: DeviceKind.parse(_device.kind), hasNfc: _device.hasNfc);
   }
 
@@ -44,18 +48,29 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
         if (event.ticket case final ticket?) _taps.add(ticket);
       case PlatformEventKind.updateProgress:
         _updateProgress.add(event.progress ?? 0);
-      case PlatformEventKind.usbConnected || PlatformEventKind.usbDisconnected:
-        break;
+      case PlatformEventKind.usbConnected:
+        rust.attachUsb(fd: event.fd!, host: event.host ?? false);
+        _found[_usb] = NearbyDevice(
+          id: _usb,
+          name: event.name ?? 'Phone on USB',
+          kind: DeviceKind.phone,
+          link: 'USB cable',
+        );
+        _publishNearby();
+      case PlatformEventKind.usbDisconnected:
+        _found.remove(_usb);
+        _publishNearby();
     }
   }
 
   /// One entry per device; the local network wins over Bluetooth because it
-  /// already carries the ticket.
+  /// already carries the ticket. The cable always gets its own entry.
   void _publishNearby() {
     final byName = <String, NearbyDevice>{};
     for (final device in _found.values) {
-      final existing = byName[device.name];
-      if (existing == null || (existing.ticket == null && device.ticket != null)) byName[device.name] = device;
+      final key = device.id == _usb ? _usb : device.name;
+      final existing = byName[key];
+      if (existing == null || (existing.ticket == null && device.ticket != null)) byName[key] = device;
     }
     _nearby.add(byName.values.toList());
   }
@@ -67,8 +82,8 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
     controller = StreamController(
       onListen: () async {
         forward = _nearby.stream.listen(controller.add);
-        _found.clear();
-        controller.add(const []);
+        _found.removeWhere((id, _) => id != _usb);
+        _publishNearby();
         if (await _platform.requestPermissions(['nearby'])) await _platform.startDiscovery();
       },
       onCancel: () async {
@@ -107,15 +122,14 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
   @override
   Stream<TransferProgress> send(NearbyDevice to, Selection what) async* {
     yield const TransferProgress(phase: TransferPhase.connecting);
-    final ticket = to.ticket ?? await _platform.readTicket(to.id);
-    final wifi = rust.readTicket(text: ticket).wifi;
+    final ticket = to.id == _usb ? null : to.ticket ?? await _platform.readTicket(to.id);
+    final wifi = ticket == null ? null : rust.readTicket(text: ticket).wifi;
     await _platform.requestPermissions(['notifications']);
     await _platform.startTransferService('Sending to ${to.name}');
-    final events = rust.sendFiles(
-      ticket: ticket,
-      sourceToken: what.token,
-      files: [for (final f in what.files) rust.SourceFile(path: f.path, size: f.size, modifiedMs: f.modifiedMs)],
-    );
+    final files = [for (final f in what.files) rust.SourceFile(path: f.path, size: f.size, modifiedMs: f.modifiedMs)];
+    final events = ticket == null
+        ? rust.sendUsb(sourceToken: what.token, files: files)
+        : rust.sendFiles(ticket: ticket, sourceToken: what.token, files: files);
     // Not on the same network: join the receiver's Wi-Fi Direct group. The engine
     // keeps retrying every address in the ticket, including the group's.
     var connected = false;

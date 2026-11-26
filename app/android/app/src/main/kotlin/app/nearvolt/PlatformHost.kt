@@ -2,10 +2,12 @@ package app.nearvolt
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.nfc.NfcAdapter
 import android.os.Build
 import android.os.Environment
+import android.os.Parcelable
 import android.provider.Settings
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
@@ -33,6 +35,7 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
     private val local = LocalDiscovery(context, emit)
     private val ble = Ble(context, emit)
     private val nfc = Nfc(activity, emit)
+    private val usb = Usb(context, emit)
     private val updater = Updater(context, emit)
 
     private val name: String =
@@ -131,6 +134,8 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
         nfc.stopReading()
     }
 
+    override fun watchUsb() = usb.watch()
+
     override suspend fun readTicket(receiverId: String): String = ble.readTicket(receiverId)
 
     override suspend fun joinWifi(group: WifiGroup): Boolean = wifiDirect.join(group)
@@ -149,9 +154,22 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
 
     fun onResume() = nfc.onResume()
 
+    /** Android opened the app for a USB cable. */
+    fun onNewIntent(intent: Intent) = usb.handle(intent)
+
     fun close() {
         stopDiscovery()
         stopReceiving()
+        usb.close()
         scope.cancel()
     }
 }
+
+/** A typed extra, through whichever API this Android version has. */
+inline fun <reified T : Parcelable> Intent.parcelable(name: String): T? =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        getParcelableExtra(name, T::class.java)
+    } else {
+        @Suppress("DEPRECATION")
+        getParcelableExtra(name)
+    }

@@ -15,4 +15,4 @@ pub use transfer::manifest::{FileSet, SourceOpener};
 pub use transfer::receiver::{Approver, IncomingOffer, ReceiveOptions, Receiver};
 pub use transfer::sender::{send, Peer, SendOptions};
 pub use transfer::{human_bytes, Event, EventSender, Fatal, Progress, Stats, Summary};
-pub use transport::{Link, RawStream, TcpLink};
+pub use transport::{Link, MuxLink, RawStream, TcpLink};

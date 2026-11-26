@@ -14,7 +14,7 @@ anyhow = "1"
 flutter_rust_bridge = "=2.13.0"
 futures = "0.3"
 nearvolt-core = { path = "../core" }
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "net"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"

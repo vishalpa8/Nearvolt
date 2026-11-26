@@ -104,6 +104,7 @@ class _ReceivePageState extends State<ReceivePage> {
             _Hint(icon: Icons.qr_code_scanner_rounded, text: 'Scan this code on the other device'),
             if (widget.profile.hasNfc) _Hint(icon: Icons.nfc_rounded, text: 'Or tap the phones together'),
             _Hint(icon: Icons.radar_rounded, text: 'Or pick ${widget.profile.name} in their Nearby list'),
+            const _Hint(icon: Icons.usb_rounded, text: 'Or connect the phones with a USB cable'),
           ],
         ),
       ),

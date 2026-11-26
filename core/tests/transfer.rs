@@ -1,5 +1,6 @@
 //! End-to-end transfers over loopback: the ticket secret path, the code pairing
-//! path and rejection of a sender without the secret.
+//! path, rejection of a sender without the secret, and one byte stream standing
+//! in for a USB cable.
 
 use std::fs;
 use std::net::SocketAddr;
@@ -8,8 +9,8 @@ use std::sync::{Arc, Mutex};
 
 use futures::FutureExt;
 use nearvolt_core::{
-    send, Approver, Event, EventSender, FileSet, Identity, Link, Peer, ReceiveOptions, Receiver, SendOptions, Stats,
-    Summary,
+    send, Approver, Event, EventSender, FileSet, Identity, Link, MuxLink, Peer, ReceiveOptions, Receiver, SendOptions,
+    Stats, Summary,
 };
 use tokio::sync::mpsc;
 
@@ -90,6 +91,30 @@ async fn code_pairing_shows_the_same_code_on_both_devices() {
     let receiver_code = receiver_code.lock().unwrap().clone();
     assert!(sender_code.is_some());
     assert_eq!(sender_code, receiver_code);
+    assert_same(&src.join("album"), &dst.join("album"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn one_cable_carries_every_stream_of_a_transfer() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (src, dst) = (tmp.path().join("src"), tmp.path().join("dst"));
+    sample_files(&src);
+    let rx = receiver(&dst, true);
+
+    let (sender_end, receiver_end) = tokio::io::duplex(1 << 20);
+    let (sender_link, receiver_link) = (MuxLink::default(), MuxLink::default());
+    let streams = rx.streams();
+    let _receiving = receiver_link.attach(receiver_end, false, move |stream| {
+        let _ = streams.try_send(stream);
+    });
+    let _sending = sender_link.attach(sender_end, true, drop);
+    let peer = Peer { link: sender_link, name: "Receiver".into(), fingerprint: None, secret: None };
+
+    let approve: Approver = Arc::new(|offer| async move { offer.code.is_some() }.boxed());
+    let (received, sent) =
+        tokio::join!(rx.run(approve, Arc::new(Stats::default()), None), send_album(&peer, &src, None));
+    assert_eq!(received.unwrap().files, 3);
+    sent.unwrap();
     assert_same(&src.join("album"), &dst.join("album"));
 }
 

@@ -210,7 +210,11 @@ enum class PlatformEventKind(val raw: Int) {
   RECEIVER_LOST(1),
   /** The phones were tapped together; `ticket` carries the receiver's code. */
   TICKET_TAPPED(2),
-  /** A USB link to another phone is ready; `fd` is a socket the engine owns. */
+  /**
+   * A USB link to another phone is ready: `fd` is a socket the engine owns,
+   * `host` is true on the phone powering the cable, and `name` is the other
+   * phone's name when the host knows it.
+   */
   USB_CONNECTED(3),
   USB_DISCONNECTED(4),
   /** Update download progress, 0 to 1. */
@@ -485,6 +489,7 @@ data class PlatformEvent (
   val link: String? = null,
   val ticket: String? = null,
   val fd: Long? = null,
+  val host: Boolean? = null,
   val progress: Double? = null
 )
  {
@@ -497,8 +502,9 @@ data class PlatformEvent (
       val link = pigeonVar_list[4] as String?
       val ticket = pigeonVar_list[5] as String?
       val fd = pigeonVar_list[6] as Long?
-      val progress = pigeonVar_list[7] as Double?
-      return PlatformEvent(kind, id, name, deviceKind, link, ticket, fd, progress)
+      val host = pigeonVar_list[7] as Boolean?
+      val progress = pigeonVar_list[8] as Double?
+      return PlatformEvent(kind, id, name, deviceKind, link, ticket, fd, host, progress)
     }
   }
   fun toList(): List<Any?> {
@@ -510,6 +516,7 @@ data class PlatformEvent (
       link,
       ticket,
       fd,
+      host,
       progress,
     )
   }
@@ -521,7 +528,7 @@ data class PlatformEvent (
       return true
     }
     val other = other as PlatformEvent
-    return PlatformPigeonUtils.deepEquals(this.kind, other.kind) && PlatformPigeonUtils.deepEquals(this.id, other.id) && PlatformPigeonUtils.deepEquals(this.name, other.name) && PlatformPigeonUtils.deepEquals(this.deviceKind, other.deviceKind) && PlatformPigeonUtils.deepEquals(this.link, other.link) && PlatformPigeonUtils.deepEquals(this.ticket, other.ticket) && PlatformPigeonUtils.deepEquals(this.fd, other.fd) && PlatformPigeonUtils.deepEquals(this.progress, other.progress)
+    return PlatformPigeonUtils.deepEquals(this.kind, other.kind) && PlatformPigeonUtils.deepEquals(this.id, other.id) && PlatformPigeonUtils.deepEquals(this.name, other.name) && PlatformPigeonUtils.deepEquals(this.deviceKind, other.deviceKind) && PlatformPigeonUtils.deepEquals(this.link, other.link) && PlatformPigeonUtils.deepEquals(this.ticket, other.ticket) && PlatformPigeonUtils.deepEquals(this.fd, other.fd) && PlatformPigeonUtils.deepEquals(this.host, other.host) && PlatformPigeonUtils.deepEquals(this.progress, other.progress)
   }
 
   override fun hashCode(): Int {
@@ -533,11 +540,12 @@ data class PlatformEvent (
     result = 31 * result + PlatformPigeonUtils.deepHash(this.link)
     result = 31 * result + PlatformPigeonUtils.deepHash(this.ticket)
     result = 31 * result + PlatformPigeonUtils.deepHash(this.fd)
+    result = 31 * result + PlatformPigeonUtils.deepHash(this.host)
     result = 31 * result + PlatformPigeonUtils.deepHash(this.progress)
     return result
   }
   override fun toString(): String {
-    return "PlatformEvent(kind=$kind, id=$id, name=$name, deviceKind=$deviceKind, link=$link, ticket=$ticket, fd=$fd, progress=$progress)"
+    return "PlatformEvent(kind=$kind, id=$id, name=$name, deviceKind=$deviceKind, link=$link, ticket=$ticket, fd=$fd, host=$host, progress=$progress)"
   }
 }
 private open class PlatformPigeonCodec : StandardMessageCodec() {
@@ -635,6 +643,11 @@ interface NearvoltPlatform {
   /** Looks for receivers and listens for NFC taps while the send page is open. */
   fun startDiscovery()
   fun stopDiscovery()
+  /**
+   * Starts noticing USB cables to other phones, reported as `usbConnected` and
+   * `usbDisconnected` events.
+   */
+  fun watchUsb()
   /** Reads the public ticket of a receiver found over Bluetooth. */
   suspend fun readTicket(receiverId: String): String
   suspend fun joinWifi(group: WifiGroup): Boolean
@@ -818,6 +831,22 @@ interface NearvoltPlatform {
           channel.setMessageHandler { _, reply ->
             val wrapped: List<Any?> = try {
               api.stopDiscovery()
+              listOf(null)
+            } catch (exception: Throwable) {
+              PlatformPigeonUtils.wrapError(exception)
+            }
+            reply.reply(wrapped)
+          }
+        } else {
+          channel.setMessageHandler(null)
+        }
+      }
+      run {
+        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.nearvolt.NearvoltPlatform.watchUsb$separatedMessageChannelSuffix", codec)
+        if (api != null) {
+          channel.setMessageHandler { _, reply ->
+            val wrapped: List<Any?> = try {
+              api.watchUsb()
               listOf(null)
             } catch (exception: Throwable) {
               PlatformPigeonUtils.wrapError(exception)

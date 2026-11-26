@@ -12,13 +12,14 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{ensure, Context, Result};
+use futures::StreamExt;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::{verify_tls12_signature, verify_tls13_signature, CryptoProvider};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
 use rustls::{DigitallySignedStruct, DistinguishedName, SignatureScheme};
 use socket2::{SockRef, TcpKeepalive};
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tokio_rustls::{TlsAcceptor, TlsConnector};
@@ -84,6 +85,65 @@ async fn connect_tcp(addr: SocketAddr) -> Result<RawStream> {
         .with_context(|| format!("{addr} did not answer"))??;
     tune(&tcp);
     Ok(Box::new(tcp))
+}
+
+/// Logical streams multiplexed over one byte stream, such as a USB cable. The
+/// link outlives the cable: after a replug, `attach` the new stream and streams
+/// opened from then on use it, so a transfer resumes on its own.
+#[derive(Clone, Default)]
+pub struct MuxLink(Arc<Mutex<Option<tokio_yamux::Control>>>);
+
+impl MuxLink {
+    /// Runs a session over `io` until it closes, passing streams the peer opens
+    /// to `accept`. The two ends must pass different `client` values. Returns
+    /// the session task, which stops when dropped.
+    pub fn attach(&self, io: impl Io, client: bool, accept: impl Fn(RawStream) + Send + 'static) -> AbortOnDrop<()> {
+        let config = tokio_yamux::Config::default();
+        let mut session = if client {
+            tokio_yamux::Session::new_client(io, config)
+        } else {
+            tokio_yamux::Session::new_server(io, config)
+        };
+        *self.0.lock().unwrap() = Some(session.control());
+        AbortOnDrop(tokio::spawn(async move {
+            while let Some(stream) = session.next().await {
+                if let Ok(stream) = stream {
+                    accept(always_reading(stream));
+                }
+            }
+        }))
+    }
+}
+
+impl Link for MuxLink {
+    async fn open_stream(&self) -> Result<RawStream> {
+        let control = self.0.lock().unwrap().clone();
+        let stream = control.context("the cable is not connected")?.open_stream().await?;
+        Ok(always_reading(stream))
+    }
+}
+
+/// tokio-yamux applies the peer's window updates only while a read is pending,
+/// and data streams are write-only once set up, so writes would stop after the
+/// first window. A pipe that is always read keeps them moving.
+fn always_reading(stream: tokio_yamux::StreamHandle) -> RawStream {
+    const WINDOW: usize = tokio_yamux::config::INITIAL_STREAM_WINDOW as usize;
+    let (pipe, user) = tokio::io::duplex(WINDOW);
+    tokio::spawn(async move {
+        let (mut mux_read, mut mux_write) = tokio::io::split(stream);
+        let (pipe_read, mut pipe_write) = tokio::io::split(pipe);
+        let mut pipe_read = BufReader::with_capacity(WINDOW, pipe_read);
+        let inbound = async {
+            let _ = tokio::io::copy(&mut mux_read, &mut pipe_write).await;
+            let _ = pipe_write.shutdown().await;
+        };
+        let outbound = async {
+            let _ = tokio::io::copy_buf(&mut pipe_read, &mut mux_write).await;
+            let _ = mux_write.shutdown().await;
+        };
+        tokio::join!(inbound, outbound);
+    });
+    Box::new(user)
 }
 
 /// Accepts TCP connections on `addr` and forwards them as raw streams into

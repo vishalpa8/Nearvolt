@@ -114,7 +114,9 @@ enum PlatformEventKind {
   receiverLost,
   /// The phones were tapped together; `ticket` carries the receiver's code.
   ticketTapped,
-  /// A USB link to another phone is ready; `fd` is a socket the engine owns.
+  /// A USB link to another phone is ready: `fd` is a socket the engine owns,
+  /// `host` is true on the phone powering the cable, and `name` is the other
+  /// phone's name when the host knows it.
   usbConnected,
   usbDisconnected,
   /// Update download progress, 0 to 1.
@@ -433,6 +435,7 @@ class PlatformEvent {
     this.link,
     this.ticket,
     this.fd,
+    this.host,
     this.progress,
   });
 
@@ -450,6 +453,8 @@ class PlatformEvent {
 
   int? fd;
 
+  bool? host;
+
   double? progress;
 
   List<Object?> _toList() {
@@ -461,6 +466,7 @@ class PlatformEvent {
       link,
       ticket,
       fd,
+      host,
       progress,
     ];
   }
@@ -478,7 +484,8 @@ class PlatformEvent {
       link: result[4] as String?,
       ticket: result[5] as String?,
       fd: result[6] as int?,
-      progress: result[7] as double?,
+      host: result[7] as bool?,
+      progress: result[8] as double?,
     );
   }
 
@@ -491,7 +498,7 @@ class PlatformEvent {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(kind, other.kind) && _deepEquals(id, other.id) && _deepEquals(name, other.name) && _deepEquals(deviceKind, other.deviceKind) && _deepEquals(link, other.link) && _deepEquals(ticket, other.ticket) && _deepEquals(fd, other.fd) && _deepEquals(progress, other.progress);
+    return _deepEquals(kind, other.kind) && _deepEquals(id, other.id) && _deepEquals(name, other.name) && _deepEquals(deviceKind, other.deviceKind) && _deepEquals(link, other.link) && _deepEquals(ticket, other.ticket) && _deepEquals(fd, other.fd) && _deepEquals(host, other.host) && _deepEquals(progress, other.progress);
   }
 
   @override
@@ -500,7 +507,7 @@ class PlatformEvent {
 
   @override
   String toString() {
-    return 'PlatformEvent(kind: $kind, id: $id, name: $name, deviceKind: $deviceKind, link: $link, ticket: $ticket, fd: $fd, progress: $progress)';
+    return 'PlatformEvent(kind: $kind, id: $id, name: $name, deviceKind: $deviceKind, link: $link, ticket: $ticket, fd: $fd, host: $host, progress: $progress)';
   }
 }
 
@@ -744,6 +751,25 @@ class NearvoltPlatform {
 
   Future<void> stopDiscovery() async {
     final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.stopDiscovery$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channel = BasicMessageChannel<Object?>(
+      pigeonVar_channelName,
+      pigeonChannelCodec,
+      binaryMessenger: pigeonVar_binaryMessenger,
+    );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(null);
+    final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
+    _extractReplyValueOrThrow(
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: true,
+    )
+    ;
+  }
+
+  /// Starts noticing USB cables to other phones, reported as `usbConnected` and
+  /// `usbDisconnected` events.
+  Future<void> watchUsb() async {
+    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.watchUsb$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,

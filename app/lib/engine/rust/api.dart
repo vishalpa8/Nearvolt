@@ -7,7 +7,7 @@ import 'frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `drive`, `engine`, `forward`, `new`, `picked_files`, `with_progress`
+// These functions are ignored because they are not marked as `pub`: `drive`, `engine`, `forward`, `new`, `picked_files`, `start_send`, `usb_stream`, `with_progress`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Engine`, `Receiving`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`
 
@@ -52,6 +52,21 @@ Stream<TransferEvent> sendFiles({
   sourceToken: sourceToken,
   files: files,
 );
+
+/// Sends over the USB cable. With no ticket to pin, both phones confirm a code.
+Stream<TransferEvent> sendUsb({
+  required PlatformInt64 sourceToken,
+  required List<SourceFile> files,
+}) => RustLib.instance.api.crateApiSendUsb(
+  sourceToken: sourceToken,
+  files: files,
+);
+
+/// A USB cable to another phone is ready: `fd` is a stream socket the engine now
+/// owns. `host` is true on the phone powering the cable, so the two ends differ.
+/// Streams the other phone opens go to Receive while it is open.
+void attachUsb({required int fd, required bool host}) =>
+    RustLib.instance.api.crateApiAttachUsb(fd: fd, host: host);
 
 void stopSending() => RustLib.instance.api.crateApiStopSending();
 

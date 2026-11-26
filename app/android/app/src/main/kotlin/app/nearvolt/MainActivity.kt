@@ -1,5 +1,6 @@
 package app.nearvolt
 
+import android.content.Intent
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContract
 import androidx.activity.result.contract.ActivityResultContracts
@@ -27,6 +28,11 @@ class MainActivity : FlutterFragmentActivity() {
     override fun onResume() {
         super.onResume()
         host?.onResume()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        host?.onNewIntent(intent)
     }
 
     override fun onDestroy() {

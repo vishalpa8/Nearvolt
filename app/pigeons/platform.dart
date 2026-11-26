@@ -75,7 +75,9 @@ enum PlatformEventKind {
   /// The phones were tapped together; `ticket` carries the receiver's code.
   ticketTapped,
 
-  /// A USB link to another phone is ready; `fd` is a socket the engine owns.
+  /// A USB link to another phone is ready: `fd` is a socket the engine owns,
+  /// `host` is true on the phone powering the cable, and `name` is the other
+  /// phone's name when the host knows it.
   usbConnected,
   usbDisconnected,
 
@@ -93,6 +95,7 @@ class PlatformEvent {
   String? link;
   String? ticket;
   int? fd;
+  bool? host;
   double? progress;
 }
 
@@ -126,6 +129,10 @@ abstract class NearvoltPlatform {
   void startDiscovery();
 
   void stopDiscovery();
+
+  /// Starts noticing USB cables to other phones, reported as `usbConnected` and
+  /// `usbDisconnected` events.
+  void watchUsb();
 
   /// Reads the public ticket of a receiver found over Bluetooth.
   @async
