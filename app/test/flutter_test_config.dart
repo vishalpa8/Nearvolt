@@ -9,7 +9,7 @@ Future<void> testExecutable(FutureOr<void> Function() testMain) async {
   TestWidgetsFlutterBinding.ensureInitialized();
   final flutterRoot = Platform.environment['FLUTTER_ROOT'] ?? '../.toolchain/flutter';
   await _load('Inter', ['Regular', 'Medium', 'SemiBold'].map((w) => 'assets/fonts/Inter-$w.ttf'));
-  await _load('MaterialIcons', ['$flutterRoot/bin/cache/artifacts/material_fonts/materialicons-regular.otf']);
+  await _load('MaterialIcons', ['$flutterRoot/bin/cache/artifacts/material_fonts/MaterialIcons-Regular.otf']);
   await testMain();
 }
 
