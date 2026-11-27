@@ -25,8 +25,11 @@ class WifiDirect(private val context: Context) {
     private val channel by lazy { manager?.initialize(context, Looper.getMainLooper(), null) }
 
     /**
-     * Creates a group this device owns. When connected to Wi-Fi it uses the
-     * router's channel, so the radio never has to hop between two channels.
+     * Creates a group this device owns. Files go straight through it, so its
+     * speed is the transfer's speed: a 5 GHz channel is several times faster
+     * than 2.4 GHz. If the router is on a usable 5 GHz channel the group shares
+     * it, so the radio never hops between channels; otherwise it asks for any
+     * 5 GHz channel, then for the router's channel, then lets Android choose.
      */
     suspend fun createGroup(): WifiGroup? {
         val manager = manager ?: return null
@@ -34,15 +37,21 @@ class WifiDirect(private val context: Context) {
         if (!clear(manager, channel)) return null
         val name = PREFIX + random(4)
         val passphrase = random(12)
-        val created = routerFrequency()?.let { frequency ->
-            manager.perform("create a group on $frequency MHz") {
-                createGroup(channel, config(name, passphrase) { setGroupOperatingFrequency(frequency) }, it)
-            }
-        } ?: false
-        if (!created) {
-            val auto = config(name, passphrase) { setGroupOperatingBand(WifiP2pConfig.GROUP_OWNER_BAND_AUTO) }
-            if (!manager.perform("create a group") { createGroup(channel, auto, it) }) return null
+        val router = routerFrequency()
+        val attempts = buildList<Pair<String, WifiP2pConfig.Builder.() -> Unit>> {
+            if (router != null && router >= FIVE_GHZ) add("the router's 5 GHz channel $router MHz" to { setGroupOperatingFrequency(router) })
+            add("a 5 GHz channel" to { setGroupOperatingBand(WifiP2pConfig.GROUP_OWNER_BAND_5GHZ) })
+            if (router != null && router < FIVE_GHZ) add("the router's 2.4 GHz channel $router MHz" to { setGroupOperatingFrequency(router) })
+            add("any channel" to { setGroupOperatingBand(WifiP2pConfig.GROUP_OWNER_BAND_AUTO) })
         }
+        var created = false
+        for ((what, extra) in attempts) {
+            if (manager.perform("create a group on $what") { createGroup(channel, config(name, passphrase, extra), it) }) {
+                created = true
+                break
+            }
+        }
+        if (!created) return null
         repeat(25) {
             val group = groupInfo(manager, channel)
             if (group != null && group.isGroupOwner) {
@@ -211,6 +220,7 @@ class WifiDirect(private val context: Context) {
 
         /** Every group Nearvolt makes is named this way, so its leftovers can be told apart. */
         private const val PREFIX = "DIRECT-NV-"
+        private const val FIVE_GHZ = 5_000
         private const val ANSWER_MS = 5_000L
         private const val BUSY_TRIES = 4
         private const val BUSY_WAIT_MS = 500L
