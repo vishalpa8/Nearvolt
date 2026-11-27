@@ -9,7 +9,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `batch`, `drive`, `engine`, `forward`, `new`, `picked_files`, `start_connection`, `usb_stream`, `with_progress`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Engine`, `Receiving`, `Sending`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `from`
 
 /// Loads or creates this device's identity in `data_dir`. Safe to call again.
 void startEngine({required String dataDir, required String deviceName}) =>
@@ -37,9 +37,13 @@ Stream<TransferEvent> receive({
 ReceiveTickets receiveTickets({WifiInfo? wifi}) =>
     RustLib.instance.api.crateApiReceiveTickets(wifi: wifi);
 
-/// Answers the last `Request` event.
-void answerRequest({required bool accept}) =>
-    RustLib.instance.api.crateApiAnswerRequest(accept: accept);
+/// Answers the `Request` event with this `request_id`. Returns false when that
+/// question is gone, for example because the phone asking has left.
+bool answerRequest({required PlatformInt64 requestId, required bool accept}) =>
+    RustLib.instance.api.crateApiAnswerRequest(
+      requestId: requestId,
+      accept: accept,
+    );
 
 /// Ends the receiving side's connection; the sender is told, so it stops
 /// reconnecting. Receive then ends with `Disconnected`.
@@ -89,8 +93,15 @@ enum EventKind {
   ready,
 
   /// Receiver: a phone named `text` asks to connect; answer with
-  /// `answer_request`. `code` is set when both screens must show the same one.
+  /// `answer_request` and `request_id`. `code` is set when both screens must
+  /// show the same one.
   request,
+
+  /// Receiver: the phone behind `request_id` left, so the question is moot.
+  requestWithdrawn,
+
+  /// A line for the log that isn't an error; `text` holds it.
+  note,
 
   /// Sender: show `code` while the receiver decides.
   code,
@@ -120,6 +131,21 @@ enum EventKind {
 
   /// The connection failed for good, for the reason in `text`.
   failed,
+}
+
+/// What went wrong, for the app to put in words. `text` stays technical, for the log.
+enum FailureKind {
+  diskFull,
+  cannotSaveFile,
+  cannotReadFile,
+  fileDamaged,
+  declined,
+  busy,
+  otherPhoneGone,
+  cannotReach,
+  oldVersion,
+  tooBig,
+  other,
 }
 
 class ReceiveTickets {
@@ -203,11 +229,16 @@ class TicketInfo {
 
 /// `text` and `code` depend on `kind`. `batch` is -1 when no batch is meant.
 /// Counts are filled for batches, progress and the end of a connection.
+/// `failure` is set on `BatchFailed`, `ConnectionLost` and `Failed`.
 class TransferEvent {
   final EventKind kind;
   final String? text;
   final String? code;
   final String? route;
+  final FailureKind? failure;
+
+  /// For `Request` and `RequestWithdrawn`; -1 otherwise.
+  final PlatformInt64 requestId;
   final PlatformInt64 batch;
   final PlatformInt64 doneBytes;
   final PlatformInt64 totalBytes;
@@ -219,6 +250,8 @@ class TransferEvent {
     this.text,
     this.code,
     this.route,
+    this.failure,
+    required this.requestId,
     required this.batch,
     required this.doneBytes,
     required this.totalBytes,
@@ -232,6 +265,8 @@ class TransferEvent {
       text.hashCode ^
       code.hashCode ^
       route.hashCode ^
+      failure.hashCode ^
+      requestId.hashCode ^
       batch.hashCode ^
       doneBytes.hashCode ^
       totalBytes.hashCode ^
@@ -247,6 +282,8 @@ class TransferEvent {
           text == other.text &&
           code == other.code &&
           route == other.route &&
+          failure == other.failure &&
+          requestId == other.requestId &&
           batch == other.batch &&
           doneBytes == other.doneBytes &&
           totalBytes == other.totalBytes &&

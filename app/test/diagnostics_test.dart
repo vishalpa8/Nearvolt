@@ -18,6 +18,7 @@ TransferEvent _event(EventKind kind, {String? text, String? route, int batch = -
       kind: kind,
       text: text,
       route: route,
+      requestId: -1,
       batch: batch,
       doneBytes: done,
       totalBytes: total,

@@ -145,7 +145,7 @@ void main() {
           ticket: _ticket,
           phase: LinkPhase.waiting,
           peer: "Rahul's Pixel 9",
-          request: Request(from: "Rahul's Pixel 9", code: '4821'),
+          request: Request(id: 1, from: "Rahul's Pixel 9", code: '4821'),
         ),
       );
     await tester.pumpAndSettle();

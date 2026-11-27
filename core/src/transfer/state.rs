@@ -13,7 +13,7 @@ use tokio::sync::watch;
 
 use super::disk;
 use super::journal::{Journal, Replay};
-use super::{human_bytes, Fatal, Stats, Summary};
+use super::{human_bytes, FailureKind, Fatal, Stats, Summary};
 use crate::identity::Fingerprint;
 use crate::protocol::{FileHave, Offer, MAX_FILES};
 use crate::safety;
@@ -21,6 +21,11 @@ use crate::safety;
 const CHECKPOINT_EVERY: Duration = Duration::from_secs(2);
 const PART_SUFFIX: &str = ".nvpart";
 const READ_BLOCK: usize = 1 << 20;
+/// Room left over when a file starts, so the phone isn't filled to the last byte.
+const SPACE_MARGIN: u64 = 16 << 20;
+/// A file that arrives and fails the check this many times isn't going to arrive
+/// right: the storage is probably failing.
+const MAX_DAMAGED: u32 = 3;
 
 /// The receiver derives the ID itself, so a re-offer of the same files from the
 /// same sender always maps to the same journal.
@@ -55,6 +60,10 @@ struct Slot {
     dirty: bool,
     handle: Option<Arc<File>>,
     done: bool,
+    /// Where this file's part file really is, when the usual name couldn't be used.
+    part: Option<PathBuf>,
+    /// How many times the whole file arrived and failed the check.
+    damaged: u32,
 }
 
 /// One stream's turn at writing a file, from [`TransferState::begin`].
@@ -144,17 +153,32 @@ impl TransferState {
         self.remaining_files.fetch_sub(1, Ordering::AcqRel);
     }
 
+    /// What's still to come: for each unfinished file, its size less what's
+    /// already on disk. (A part file is created at full size but only takes space
+    /// as it's written, so its length says nothing about the room it needs.)
     fn check_space(&self) -> Result<()> {
-        let needed = (0..self.files.len() as u32)
-            .filter(|&i| !self.slot(i).done && !self.part_path(i).exists())
-            .fold(0u64, |sum, i| sum.saturating_add(self.files[i as usize].size));
+        let needed = (0..self.files.len() as u32).fold(0u64, |sum, i| {
+            let slot = self.slot(i);
+            if slot.done {
+                return sum;
+            }
+            sum.saturating_add(self.files[i as usize].size.saturating_sub(slot.written))
+        });
+        self.require_space(needed)
+    }
+
+    /// Fails with a plain "not enough space" when `needed` more bytes won't fit.
+    fn require_space(&self, needed: u64) -> Result<()> {
         let free = disk::available_space(&self.root).unwrap_or(u64::MAX);
         if needed > free {
-            return Err(Fatal(format!(
-                "Not enough free space: these files need {}, but only {} is free.",
-                human_bytes(needed),
-                human_bytes(free)
-            ))
+            return Err(Fatal::new(
+                FailureKind::DiskFull,
+                format!(
+                    "Not enough free space: these files need {}, but only {} is free.",
+                    human_bytes(needed),
+                    human_bytes(free)
+                ),
+            )
             .into());
         }
         Ok(())
@@ -179,11 +203,15 @@ impl TransferState {
     pub(super) fn begin(&self, i: u32, offset: u64, len: u64) -> Result<Option<Writing>> {
         let f = self.files.get(i as usize).context("data for an unknown file")?;
         ensure!(offset.checked_add(len) == Some(f.size), "data for {} has the wrong length", f.rel.display());
-        let mut slot = self.slot(i);
+        let slot = self.slot(i);
         if slot.done {
             return Ok(None);
         }
         ensure!(offset <= slot.written, "data for {} skips ahead", f.rel.display());
+        // Other apps may have filled the storage since the batch was accepted.
+        drop(slot);
+        self.require_space(len.saturating_add(SPACE_MARGIN))?;
+        let mut slot = self.slot(i);
         if offset < slot.written {
             self.stats.sub_bytes(slot.written - offset);
             slot.written = offset;
@@ -224,6 +252,14 @@ impl TransferState {
             let mut slot = self.slot(i);
             self.stats.sub_bytes(slot.written);
             slot.written = 0;
+            slot.damaged += 1;
+            if slot.damaged >= MAX_DAMAGED {
+                let message = format!("{} keeps arriving damaged", f.rel.display());
+                return Err(Fatal::new(FailureKind::FileDamaged, message).into());
+            }
+            // The next attempt starts from nothing, so the journal must not claim
+            // the bytes that were just found wrong.
+            let _ = self.journal.lock().unwrap().durable(i, 0);
             return Ok(false);
         }
         if let Some(ms) = f.modified {
@@ -231,14 +267,14 @@ impl TransferState {
         }
         let target = self.free_name(i)?;
         self.journal.lock().unwrap().file_done(i, &rel_string(&target))?;
-        {
+        let part = {
             let mut slot = self.slot(i);
             slot.handle = None;
             slot.dirty = false;
-        }
+            slot.part.clone().unwrap_or_else(|| self.part_path(i))
+        };
         drop(file);
-        fs::rename(self.part_path(i), self.root.join(&target))
-            .with_context(|| format!("can't save {}", target.display()))?;
+        fs::rename(&part, self.root.join(&target)).with_context(|| format!("can't save {}", target.display()))?;
         self.slot(i).done = true;
         self.stats.add_file();
         if self.remaining_files.fetch_sub(1, Ordering::AcqRel) == 1 {
@@ -268,12 +304,19 @@ impl TransferState {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).with_context(|| format!("can't create {}", parent.display()))?;
         }
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&path)
+        // A part file left by an earlier install of the app can't be opened by this
+        // one, and Android won't let it be deleted either, so another name is used.
+        let (file, path) = (0..4)
+            .map(|n| if n == 0 { path.clone() } else { alternate(&path, n) })
+            .find_map(|candidate| {
+                let opened = OpenOptions::new().read(true).write(true).create(true).truncate(false).open(&candidate);
+                match opened {
+                    Ok(file) => Some(Ok((file, candidate))),
+                    Err(e) if e.kind() == io::ErrorKind::PermissionDenied => None,
+                    Err(e) => Some(Err(e)),
+                }
+            })
+            .unwrap_or_else(|| Err(io::Error::from(io::ErrorKind::PermissionDenied)))
             .with_context(|| format!("can't write {}", path.display()))?;
         let size = self.files[i as usize].size;
         if file.metadata()?.len() != size {
@@ -281,6 +324,7 @@ impl TransferState {
         }
         let file = Arc::new(file);
         slot.handle = Some(file.clone());
+        slot.part = Some(path);
         Ok(file)
     }
 
@@ -346,7 +390,9 @@ impl TransferState {
                 continue;
             }
             slot.handle = None;
+            let part = slot.part.take().unwrap_or_else(|| self.part_path(i));
             drop(slot);
+            remove_part(&part, &self.root);
             remove_part(&self.part_path(i), &self.root);
         }
         self.cleanup();
@@ -367,6 +413,13 @@ impl TransferState {
 
 fn has_size(path: &Path, size: u64) -> bool {
     fs::metadata(path).is_ok_and(|meta| meta.len() == size)
+}
+
+/// `a.mp4.nvpart` becomes `a.mp4.2.nvpart`.
+fn alternate(part: &Path, n: u32) -> PathBuf {
+    let name = part.file_name().unwrap_or_default().to_string_lossy();
+    let stem = name.strip_suffix(PART_SUFFIX).unwrap_or(&name);
+    part.with_file_name(format!("{stem}.{}{PART_SUFFIX}", n + 1))
 }
 
 fn rel_string(path: &Path) -> String {

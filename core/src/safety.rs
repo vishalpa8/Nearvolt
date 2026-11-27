@@ -41,8 +41,24 @@ fn clean_component(raw: &str) -> Result<String> {
     if is_reserved(&stem) {
         name.insert(0, '_');
     }
-    ensure!(name.len() <= MAX_COMPONENT_BYTES, "file name is too long: {raw}");
-    Ok(name)
+    // Too long to store: shortened, keeping the extension, rather than refused.
+    Ok(fit(&name, ""))
+}
+
+/// `name` followed by `tail` before the extension, cut down so the whole is at most
+/// 255 bytes. Cuts the stem, never the extension, and never in the middle of a
+/// character.
+fn fit(name: &str, tail: &str) -> String {
+    let (stem, ext) = match name.rfind('.') {
+        Some(i) if i > 0 && name.len() - i <= 16 => (&name[..i], &name[i..]),
+        _ => (name, ""),
+    };
+    let room = MAX_COMPONENT_BYTES.saturating_sub(tail.len() + ext.len());
+    let mut end = stem.len().min(room);
+    while !stem.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{tail}{ext}", &stem[..end])
 }
 
 fn is_reserved(stem: &str) -> bool {
@@ -80,12 +96,9 @@ pub fn unique_paths(paths: Vec<Vec<String>>) -> Result<Vec<PathBuf>> {
     Ok(out)
 }
 
-/// `photo.jpg` becomes `photo (n).jpg`.
+/// `photo.jpg` becomes `photo (n).jpg`, shortened if that would be too long a name.
 pub fn numbered(name: &str, n: usize) -> String {
-    match name.rfind('.') {
-        Some(i) if i > 0 => format!("{} ({n}){}", &name[..i], &name[i..]),
-        _ => format!("{name} ({n})"),
-    }
+    fit(name, &format!(" ({n})"))
 }
 
 fn key(parts: &[String]) -> String {
@@ -109,6 +122,17 @@ mod tests {
         assert_eq!(clean_relative_path("a/CON.txt").unwrap(), vec!["a", "_CON.txt"]);
         assert_eq!(clean_relative_path("a/name. ").unwrap(), vec!["a", "name"]);
         assert_eq!(clean_relative_path("a/...").unwrap(), vec!["a", "_"]);
+    }
+
+    #[test]
+    fn long_names_are_shortened_not_refused() {
+        let long = format!("{}.jpg", "é".repeat(200));
+        let cleaned = clean_relative_path(&long).unwrap();
+        assert!(cleaned[0].len() <= 255 && cleaned[0].ends_with(".jpg"));
+        // Numbering and the reserved-name prefix can't push a name past the limit either.
+        let exact = format!("{}.mp4", "a".repeat(250));
+        assert!(numbered(&exact, 12).len() <= 255 && numbered(&exact, 12).ends_with(" (12).mp4"));
+        assert!(clean_relative_path(&format!("CON.{}", "b".repeat(251))).unwrap()[0].len() <= 255);
     }
 
     #[test]

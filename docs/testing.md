@@ -94,6 +94,10 @@ Start with a fresh install, Bluetooth off.
 | 10 | While A and B are connected over the same Wi-Fi, look for B in a third phone's Nearby list and in its Wi-Fi Direct settings, and try connecting from the third phone with B's QR code. | B is in neither list, and the third phone is turned away: "This phone is connected to another device." |
 | 11 | Tap Disconnect on B. | A shows "B disconnected" and a Done button. Both stop. |
 | 11a | Send a large video and tap Disconnect on either phone halfway. | The receiver's `Download/Nearvolt` has no half file and no `.nvpart` file; files that had finished stay. Sending again starts the video from the beginning. |
+| 11b | Fill the receiver's storage almost completely, then send a file bigger than the free space. | Both phones say, in words, that there isn't enough space (on the receiving phone's screen: "on this phone"). The sender doesn't sit on "Reconnecting…", and the connection stays so another batch can be sent. |
+| 11c | With B's Receive prompt showing, have A cancel (Back). | The prompt closes by itself on B and says "A cancelled."; tapping nothing leaves B ready for the next phone. |
+| 11d | With B's prompt showing for A, start a second phone C connecting to B. | C is told B is connected to another phone; B's prompt for A is unchanged, and Accept connects A, not C. |
+| 11e | Run a port scanner, or open the receiver's port in a browser many times, while connected. | The transfer and Receive carry on; the log shows "N unknown connection attempts were ignored". |
 
 ### Keeping the connection
 

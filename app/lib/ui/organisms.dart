@@ -1,6 +1,8 @@
-import 'package:flutter/services.dart' show PlatformException;
+import 'dart:async';
+
 import 'package:material_ui/material_ui.dart';
 
+import '../engine/messages.dart';
 import '../engine/models.dart';
 import '../theme.dart';
 import 'atoms.dart';
@@ -92,26 +94,66 @@ class StatsCard extends StatelessWidget {
   }
 }
 
-/// Asks whether to let a phone connect. Resolves to true if accepted.
-Future<bool> showReceivePrompt(BuildContext context, Request request) async {
-  final accepted = await showModalBottomSheet<bool>(
+/// Asks whether to let a phone connect. Resolves to true if accepted, false if
+/// declined, and null if the phone left first: the sheet then closes by itself.
+Future<bool?> showReceivePrompt(BuildContext context, Request request, {required Stream<void> withdrawn}) {
+  return showModalBottomSheet<bool>(
     context: context,
     isDismissible: false,
+    enableDrag: false,
     isScrollControlled: true,
-    builder: (_) => _ReceivePrompt(request: request),
+    builder: (_) => _ReceivePrompt(request: request, withdrawn: withdrawn),
   );
-  return accepted ?? false;
 }
 
-class _ReceivePrompt extends StatelessWidget {
-  const _ReceivePrompt({required this.request});
+class _ReceivePrompt extends StatefulWidget {
+  const _ReceivePrompt({required this.request, required this.withdrawn});
 
   final Request request;
+  final Stream<void> withdrawn;
+
+  @override
+  State<_ReceivePrompt> createState() => _ReceivePromptState();
+}
+
+class _ReceivePromptState extends State<_ReceivePrompt> {
+  late final StreamSubscription<void> _sub;
+  NavigatorState? _navigator;
+  Route<dynamic>? _route;
+
+  @override
+  void initState() {
+    super.initState();
+    // The phone left: take this sheet, and only this sheet, off the screen.
+    _sub = widget.withdrawn.listen((_) {
+      final (navigator, route) = (_navigator, _route);
+      if (mounted && navigator != null && route != null) navigator.removeRoute(route);
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _navigator = Navigator.of(context);
+    _route = ModalRoute.of(context);
+  }
+
+  @override
+  void dispose() {
+    _sub.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final request = widget.request;
     final text = Theme.of(context).textTheme;
     final code = request.code;
+    // Only the buttons answer; the back gesture must not decline by accident.
+    return PopScope(canPop: false, child: _sheet(context, request, text, code));
+  }
+
+  Widget _sheet(BuildContext context, Request request, TextTheme text, String? code) {
     return SafeArea(
       child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(Space.xl, 0, Space.xl, Space.xl),
@@ -365,7 +407,7 @@ class _UpdateCardState extends State<UpdateCard> {
       if (!mounted) return;
       setState(() {
         _step = _UpdateStep.failed;
-        _error = e is PlatformException ? e.message : null;
+        _error = friendlyPlatform(e);
       });
     }
   }

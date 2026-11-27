@@ -10,7 +10,7 @@ import 'rust/api.dart' as rust;
 /// to its cause. Progress ticks themselves are left out.
 class Diagnostics {
   Diagnostics(this._platform, this._tag, {required bool sending, this.sampleEvery = const Duration(seconds: 5)})
-      : _connecting = sending ? DateTime.now() : null;
+    : _connecting = sending ? DateTime.now() : null;
 
   final NearvoltPlatform _platform;
   final String _tag;
@@ -48,10 +48,13 @@ class Diagnostics {
         // Each batch, and each reconnect, measures from its own first progress.
         if (_sampler != null) _last ??= (at: DateTime.now(), bytes: e.doneBytes);
       case rust.EventKind.completed:
-        _log(_tag, 'batch ${e.batch} completed: ${e.totalFiles} files, ${formatBytes(e.totalBytes)}${_summary(e.totalBytes)}');
+        _log(
+          _tag,
+          'batch ${e.batch} completed: ${e.totalFiles} files, ${formatBytes(e.totalBytes)}${_summary(e.totalBytes)}',
+        );
         _endBatch();
       case rust.EventKind.batchFailed:
-        _log(_tag, 'batch ${e.batch} failed: ${e.text}');
+        _log(_tag, 'batch ${e.batch} failed (${e.failure?.name}): ${e.text}');
         _endBatch();
       case rust.EventKind.connectionLost:
         _lostAt = DateTime.now();
@@ -63,8 +66,12 @@ class Diagnostics {
         _log(_tag, 'disconnected after ${e.doneFiles} files, ${formatBytes(e.doneBytes)}');
         close();
       case rust.EventKind.failed:
-        _log(_tag, 'failed: ${e.text}');
+        _log(_tag, 'failed (${e.failure?.name}): ${e.text}');
         close();
+      case rust.EventKind.requestWithdrawn:
+        _log(_tag, 'the phone asking to connect left before an answer');
+      case rust.EventKind.note:
+        _log(_tag, e.text ?? '');
       case rust.EventKind.ready:
         break;
     }
@@ -83,8 +90,8 @@ class Diagnostics {
     final after = connecting != null
         ? ' in ${_seconds(now.difference(connecting))}'
         : lost != null
-            ? ' again, ${_seconds(now.difference(lost))} after the link dropped'
-            : '';
+        ? ' again, ${_seconds(now.difference(lost))} after the link dropped'
+        : '';
     _connecting = null;
     _lostAt = null;
     _log(_tag, 'connected to ${e.text}$via$after');

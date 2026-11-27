@@ -12,6 +12,7 @@ use std::task::{Context, Poll};
 
 use futures::FutureExt;
 use nearvolt_core::protocol::FileEntry;
+use nearvolt_core::transfer::FailureKind;
 use nearvolt_core::{
     connect, send, Approver, Command, Event, EventSender, FileSet, Identity, Link, MuxLink, Peer, RawStream,
     ReceiveOptions, Receiver, SendOptions, SourceOpener, Stats, Summary, TcpLink,
@@ -293,6 +294,136 @@ async fn an_unreadable_file_fails_its_batch_and_the_connection_goes_on() {
     let leftovers: Vec<String> = files_under(&dst).into_iter().filter(|p| p.ends_with(".nvpart")).collect();
     assert_eq!(leftovers, Vec::<String>::new(), "no half file is left");
     assert!(!dst.join("second.bin").exists());
+}
+
+/// A file the receiving phone can't save fails its own batch and says why; the
+/// sender doesn't retry forever and the connection goes on.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_file_the_receiver_cannot_save_fails_only_its_batch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (src, dst) = (tmp.path().join("src"), tmp.path().join("dst"));
+    sample_files(&src);
+    fs::write(src.join("second.txt"), b"after the failure").unwrap();
+    // A file where the album's folder should go, so nothing in it can be saved.
+    fs::create_dir_all(&dst).unwrap();
+    fs::write(dst.join("album"), b"in the way").unwrap();
+    let rx = receiver(&dst, false);
+    let peer = Peer::from_ticket(&rx.ticket());
+    let (receiver_events, mut receiver_seen) = mpsc::unbounded_channel();
+
+    let (commands, queue) = mpsc::unbounded_channel();
+    commands.send(Command::Send(FileSet::Paths(vec![src.join("album")]))).unwrap();
+    commands.send(Command::Send(FileSet::Paths(vec![src.join("second.txt")]))).unwrap();
+    drop(commands);
+    let (events_tx, mut events_rx) = mpsc::unbounded_channel();
+    let identity = Identity::generate().unwrap();
+    let options = SendOptions::default();
+    let sending = connect(&identity, &peer, &options, queue, Arc::new(Stats::default()), Some(events_tx));
+    let receiving = rx.run(approve_all(Arc::default()), Arc::new(Stats::default()), Some(receiver_events));
+    let (received, sent) =
+        tokio::time::timeout(std::time::Duration::from_secs(20), async { tokio::join!(receiving, sending) })
+            .await
+            .expect("the connection should finish, not retry for ever");
+    received.unwrap();
+    assert_eq!(sent.unwrap().files, 1, "only the second batch was sent");
+
+    let failures = |events: Vec<Event>| -> Vec<(u32, FailureKind)> {
+        events
+            .into_iter()
+            .filter_map(|e| match e {
+                Event::BatchFailed { batch, kind, .. } => Some((batch, kind)),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(failures(drain(&mut events_rx)), vec![(0, FailureKind::CannotSaveFile)]);
+    assert_eq!(failures(drain(&mut receiver_seen)), vec![(0, FailureKind::CannotSaveFile)]);
+    assert_eq!(fs::read(dst.join("second.txt")).unwrap(), b"after the failure");
+}
+
+/// While the user is deciding about one phone, another one waits its turn instead
+/// of taking the question over; and the question is withdrawn if its phone leaves.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_second_phone_is_turned_away_while_one_is_being_decided() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (src, dst) = (tmp.path().join("src"), tmp.path().join("dst"));
+    sample_files(&src);
+    let rx = receiver(&dst, true);
+    let first = Peer::from_ticket(&rx.ticket().public());
+    let second = Peer::from_ticket(&rx.ticket().public());
+    let asked = Arc::new(AtomicU32::new(0));
+    let count = asked.clone();
+    let approve: Approver = Arc::new(move |_| {
+        count.fetch_add(1, Ordering::SeqCst);
+        async {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            true
+        }
+        .boxed()
+    });
+
+    let late = async {
+        tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+        send_album(&second, &src, None).await
+    };
+    let (received, sent, turned_away) =
+        tokio::join!(rx.run(approve, Arc::new(Stats::default()), None), send_album(&first, &src, None), late);
+    received.unwrap();
+    sent.unwrap();
+    let error = turned_away.expect_err("the second phone must not get in");
+    assert_eq!(nearvolt_core::transfer::classify(&error), FailureKind::Busy);
+    assert_eq!(asked.load(Ordering::SeqCst), 1, "the user was asked about one phone only");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_question_is_withdrawn_when_the_phone_asking_leaves() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (src, dst) = (tmp.path().join("src"), tmp.path().join("dst"));
+    sample_files(&src);
+    let rx = Arc::new(receiver(&dst, true));
+    let peer = Peer::from_ticket(&rx.ticket().public());
+    let (receiver_events, mut seen) = mpsc::unbounded_channel();
+    // Nobody ever answers.
+    let approve: Approver = Arc::new(|_| futures::future::pending().boxed());
+    let running = rx.clone();
+    let receiving =
+        tokio::spawn(async move { running.run(approve, Arc::new(Stats::default()), Some(receiver_events)).await });
+
+    let sending = tokio::spawn(async move { send_album(&peer, &tmp.path().join("src"), None).await });
+    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+    sending.abort();
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    rx.disconnect();
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), receiving).await;
+
+    assert!(drain(&mut seen).iter().any(|e| matches!(e, Event::RequestWithdrawn { .. })));
+}
+
+/// Connections that never get past the handshake are ignored, however many; they
+/// can't end Receive, and a real sender still gets through afterwards.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_flood_of_junk_connections_does_not_end_receive() {
+    use tokio::io::AsyncWriteExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let (src, dst) = (tmp.path().join("src"), tmp.path().join("dst"));
+    sample_files(&src);
+    let rx = receiver(&dst, false);
+    let peer = Peer::from_ticket(&rx.ticket());
+    let addr = rx.local_addr();
+
+    let junk = async {
+        for _ in 0..80 {
+            if let Ok(mut stream) = tokio::net::TcpStream::connect(addr).await {
+                let _ = stream.write_all(b"GET / HTTP/1.1\r\n\r\nthis is not a handshake").await;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        send_album(&peer, &src, None).await
+    };
+    let (received, sent) = tokio::join!(rx.run(approve_all(Arc::default()), Arc::new(Stats::default()), None), junk);
+    received.expect("Receive must survive the junk");
+    sent.unwrap();
+    assert_same(&src.join("album"), &dst.join("album"));
 }
 
 fn files_under(dir: &Path) -> Vec<String> {

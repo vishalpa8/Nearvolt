@@ -1,4 +1,4 @@
-# Nearvolt wire protocol, version 3
+# Nearvolt wire protocol, version 4
 
 ## Transport
 
@@ -90,7 +90,7 @@ sender                                               receiver
   separators. `modified` is milliseconds since the Unix epoch, when known.
 - A data stream is accepted only if its session matches the current control
   stream and its certificate matches the sender's.
-- While a phone is connected, the receiver turns away every other sender.
+- While a phone is connected, the receiver turns away every other sender. While the\n  user is deciding about one phone, a different one is turned away too (eject\n  with kind usy); the same phone asking again, or a tap, takes over. Every\n  eject carries a kind (declined, usy, old_version, disk_full, ...), so\n  the app can say what happened in plain words instead of showing the reason text.\n- Connections that fail the handshake are ignored and counted, never fatal: at\n  most 32 handshakes run at once and the rest are dropped, so a flood of junk\n  connections can't end Receive or a transfer in progress.
 - Eight seconds without a message on the control stream means the link is
   gone; shorter pauses, such as a phone's Wi-Fi briefly stalling, are left to
   TCP. The sender reconnects through the same address, with backoff from 100 ms
@@ -106,7 +106,7 @@ sender                                               receiver
   Complete, verified files stay. A dropped link, or a phone that vanishes
   without saying `bye`, is not deliberate: the half-received file is kept so
   the transfer can resume.
-- A batch the receiver can't take, for example for lack of space, is rejected
+- A batch the receiver can't go on with after accepting it, because of full storage,\n  a file it can't save, or a file that keeps arriving damaged (3 tries), is ended\n  with `abort {batch, kind}`: the receiver throws away the batch, both phones report\n  it as failed with the kind, and the connection stays. Free space is checked when a\n  batch opens (counting only what's still missing) and again before each file.\n- A batch the receiver can't take, for example for lack of space, is rejected
   on its own; the connection stays open for the next one.
 - A batch the sender can't finish, because a file can't be read any more, is
   ended with `cancel {batch}`: the receiver throws away what it has of that

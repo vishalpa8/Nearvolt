@@ -167,7 +167,11 @@ pub fn listen_tcp(addr: SocketAddr, streams: mpsc::Sender<RawStream>) -> Result<
     let local = listener.local_addr()?;
     let task = tokio::spawn(async move {
         loop {
-            let Ok((tcp, _)) = listener.accept().await else { continue };
+            let Ok((tcp, _)) = listener.accept().await else {
+                // Out of file descriptors and the like: wait instead of spinning.
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            };
             tune(&tcp);
             if streams.send(Box::new(tcp)).await.is_err() {
                 break;

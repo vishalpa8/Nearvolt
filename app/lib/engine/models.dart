@@ -162,7 +162,10 @@ enum LinkPhase {
 
 /// A phone asking to connect, on the receiving side.
 class Request {
-  const Request({required this.from, this.code});
+  const Request({required this.id, required this.from, this.code});
+
+  /// Tells requests apart, so an answer reaches the question the user was shown.
+  final int id;
 
   final String from;
 

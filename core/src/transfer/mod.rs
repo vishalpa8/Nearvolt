@@ -9,9 +9,43 @@ use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+/// What went wrong, in terms an app can turn into a plain sentence. The text of
+/// an error is for the log; this is for the screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FailureKind {
+    /// The receiving phone has no room for the files.
+    DiskFull,
+    /// The receiving phone couldn't save a file.
+    CannotSaveFile,
+    /// A file couldn't be read on the sending phone, or changed while it was sent.
+    CannotReadFile,
+    /// A file kept arriving damaged.
+    FileDamaged,
+    /// The receiver's user said no.
+    Declined,
+    /// The receiver is connected to another phone.
+    Busy,
+    /// The other phone stopped answering and didn't come back.
+    OtherPhoneGone,
+    /// The first connection couldn't be made.
+    CannotReach,
+    /// The two phones run versions of Nearvolt that can't talk to each other.
+    OldVersion,
+    /// Too many files for one offer, or some other limit.
+    TooBig,
+    Other,
+}
+
 /// An error that retrying won't fix, such as the receiver declining.
 #[derive(Debug)]
-pub struct Fatal(pub String);
+pub struct Fatal(pub String, pub FailureKind);
+
+impl Fatal {
+    pub fn new(kind: FailureKind, message: impl Into<String>) -> Self {
+        Self(message.into(), kind)
+    }
+}
 
 impl fmt::Display for Fatal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -23,6 +57,29 @@ impl std::error::Error for Fatal {}
 
 pub fn is_fatal(error: &anyhow::Error) -> bool {
     error.downcast_ref::<Fatal>().is_some()
+}
+
+/// The kind of failure behind `error`: the one a [`Fatal`] carries, or one read
+/// from the underlying I/O error.
+pub fn classify(error: &anyhow::Error) -> FailureKind {
+    for cause in error.chain() {
+        if let Some(fatal) = cause.downcast_ref::<Fatal>() {
+            return fatal.1;
+        }
+        if let Some(io) = cause.downcast_ref::<std::io::Error>() {
+            return match io.kind() {
+                std::io::ErrorKind::StorageFull | std::io::ErrorKind::QuotaExceeded => FailureKind::DiskFull,
+                std::io::ErrorKind::PermissionDenied
+                | std::io::ErrorKind::NotFound
+                | std::io::ErrorKind::AlreadyExists
+                | std::io::ErrorKind::InvalidInput
+                | std::io::ErrorKind::InvalidData
+                | std::io::ErrorKind::WriteZero => FailureKind::CannotSaveFile,
+                _ => FailureKind::Other,
+            };
+        }
+    }
+    FailureKind::Other
 }
 
 /// Live counters a UI can poll as often as it likes.
@@ -135,14 +192,25 @@ pub enum Event {
     BatchFailed {
         batch: u32,
         reason: String,
+        kind: FailureKind,
     },
     /// The link dropped and is being reconnected; once per drop, and never
     /// before the first `Connected`.
     ConnectionLost {
         reason: String,
+        kind: FailureKind,
     },
     /// The other device ended the connection.
     PeerLeft,
+    /// Receiver: the phone whose request `id` was shown left before an answer,
+    /// so the question no longer applies.
+    RequestWithdrawn {
+        id: u64,
+    },
+    /// Something worth a line in the log that isn't an error.
+    Note {
+        text: String,
+    },
 }
 
 pub type EventSender = tokio::sync::mpsc::UnboundedSender<Event>;

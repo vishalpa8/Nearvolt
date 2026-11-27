@@ -48,7 +48,9 @@ abstract interface class TransferEngine {
   Stream<Connection> receive();
 
   /// Answers a phone asking to connect.
-  void answer({required bool accept});
+  /// Returns false when that question is gone, for example because the phone
+  /// asking has already left.
+  bool answer(int requestId, {required bool accept});
 
   /// Ends the open connection; the other phone is told.
   void disconnect();

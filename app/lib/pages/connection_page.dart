@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:material_ui/material_ui.dart';
 
 import '../engine/engine.dart';
+import '../engine/messages.dart';
 import '../engine/models.dart';
 import '../theme.dart';
 import '../ui/atoms.dart';
@@ -204,7 +205,7 @@ class _ConnectionPageState extends State<ConnectionPage> {
       LinkPhase.connecting || LinkPhase.waiting => (Icons.link_rounded, 'Setting up a direct, encrypted link.'),
       LinkPhase.reconnecting => (Icons.sync_rounded, 'Nothing is lost: it picks up where it stopped.'),
       LinkPhase.ended => (Icons.link_off_rounded, 'Everything that finished was verified and saved.'),
-      LinkPhase.failed => (Icons.error_outline_rounded, c.error ?? 'The connection failed.'),
+      LinkPhase.failed => (Icons.error_outline_rounded, c.error ?? friendlyFailure(null)),
       LinkPhase.connected when widget.sending => (
         Icons.add_circle_outline_rounded,
         'Add files to send them to ${c.peer}.',

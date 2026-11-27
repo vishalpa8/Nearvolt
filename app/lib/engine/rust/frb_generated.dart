@@ -81,7 +81,10 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
 }
 
 abstract class RustLibApi extends BaseApi {
-  void crateApiAnswerRequest({required bool accept});
+  bool crateApiAnswerRequest({
+    required PlatformInt64 requestId,
+    required bool accept,
+  });
 
   void crateApiAttachUsb({required int fd, required bool host});
 
@@ -129,27 +132,33 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   });
 
   @override
-  void crateApiAnswerRequest({required bool accept}) {
+  bool crateApiAnswerRequest({
+    required PlatformInt64 requestId,
+    required bool accept,
+  }) {
     return handler.executeSync(
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_i_64(requestId, serializer);
           sse_encode_bool(accept, serializer);
           return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 1)!;
         },
         codec: SseCodec(
-          decodeSuccessData: sse_decode_unit,
+          decodeSuccessData: sse_decode_bool,
           decodeErrorData: null,
         ),
         constMeta: kCrateApiAnswerRequestConstMeta,
-        argValues: [accept],
+        argValues: [requestId, accept],
         apiImpl: this,
       ),
     );
   }
 
-  TaskConstMeta get kCrateApiAnswerRequestConstMeta =>
-      const TaskConstMeta(debugName: "answer_request", argNames: ["accept"]);
+  TaskConstMeta get kCrateApiAnswerRequestConstMeta => const TaskConstMeta(
+    debugName: "answer_request",
+    argNames: ["requestId", "accept"],
+  );
 
   @override
   void crateApiAttachUsb({required int fd, required bool host}) {
@@ -509,6 +518,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  FailureKind dco_decode_box_autoadd_failure_kind(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_failure_kind(raw);
+  }
+
+  @protected
   PlatformInt64 dco_decode_box_autoadd_i_64(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_i_64(raw);
@@ -524,6 +539,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   EventKind dco_decode_event_kind(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return EventKind.values[raw as int];
+  }
+
+  @protected
+  FailureKind dco_decode_failure_kind(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return FailureKind.values[raw as int];
   }
 
   @protected
@@ -554,6 +575,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   String? dco_decode_opt_String(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_String(raw);
+  }
+
+  @protected
+  FailureKind? dco_decode_opt_box_autoadd_failure_kind(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_failure_kind(raw);
   }
 
   @protected
@@ -612,18 +639,20 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TransferEvent dco_decode_transfer_event(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 9)
-      throw Exception('unexpected arr length: expect 9 but see ${arr.length}');
+    if (arr.length != 11)
+      throw Exception('unexpected arr length: expect 11 but see ${arr.length}');
     return TransferEvent(
       kind: dco_decode_event_kind(arr[0]),
       text: dco_decode_opt_String(arr[1]),
       code: dco_decode_opt_String(arr[2]),
       route: dco_decode_opt_String(arr[3]),
-      batch: dco_decode_i_64(arr[4]),
-      doneBytes: dco_decode_i_64(arr[5]),
-      totalBytes: dco_decode_i_64(arr[6]),
-      doneFiles: dco_decode_i_64(arr[7]),
-      totalFiles: dco_decode_i_64(arr[8]),
+      failure: dco_decode_opt_box_autoadd_failure_kind(arr[4]),
+      requestId: dco_decode_i_64(arr[5]),
+      batch: dco_decode_i_64(arr[6]),
+      doneBytes: dco_decode_i_64(arr[7]),
+      totalBytes: dco_decode_i_64(arr[8]),
+      doneFiles: dco_decode_i_64(arr[9]),
+      totalFiles: dco_decode_i_64(arr[10]),
     );
   }
 
@@ -687,6 +716,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  FailureKind sse_decode_box_autoadd_failure_kind(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_failure_kind(deserializer));
+  }
+
+  @protected
   PlatformInt64 sse_decode_box_autoadd_i_64(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_i_64(deserializer));
@@ -703,6 +740,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_i_32(deserializer);
     return EventKind.values[inner];
+  }
+
+  @protected
+  FailureKind sse_decode_failure_kind(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return FailureKind.values[inner];
   }
 
   @protected
@@ -742,6 +786,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_String(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  FailureKind? sse_decode_opt_box_autoadd_failure_kind(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_failure_kind(deserializer));
     } else {
       return null;
     }
@@ -813,6 +870,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_text = sse_decode_opt_String(deserializer);
     var var_code = sse_decode_opt_String(deserializer);
     var var_route = sse_decode_opt_String(deserializer);
+    var var_failure = sse_decode_opt_box_autoadd_failure_kind(deserializer);
+    var var_requestId = sse_decode_i_64(deserializer);
     var var_batch = sse_decode_i_64(deserializer);
     var var_doneBytes = sse_decode_i_64(deserializer);
     var var_totalBytes = sse_decode_i_64(deserializer);
@@ -823,6 +882,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       text: var_text,
       code: var_code,
       route: var_route,
+      failure: var_failure,
+      requestId: var_requestId,
       batch: var_batch,
       doneBytes: var_doneBytes,
       totalBytes: var_totalBytes,
@@ -900,6 +961,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_box_autoadd_failure_kind(
+    FailureKind self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_failure_kind(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_i_64(
     PlatformInt64 self,
     SseSerializer serializer,
@@ -919,6 +989,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void sse_encode_event_kind(EventKind self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_failure_kind(FailureKind self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.index, serializer);
   }
@@ -964,6 +1040,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_String(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_failure_kind(
+    FailureKind? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_failure_kind(self, serializer);
     }
   }
 
@@ -1028,6 +1117,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_String(self.text, serializer);
     sse_encode_opt_String(self.code, serializer);
     sse_encode_opt_String(self.route, serializer);
+    sse_encode_opt_box_autoadd_failure_kind(self.failure, serializer);
+    sse_encode_i_64(self.requestId, serializer);
     sse_encode_i_64(self.batch, serializer);
     sse_encode_i_64(self.doneBytes, serializer);
     sse_encode_i_64(self.totalBytes, serializer);

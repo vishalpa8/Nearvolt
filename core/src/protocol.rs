@@ -6,8 +6,10 @@ use anyhow::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
+use crate::transfer::FailureKind;
+
 pub const ALPN: &[u8] = b"nearvolt/1";
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// Both sides send a control message at least this often.
 pub const HEARTBEAT_INTERVAL: Duration = Duration::from_millis(500);
@@ -86,6 +88,8 @@ pub enum Control {
     Ready,
     Reject {
         reason: String,
+        #[serde(default)]
+        kind: Option<FailureKind>,
     },
     /// A batch of files. Batches are numbered from 0 within a connection.
     Offer {
@@ -120,6 +124,12 @@ pub enum Control {
     /// any more. The receiver throws away what it has of it; the connection stays.
     Cancel {
         batch: u32,
+    },
+    /// The receiver can't go on with this batch, for example because its storage
+    /// is full. The sender drops the batch; the connection stays.
+    Abort {
+        batch: u32,
+        kind: FailureKind,
     },
     /// Ends the connection on purpose; the other side stops reconnecting.
     Bye,

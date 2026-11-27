@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{ensure, Context, Result};
 
 use crate::protocol::{FileEntry, Offer, MAX_FILES};
-use crate::transfer::Fatal;
+use crate::transfer::{FailureKind, Fatal};
 
 /// Opens files the platform gave access to, such as Android picker results. Each
 /// file is opened only when the sender reaches it, so even huge selections never
@@ -53,7 +53,8 @@ impl Manifest {
     /// Opens file `index` and checks it hasn't changed since it was offered.
     pub fn open(&self, index: u32) -> Result<File> {
         let entry = &self.offer.files[index as usize];
-        let unreadable = |e: io::Error| Fatal(format!("can't read {}: {e}", entry.path));
+        let unreadable =
+            |e: io::Error| Fatal::new(FailureKind::CannotReadFile, format!("can't read {}: {e}", entry.path));
         let (file, check_time) = match &self.sources {
             Sources::Paths(paths) => (File::open(&paths[index as usize]).map_err(unreadable)?, true),
             Sources::Opener(opener) => (opener.open(index).map_err(unreadable)?, false),
@@ -62,7 +63,8 @@ impl Manifest {
         let changed =
             meta.len() != entry.size || (check_time && meta.modified().ok().and_then(unix_millis) != entry.modified);
         if changed {
-            return Err(Fatal(format!("{} changed while it was being sent", entry.path)).into());
+            let message = format!("{} changed while it was being sent", entry.path);
+            return Err(Fatal::new(FailureKind::CannotReadFile, message).into());
         }
         Ok(file)
     }

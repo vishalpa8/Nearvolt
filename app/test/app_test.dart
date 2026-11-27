@@ -104,7 +104,9 @@ void main() {
     engine.installing.add(1);
     await tester.pump();
 
-    engine.installing.addError(PlatformException(code: 'install', message: "Samsung's Auto Blocker stopped the update."));
+    engine.installing.addError(
+      PlatformException(code: 'install', message: "Samsung's Auto Blocker stopped the update."),
+    );
     await tester.pump();
     await tester.pump();
     expect(find.text("Samsung's Auto Blocker stopped the update."), findsOneWidget);
@@ -320,6 +322,28 @@ void main() {
     expect(find.text('Disconnect from $rahulName?'), findsNothing);
   });
 
+  testWidgets('the question closes by itself when the phone asking leaves, and nothing is answered', (tester) async {
+    await open(tester);
+    await go(tester, 'Receive');
+    const asking = Connection(
+      ticket: 'NV1ABC',
+      phase: LinkPhase.waiting,
+      peer: rahulName,
+      request: Request(id: 3, from: rahulName, code: '4821'),
+    );
+    engine.receiving!.add(asking);
+    await tester.pumpAndSettle();
+    expect(find.text('wants to connect and send you files'), findsOneWidget);
+
+    // The engine says the phone is gone: the request is cleared.
+    engine.receiving!.add(const Connection(ticket: 'NV1ABC'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('wants to connect and send you files'), findsNothing);
+    expect(find.text('$rahulName cancelled.'), findsOneWidget);
+    expect(engine.answered, isNull);
+  });
+
   testWidgets('accepts one connection, receives every batch, then opens Receive again', (tester) async {
     await open(tester);
     await go(tester, 'Receive');
@@ -335,7 +359,7 @@ void main() {
       waiting.copyWith(
         phase: LinkPhase.waiting,
         peer: rahulName,
-        request: const Request(from: rahulName, code: '4821'),
+        request: const Request(id: 7, from: rahulName, code: '4821'),
       ),
     );
     await tester.pumpAndSettle();
@@ -345,6 +369,7 @@ void main() {
     await tester.tap(find.text('Accept'));
     await tester.pumpAndSettle();
     expect(engine.answered, isTrue);
+    expect(engine.answeredId, 7, reason: 'the answer names the question the user saw');
 
     engine.receiving!.add(connected);
     await tester.pumpAndSettle();

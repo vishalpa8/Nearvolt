@@ -34,6 +34,7 @@ class FakeEngine implements TransferEngine {
   NearbyDevice? connectedTo;
   final queued = <Selection>[];
   bool? answered;
+  int? answeredId;
   int disconnects = 0;
   int discoveries = 0;
   int receiveSessions = 0;
@@ -105,7 +106,11 @@ class FakeEngine implements TransferEngine {
   }
 
   @override
-  void answer({required bool accept}) => answered = accept;
+  bool answer(int requestId, {required bool accept}) {
+    answered = accept;
+    answeredId = requestId;
+    return true;
+  }
 
   @override
   void disconnect() => disconnects++;

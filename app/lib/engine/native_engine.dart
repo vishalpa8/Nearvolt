@@ -3,6 +3,7 @@ import 'dart:async';
 import '../ui/format.dart';
 import 'diagnostics.dart';
 import 'engine.dart';
+import 'messages.dart';
 import 'models.dart';
 import 'platform.g.dart';
 import 'rust/api.dart' as rust;
@@ -204,6 +205,7 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
     final live = _sending = _Live(
       Connection(peer: to.name, link: to.link),
       onChange: out.add,
+      receiving: false,
     );
     final previous = _sendClosed;
     final closed = Completer<void>();
@@ -243,7 +245,7 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
         }
       } on Object catch (e) {
         _platform.log('send', 'connection failed: $e');
-        live.emit(live.state.copyWith(phase: LinkPhase.failed, error: '$e'));
+        live.emit(live.state.copyWith(phase: LinkPhase.failed, error: friendlyPlatform(e)));
       } finally {
         diagnostics.close();
         await _platform.stopTransferService();
@@ -287,7 +289,7 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
     var cancelled = false;
 
     Future<void> run() async {
-      final live = _Live(const Connection(), onChange: out.add);
+      final live = _Live(const Connection(), onChange: out.add, receiving: true);
       final diagnostics = Diagnostics(_platform, 'receive', sending: false);
       var serving = false;
       try {
@@ -320,7 +322,10 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
           _notify(live.state);
         }
       } on Object catch (e) {
-        if (!cancelled) _platform.log('receive', 'stopped: $e');
+        if (!cancelled) {
+          _platform.log('receive', 'stopped: $e');
+          live.emit(live.state.copyWith(phase: LinkPhase.failed, error: friendlyPlatform(e)));
+        }
       } finally {
         diagnostics.close();
         try {
@@ -347,9 +352,10 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
   }
 
   @override
-  void answer({required bool accept}) {
-    rust.answerRequest(accept: accept);
-    _platform.log('receive', accept ? 'accepted' : 'declined');
+  bool answer(int requestId, {required bool accept}) {
+    final delivered = rust.answerRequest(requestId: requestId, accept: accept);
+    _platform.log('receive', delivered ? (accept ? 'accepted' : 'declined') : 'answer came too late: they had left');
+    return delivered;
   }
 
   @override
@@ -400,10 +406,14 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
 /// A connection in progress: turns engine events into snapshots for the UI,
 /// with a smoothed speed.
 class _Live {
-  _Live(this.state, {this.onChange});
+  _Live(this.state, {this.onChange, required this.receiving});
 
   Connection state;
   final void Function(Connection)? onChange;
+
+  /// Whether this phone is the receiving one: "no space" means a different phone.
+  final bool receiving;
+  var _everConnected = false;
   int queued = 0;
   DateTime? _speedAt;
   int _speedBytes = 0;
@@ -421,27 +431,41 @@ class _Live {
       rust.EventKind.request => s.copyWith(
         phase: LinkPhase.waiting,
         peer: e.text,
-        request: Request(from: e.text ?? 'A nearby phone', code: e.code),
+        request: Request(id: e.requestId, from: e.text ?? 'A nearby phone', code: e.code),
       ),
+      // The phone that was asking left; the question no longer applies.
+      rust.EventKind.requestWithdrawn =>
+        s.request?.id == e.requestId ? s.copyWith(phase: LinkPhase.connecting, peer: '', keepRequest: false) : s,
+      rust.EventKind.note => s,
       rust.EventKind.code => s.copyWith(phase: LinkPhase.waiting, code: e.code),
-      rust.EventKind.connected => s.copyWith(
-        phase: LinkPhase.connected,
-        peer: e.text,
-        keepCode: false,
-        keepRequest: false,
-      ),
+      rust.EventKind.connected => _connected(s, e),
       rust.EventKind.started => _start(s, e),
       rust.EventKind.progress => s.moving == null ? s : s.copyWith(progress: _progress(e)),
       rust.EventKind.completed => s.copyWith(batches: _mark(s.batches, e.batch, BatchState.done), keepProgress: false),
       rust.EventKind.batchFailed => s.copyWith(
-        batches: _mark(s.batches, e.batch, BatchState.failed, error: e.text),
+        batches: _mark(
+          s.batches,
+          e.batch,
+          BatchState.failed,
+          error: friendlyFailure(e.failure, peer: s.peer, receiving: receiving),
+        ),
         keepProgress: false,
       ),
-      rust.EventKind.connectionLost => s.copyWith(phase: LinkPhase.reconnecting),
+      // Only a connection that was set up has anything to reconnect.
+      rust.EventKind.connectionLost => _everConnected ? s.copyWith(phase: LinkPhase.reconnecting) : s,
       rust.EventKind.peerLeft => s.copyWith(endedByPeer: true),
       rust.EventKind.disconnected => s.copyWith(phase: LinkPhase.ended, keepProgress: false),
-      rust.EventKind.failed => s.copyWith(phase: LinkPhase.failed, error: e.text, keepProgress: false),
+      rust.EventKind.failed => s.copyWith(
+        phase: LinkPhase.failed,
+        error: friendlyFailure(e.failure, peer: s.peer, receiving: receiving),
+        keepProgress: false,
+      ),
     });
+  }
+
+  Connection _connected(Connection s, rust.TransferEvent e) {
+    _everConnected = true;
+    return s.copyWith(phase: LinkPhase.connected, peer: e.text, keepCode: false, keepRequest: false);
   }
 
   /// The sender already listed the batch when it was queued; the receiver lists

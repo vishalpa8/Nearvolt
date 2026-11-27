@@ -5,17 +5,18 @@
 use std::fs;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use futures::future::BoxFuture;
 use tokio::io::{AsyncReadExt, ReadHalf};
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, watch, Semaphore};
 use tokio::task::JoinSet;
 
 use super::state::{plan_files, sweep_stale, transfer_id, TransferState};
-use super::{emit, is_fatal, Event, EventSender, Fatal, Stats, Summary};
+use super::{classify, emit, is_fatal, Event, EventSender, FailureKind, Fatal, Stats, Summary};
 use crate::identity::{Fingerprint, Identity};
 use crate::pairing::{self, constant_time_eq, truncate_utf8, Secret, Ticket, MAX_NAME_LEN};
 use crate::protocol::{
@@ -26,7 +27,10 @@ use crate::transport::{listen_tcp, Acceptor, RawStream, TlsStream};
 use crate::util::AbortOnDrop;
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
-const MAX_AUTH_FAILURES: u32 = 20;
+/// How many connections may be in their handshake at once. Anything beyond is
+/// dropped, so a flood of junk connections can't use up the phone, and a
+/// transfer in progress never depends on how many there were.
+const MAX_HANDSHAKES: usize = 32;
 const STATE_DIR: &str = ".nearvolt";
 /// A connection that dropped and isn't back after this long is ended on both phones.
 const RECONNECT_WAIT: Duration = Duration::from_secs(5 * 60);
@@ -54,6 +58,8 @@ impl ReceiveOptions {
 /// A phone asking to connect.
 #[derive(Clone, Debug)]
 pub struct Request {
+    /// Tells requests apart, so an answer reaches the one the user was shown.
+    pub id: u64,
     pub sender_name: String,
     /// Present when the sender paired without the ticket secret; the user should
     /// check the sender shows the same code before accepting.
@@ -149,6 +155,8 @@ impl Receiver {
             stats,
             events: events.clone(),
             trusted: Mutex::new(None),
+            deciding: Mutex::new(None),
+            next_request: AtomicU64::new(1),
             active: tokio::sync::Mutex::new(None),
             totals: Mutex::new((0, 0)),
             started: Instant::now(),
@@ -156,8 +164,10 @@ impl Receiver {
         let mut incoming = self.streams_rx.lock().await;
         let mut ending = self.ending.subscribe();
         let (auth_tx, mut auth_rx) = mpsc::channel::<Option<Authed>>(32);
+        let handshakes = Arc::new(Semaphore::new(MAX_HANDSHAKES));
+        let ignored = Arc::new(AtomicU32::new(0));
+        let mut noted = tokio::time::interval(Duration::from_secs(30));
         let mut current: Option<Current> = None;
-        let mut failures = 0;
         // When a connection that was working dropped; cleared when the sender is back.
         let mut lost_since: Option<Instant> = None;
         loop {
@@ -165,24 +175,40 @@ impl Receiver {
             tokio::select! {
                 // The sender had its chance to come back; stop waiting and listening.
                 () = tokio::time::sleep(still_waiting.unwrap_or_default()), if still_waiting.is_some() && current.is_none() => {
-                    return Err(Fatal("The other phone didn't come back after the link dropped.".into()).into());
+                    return Err(Fatal::new(
+                        FailureKind::OtherPhoneGone,
+                        "The other phone didn't come back after the link dropped.",
+                    )
+                    .into());
                 }
                 Some(raw) = incoming.recv() => {
+                    // Too many at once: drop it. Counted, and reported now and then.
+                    let Ok(permit) = handshakes.clone().try_acquire_owned() else {
+                        ignored.fetch_add(1, Ordering::Relaxed);
+                        continue;
+                    };
                     let tx = auth_tx.clone();
                     let (acceptor, secrets, code) =
                         (self.acceptor.clone(), [self.secret, self.tap_secret], self.options.allow_code_pairing);
+                    let ignored = ignored.clone();
                     tokio::spawn(async move {
-                        let _ = tx.send(authenticate(raw, acceptor, secrets, code).await.ok()).await;
+                        let authed = authenticate(raw, acceptor, secrets, code).await.ok();
+                        if authed.is_none() {
+                            ignored.fetch_add(1, Ordering::Relaxed);
+                        }
+                        drop(permit);
+                        let _ = tx.send(authed).await;
                     });
                 }
+                _ = noted.tick() => {
+                    let n = ignored.swap(0, Ordering::Relaxed);
+                    if n > 0 {
+                        emit(&events, Event::Note { text: format!("{n} unknown connection attempts were ignored") });
+                    }
+                }
                 Some(authed) = auth_rx.recv() => {
-                    let Some(mut authed) = authed else {
-                        failures += 1;
-                        if failures >= MAX_AUTH_FAILURES {
-                            return Err(Fatal("Too many failed pairing attempts. Open Receive again.".into()).into());
-                        }
-                        continue;
-                    };
+                    // Failed handshakes are only counted; they never end Receive.
+                    let Some(mut authed) = authed else { continue };
                     match authed.session {
                         Some(session) => {
                             if let Some(c) = current.as_ref().filter(|c| c.session == session && c.sender == authed.sender) {
@@ -192,7 +218,16 @@ impl Receiver {
                         None => {
                             let trusted = *shared.trusted.lock().unwrap();
                             if trusted.is_some_and(|f| f != authed.sender) {
-                                let busy = reject("This phone is connected to another device.");
+                                let busy = reject(FailureKind::Busy, "This phone is connected to another device.");
+                                tokio::spawn(async move { write_msg(&mut authed.stream, &busy).await });
+                                continue;
+                            }
+                            // One decision at a time: while the user is deciding about one
+                            // phone, a different one waits its turn. The same phone asking
+                            // again, or a tap, takes over.
+                            let deciding = *shared.deciding.lock().unwrap();
+                            if deciding.is_some_and(|f| f != authed.sender) && !authed.tapped {
+                                let busy = reject(FailureKind::Busy, "Another phone is asking to connect.");
                                 tokio::spawn(async move { write_msg(&mut authed.stream, &busy).await });
                                 continue;
                             }
@@ -221,7 +256,7 @@ impl Receiver {
                             if shared.trusted.lock().unwrap().is_some() {
                                 lost_since.get_or_insert_with(Instant::now);
                             }
-                            emit(&events, Event::ConnectionLost { reason: format!("{e:#}") });
+                            emit(&events, Event::ConnectionLost { reason: format!("{e:#}"), kind: FailureKind::OtherPhoneGone });
                         }
                     }
                 }
@@ -242,6 +277,9 @@ struct Shared {
     events: Option<EventSender>,
     /// The sender the user accepted. It reconnects without being asked about again.
     trusted: Mutex<Option<Fingerprint>>,
+    /// The sender the user is being asked about right now, if any.
+    deciding: Mutex<Option<Fingerprint>>,
+    next_request: AtomicU64,
     /// The batch being received. It outlives a dropped connection, so the sender
     /// resumes it after reconnecting.
     active: tokio::sync::Mutex<Option<Active>>,
@@ -310,7 +348,7 @@ async fn authenticate(raw: RawStream, acceptor: Acceptor, secrets: [Secret; 2], 
         bail!("expected hello");
     };
     if version != PROTOCOL_VERSION {
-        let _ = write_msg(&mut stream, &reject("Update Nearvolt on both devices.")).await;
+        let _ = write_msg(&mut stream, &reject(FailureKind::OldVersion, "Update Nearvolt on both devices.")).await;
         bail!("unsupported protocol version {version}");
     }
     let tapped = offered.is_some_and(|s| constant_time_eq(&s, &secrets[1]));
@@ -321,7 +359,8 @@ async fn authenticate(raw: RawStream, acceptor: Acceptor, secrets: [Secret; 2], 
         (None, None) => allow_code && commitment.is_some(),
     };
     if !allowed {
-        let _ = write_msg(&mut stream, &reject("This code is not valid. Scan the receiver's code again.")).await;
+        let invalid = reject(FailureKind::Other, "This code is not valid. Scan the receiver's code again.");
+        let _ = write_msg(&mut stream, &invalid).await;
         bail!("unauthorized sender");
     }
     let sender_name = truncate_utf8(device_name.trim(), MAX_NAME_LEN).to_string();
@@ -329,8 +368,25 @@ async fn authenticate(raw: RawStream, acceptor: Acceptor, secrets: [Secret; 2], 
     Ok(Authed { stream, sender, sender_name, session, commitment, tapped })
 }
 
-fn reject(reason: &str) -> Control {
-    Control::Reject { reason: reason.to_string() }
+fn reject(kind: FailureKind, reason: &str) -> Control {
+    Control::Reject { reason: reason.to_string(), kind: Some(kind) }
+}
+
+/// Tells the app the question it showed no longer applies, unless it was
+/// answered: the asking phone left, or another took its place.
+struct Question<'a> {
+    shared: &'a Shared,
+    id: u64,
+    answered: bool,
+}
+
+impl Drop for Question<'_> {
+    fn drop(&mut self) {
+        *self.shared.deciding.lock().unwrap() = None;
+        if !self.answered {
+            emit(&self.shared.events, Event::RequestWithdrawn { id: self.id });
+        }
+    }
 }
 
 async fn serve(
@@ -366,7 +422,10 @@ async fn serve(
 
     let accepted = tapped || *shared.trusted.lock().unwrap() == Some(sender);
     if !accepted {
-        let request = Request { sender_name: sender_name.clone(), code };
+        let id = shared.next_request.fetch_add(1, Ordering::Relaxed);
+        *shared.deciding.lock().unwrap() = Some(sender);
+        let mut question = Question { shared: &shared, id, answered: false };
+        let request = Request { id, sender_name: sender_name.clone(), code };
         let decision = (shared.approve)(request);
         tokio::pin!(decision);
         let approved = loop {
@@ -390,8 +449,10 @@ async fn serve(
                 }
             }
         };
+        question.answered = true;
+        drop(question);
         if !approved {
-            let _ = write_msg(&mut send, &reject("The receiver declined.")).await;
+            let _ = write_msg(&mut send, &reject(FailureKind::Declined, "The receiver declined.")).await;
             return Ok(Outcome::Declined);
         }
     }
@@ -412,8 +473,9 @@ async fn serve(
                         complete = Some(state.complete.subscribe());
                     }
                     Err(e) => {
-                        emit(&shared.events, Event::BatchFailed { batch, reason: format!("{e:#}") });
-                        write_msg(&mut send, &reject(&format!("{e:#}"))).await?;
+                        let kind = classify(&e);
+                        emit(&shared.events, Event::BatchFailed { batch, reason: format!("{e:#}"), kind });
+                        write_msg(&mut send, &reject(kind, &format!("{e:#}"))).await?;
                     }
                 },
                 Some(Ok(Control::Ping)) => {}
@@ -426,7 +488,7 @@ async fn serve(
                             drop(active);
                             let _ = tokio::task::spawn_blocking(move || state.discard()).await;
                             let reason = "The sender couldn't read one of the files.".to_string();
-                            emit(&shared.events, Event::BatchFailed { batch, reason });
+                            emit(&shared.events, Event::BatchFailed { batch, reason, kind: FailureKind::CannotReadFile });
                         }
                     }
                 }
@@ -456,10 +518,28 @@ async fn serve(
                 }
                 emit(&shared.events, Event::Completed { batch, summary });
             }
-            // A broken data stream is the sender's to notice: it reconnects and
-            // resumes. Here only the control stream decides whether the link is gone,
-            // so a goodbye that races a closing data stream is never missed.
-            Some(_) = readers.join_next() => {}
+            // A data stream that broke because of the network is the sender's to notice:
+            // it reconnects and resumes. Here only the control stream decides whether the
+            // link is gone, so a goodbye that races a closing data stream is never missed.
+            // A stream that failed on this phone (full storage, a file it can't save, a
+            // file that keeps arriving damaged) can't be fixed by reconnecting, so the
+            // batch is dropped and the sender told why.
+            Some(joined) = readers.join_next() => {
+                if let Ok(Err(e)) = joined {
+                    if is_fatal(&e) {
+                        let kind = classify(&e);
+                        let mut active = shared.active.lock().await;
+                        if let Some(Active { batch, state }) = active.take() {
+                            complete = None;
+                            drop(active);
+                            let reason = format!("{e:#}");
+                            let _ = tokio::task::spawn_blocking(move || state.discard()).await;
+                            emit(&shared.events, Event::BatchFailed { batch, reason, kind });
+                            write_msg(&mut send, &Control::Abort { batch, kind }).await?;
+                        }
+                    }
+                }
+            }
             _ = heartbeat.tick() => {
                 let msg = if complete.is_some() {
                     let p = shared.stats.snapshot();
@@ -533,7 +613,9 @@ async fn read_data(mut stream: TlsStream, shared: Arc<Shared>, resend: mpsc::Unb
         let target = match state {
             Some(state) => {
                 let st = state.clone();
-                let writing = tokio::task::spawn_blocking(move || st.begin(h.file, h.offset, h.len)).await??;
+                let writing = tokio::task::spawn_blocking(move || st.begin(h.file, h.offset, h.len))
+                    .await?
+                    .map_err(on_this_phone)?;
                 writing.map(|w| (state, Arc::new(w)))
             }
             None => None,
@@ -544,18 +626,37 @@ async fn read_data(mut stream: TlsStream, shared: Arc<Shared>, resend: mpsc::Unb
             stream.read_exact(&mut buf[..n]).await?;
             if let Some((state, writing)) = &target {
                 let (st, w, data) = (state.clone(), writing.clone(), buf);
-                buf =
-                    tokio::task::spawn_blocking(move || st.write(h.file, &w, pos, &data[..n]).map(|()| data)).await??;
+                buf = tokio::task::spawn_blocking(move || st.write(h.file, &w, pos, &data[..n]).map(|()| data))
+                    .await?
+                    .map_err(on_this_phone)?;
             }
             pos += n as u64;
         }
         let mut hash = [0u8; HASH_LEN];
         stream.read_exact(&mut hash).await?;
         if let Some((state, _)) = target {
-            if !tokio::task::spawn_blocking(move || state.finish(h.file, hash)).await?? {
+            if !tokio::task::spawn_blocking(move || state.finish(h.file, hash)).await?.map_err(on_this_phone)? {
                 let _ = resend.send(vec![h.file]);
             }
         }
     }
     Ok(())
+}
+
+/// A failure on this phone, as opposed to the network: reconnecting can't fix it,
+/// so it's marked as one that retrying won't help, with what went wrong.
+fn on_this_phone(error: anyhow::Error) -> anyhow::Error {
+    if is_fatal(&error) {
+        return error;
+    }
+    let Some(io) = error.chain().find_map(|cause| cause.downcast_ref::<std::io::Error>()) else {
+        // Not storage: a bad header or an out-of-step sender. Breaking the stream and
+        // starting over is the right answer.
+        return error;
+    };
+    let kind = match io.kind() {
+        std::io::ErrorKind::StorageFull | std::io::ErrorKind::QuotaExceeded => FailureKind::DiskFull,
+        _ => FailureKind::CannotSaveFile,
+    };
+    Fatal::new(kind, format!("{error:#}")).into()
 }

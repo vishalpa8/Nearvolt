@@ -1,5 +1,6 @@
 //! What the Flutter app calls. Sizes are `i64` so Dart sees plain `int`s.
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -9,6 +10,7 @@ use anyhow::{Context, Result};
 use flutter_rust_bridge::frb;
 use futures::FutureExt;
 use nearvolt_core::protocol::FileEntry;
+use nearvolt_core::transfer as core_kind;
 use nearvolt_core::util::AbortOnDrop;
 use nearvolt_core::{
     connect as connect_peer, Approver, Command, Event, EventSender, FileSet, Identity, Link, MuxLink, Peer, Progress,
@@ -58,8 +60,13 @@ pub enum EventKind {
     /// Receive is open; `receive_tickets` is ready.
     Ready,
     /// Receiver: a phone named `text` asks to connect; answer with
-    /// `answer_request`. `code` is set when both screens must show the same one.
+    /// `answer_request` and `request_id`. `code` is set when both screens must
+    /// show the same one.
     Request,
+    /// Receiver: the phone behind `request_id` left, so the question is moot.
+    RequestWithdrawn,
+    /// A line for the log that isn't an error; `text` holds it.
+    Note,
     /// Sender: show `code` while the receiver decides.
     Code,
     /// Connected and accepted, also after every reconnect. `text` is the other
@@ -82,14 +89,53 @@ pub enum EventKind {
     Failed,
 }
 
+/// What went wrong, for the app to put in words. `text` stays technical, for the log.
+#[derive(Clone, Copy)]
+pub enum FailureKind {
+    DiskFull,
+    CannotSaveFile,
+    CannotReadFile,
+    FileDamaged,
+    Declined,
+    Busy,
+    OtherPhoneGone,
+    CannotReach,
+    OldVersion,
+    TooBig,
+    Other,
+}
+
+impl From<core_kind::FailureKind> for FailureKind {
+    fn from(kind: core_kind::FailureKind) -> Self {
+        use core_kind::FailureKind as K;
+        match kind {
+            K::DiskFull => Self::DiskFull,
+            K::CannotSaveFile => Self::CannotSaveFile,
+            K::CannotReadFile => Self::CannotReadFile,
+            K::FileDamaged => Self::FileDamaged,
+            K::Declined => Self::Declined,
+            K::Busy => Self::Busy,
+            K::OtherPhoneGone => Self::OtherPhoneGone,
+            K::CannotReach => Self::CannotReach,
+            K::OldVersion => Self::OldVersion,
+            K::TooBig => Self::TooBig,
+            K::Other => Self::Other,
+        }
+    }
+}
+
 /// `text` and `code` depend on `kind`. `batch` is -1 when no batch is meant.
 /// Counts are filled for batches, progress and the end of a connection.
+/// `failure` is set on `BatchFailed`, `ConnectionLost` and `Failed`.
 #[derive(Clone)]
 pub struct TransferEvent {
     pub kind: EventKind,
     pub text: Option<String>,
     pub code: Option<String>,
     pub route: Option<String>,
+    pub failure: Option<FailureKind>,
+    /// For `Request` and `RequestWithdrawn`; -1 otherwise.
+    pub request_id: i64,
     pub batch: i64,
     pub done_bytes: i64,
     pub total_bytes: i64,
@@ -104,6 +150,8 @@ impl TransferEvent {
             text,
             code: None,
             route: None,
+            failure: None,
+            request_id: -1,
             batch: -1,
             done_bytes: 0,
             total_bytes: 0,
@@ -139,9 +187,12 @@ struct Engine {
     usb_session: Mutex<Option<AbortOnDrop<()>>>,
 }
 
+/// Questions put to the user and not yet answered, by request id.
+type Pending = Arc<Mutex<HashMap<u64, oneshot::Sender<bool>>>>;
+
 struct Receiving {
     receiver: Arc<Receiver>,
-    pending: Arc<Mutex<Option<oneshot::Sender<bool>>>>,
+    pending: Pending,
     _task: AbortOnDrop<()>,
 }
 
@@ -204,16 +255,24 @@ pub fn receive(dest_dir: String, journal_dir: String, events: StreamSink<Transfe
         allow_code_pairing: true,
     };
     let receiver = Arc::new(Receiver::bind(&engine.identity, SocketAddr::from(([0, 0, 0, 0], 0)), options)?);
-    let pending: Arc<Mutex<Option<oneshot::Sender<bool>>>> = Arc::default();
+    let pending: Pending = Arc::default();
     let approve: Approver = {
         let (pending, sink) = (pending.clone(), events.clone());
         Arc::new(move |request: Request| {
             let (tx, rx) = oneshot::channel();
-            *pending.lock().unwrap() = Some(tx);
+            let id = request.id;
+            pending.lock().unwrap().insert(id, tx);
             let mut event = TransferEvent::new(EventKind::Request, Some(request.sender_name));
             event.code = request.code;
+            event.request_id = id as i64;
             let _ = sink.add(event);
-            async move { rx.await.unwrap_or(false) }.boxed()
+            let pending = pending.clone();
+            async move {
+                let answer = rx.await.unwrap_or(false);
+                pending.lock().unwrap().remove(&id);
+                answer
+            }
+            .boxed()
         })
     };
     let running = receiver.clone();
@@ -242,15 +301,15 @@ pub fn receive_tickets(wifi: Option<WifiInfo>) -> Result<ReceiveTickets> {
     })
 }
 
-/// Answers the last `Request` event.
+/// Answers the `Request` event with this `request_id`. Returns false when that
+/// question is gone, for example because the phone asking has left.
 #[frb(sync)]
-pub fn answer_request(accept: bool) {
-    let Ok(engine) = engine() else { return };
-    if let Some(receiving) = engine.receiving.lock().unwrap().as_ref() {
-        if let Some(answer) = receiving.pending.lock().unwrap().take() {
-            let _ = answer.send(accept);
-        }
-    }
+pub fn answer_request(request_id: i64, accept: bool) -> bool {
+    let Ok(engine) = engine() else { return false };
+    let receiving = engine.receiving.lock().unwrap();
+    let Some(receiving) = receiving.as_ref() else { return false };
+    let answer = receiving.pending.lock().unwrap().remove(&(request_id as u64));
+    answer.is_some_and(|answer| answer.send(accept).is_ok())
 }
 
 /// Ends the receiving side's connection; the sender is told, so it stops
@@ -421,7 +480,10 @@ where
             done_bytes: total.bytes as i64,
             ..TransferEvent::new(EventKind::Disconnected, None)
         },
-        Err(e) => TransferEvent::new(EventKind::Failed, Some(format!("{e:#}"))),
+        Err(e) => TransferEvent {
+            failure: Some(core_kind::classify(&e).into()),
+            ..TransferEvent::new(EventKind::Failed, Some(format!("{e:#}")))
+        },
     });
 }
 
@@ -438,11 +500,19 @@ fn forward(sink: &StreamSink<TransferEvent>, event: Event) {
         Event::Completed { batch, summary } => {
             TransferEvent::batch(EventKind::Completed, batch, summary.files, summary.bytes)
         }
-        Event::BatchFailed { batch, reason } => {
-            TransferEvent { text: Some(reason), ..TransferEvent::batch(EventKind::BatchFailed, batch, 0, 0) }
+        Event::BatchFailed { batch, reason, kind } => TransferEvent {
+            text: Some(reason),
+            failure: Some(kind.into()),
+            ..TransferEvent::batch(EventKind::BatchFailed, batch, 0, 0)
+        },
+        Event::ConnectionLost { reason, kind } => {
+            TransferEvent { failure: Some(kind.into()), ..TransferEvent::new(EventKind::ConnectionLost, Some(reason)) }
         }
-        Event::ConnectionLost { reason } => TransferEvent::new(EventKind::ConnectionLost, Some(reason)),
         Event::PeerLeft => TransferEvent::new(EventKind::PeerLeft, None),
+        Event::RequestWithdrawn { id } => {
+            TransferEvent { request_id: id as i64, ..TransferEvent::new(EventKind::RequestWithdrawn, None) }
+        }
+        Event::Note { text } => TransferEvent::new(EventKind::Note, Some(text)),
     };
     let _ = sink.add(event);
 }

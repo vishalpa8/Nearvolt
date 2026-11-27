@@ -335,9 +335,11 @@ fn print_event(event: Event) {
         Event::Connected { peer, route } if route.is_empty() => note(&format!("Connected to {peer}")),
         Event::Connected { peer, route } => note(&format!("Connected to {peer} at {route}")),
         Event::Code { code } => note(&format!("Pairing code {code}: check the receiver shows the same")),
-        Event::ConnectionLost { reason } => note(&format!("Connection lost ({reason}). Reconnecting")),
+        Event::ConnectionLost { reason, .. } => note(&format!("Connection lost ({reason}). Reconnecting")),
         Event::BatchFailed { reason, .. } => note(&format!("Batch refused: {reason}")),
         Event::PeerLeft => note("The other side disconnected"),
+        Event::RequestWithdrawn { .. } => note("The other side stopped asking"),
+        Event::Note { text } => note(&text),
         Event::Started { .. } | Event::Incoming { .. } | Event::Completed { .. } => {}
     }
 }

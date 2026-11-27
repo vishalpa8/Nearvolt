@@ -4,6 +4,7 @@ import 'package:flutter/services.dart' show PlatformException;
 import 'package:material_ui/material_ui.dart';
 
 import '../engine/engine.dart';
+import '../engine/messages.dart';
 import '../engine/models.dart';
 import '../theme.dart';
 import '../ui/atoms.dart';
@@ -51,7 +52,7 @@ class _SendPageState extends State<SendPage> {
     try {
       ticket = await engine.scanCode();
     } on PlatformException catch (e) {
-      return tell(e.message ?? "Couldn't open the code scanner.");
+      return tell(friendlyPlatform(e));
     }
     if (ticket == null) return;
     final NearbyDevice device;

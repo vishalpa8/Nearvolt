@@ -26,6 +26,7 @@ class ReceivePage extends StatefulWidget {
 class _ReceivePageState extends State<ReceivePage> with NeedsMixin {
   StreamSubscription<Connection>? _session;
   final _updates = StreamController<Connection>.broadcast();
+  final _withdrawn = StreamController<void>.broadcast();
   Connection _c = const Connection();
   var _asking = false;
   var _showing = false;
@@ -48,11 +49,17 @@ class _ReceivePageState extends State<ReceivePage> with NeedsMixin {
   Future<void> _update(Connection c) async {
     setState(() => _c = c);
     _updates.add(c);
+    // The phone that was asking left: the open question closes by itself.
+    if (_asking && c.request == null) _withdrawn.add(null);
     if (c.request case final request? when !_asking && c.phase == LinkPhase.waiting) {
       _asking = true;
-      final accepted = await showReceivePrompt(context, request);
+      final accepted = await showReceivePrompt(context, request, withdrawn: _withdrawn.stream);
       _asking = false;
-      engine.answer(accept: accepted);
+      // No answer means it left first, and an answer nobody receives means the same.
+      final delivered = accepted != null && engine.answer(request.id, accept: accepted);
+      if (!delivered && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${request.from} cancelled.')));
+      }
     }
     if (c.phase == LinkPhase.connected && !_showing && mounted) {
       _showing = true;
@@ -70,6 +77,7 @@ class _ReceivePageState extends State<ReceivePage> with NeedsMixin {
   void dispose() {
     _session?.cancel();
     _updates.close();
+    _withdrawn.close();
     super.dispose();
   }
 

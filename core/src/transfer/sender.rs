@@ -17,7 +17,7 @@ use tokio::task::JoinSet;
 use super::disk;
 use super::manifest::{FileSet, Manifest};
 use super::state::hash_range;
-use super::{emit, is_fatal, Event, EventSender, Fatal, Stats, Summary};
+use super::{classify, emit, is_fatal, Event, EventSender, FailureKind, Fatal, Stats, Summary};
 use crate::identity::{Fingerprint, Identity};
 use crate::pairing::{self, Secret, Ticket};
 use crate::protocol::{
@@ -42,11 +42,20 @@ pub struct SendOptions {
     pub connections: usize,
     /// How long to keep trying to reconnect after the link drops.
     pub reconnect_for: Duration,
+    /// How long the first connection may take to be made before giving up. Much
+    /// shorter than `reconnect_for`: a receiver that can't be reached at all
+    /// is almost always on another network, not just slow.
+    pub first_connect_for: Duration,
 }
 
 impl Default for SendOptions {
     fn default() -> Self {
-        Self { device_name: "Nearvolt device".into(), connections: 8, reconnect_for: Duration::from_secs(60) }
+        Self {
+            device_name: "Nearvolt device".into(),
+            connections: 8,
+            reconnect_for: Duration::from_secs(60),
+            first_connect_for: Duration::from_secs(20),
+        }
     }
 }
 
@@ -157,12 +166,14 @@ pub async fn connect<L: Link>(
             }
         };
         if up && !reported {
-            emit(&events, Event::ConnectionLost { reason: format!("{error:#}") });
+            emit(&events, Event::ConnectionLost { reason: format!("{error:#}"), kind: FailureKind::OtherPhoneGone });
             reported = true;
         }
         let since = *failing_since.get_or_insert_with(Instant::now);
-        if since.elapsed() >= options.reconnect_for {
-            return Err(error.context("could not reach the receiver"));
+        let patience = if up { options.reconnect_for } else { options.first_connect_for };
+        if since.elapsed() >= patience {
+            let kind = if up { FailureKind::OtherPhoneGone } else { FailureKind::CannotReach };
+            return Err(Fatal::new(kind, format!("could not reach the receiver: {error:#}")).into());
         }
         attempt += 1;
         // Batches still queue while offline, and Disconnect ends at once.
@@ -217,8 +228,12 @@ impl Batches {
                 self.next += 1;
                 match tokio::task::spawn_blocking(move || Manifest::build(set)).await {
                     Ok(Ok(manifest)) => self.pending.push_back((batch, Arc::new(manifest))),
-                    Ok(Err(e)) => emit(events, Event::BatchFailed { batch, reason: format!("{e:#}") }),
-                    Err(e) => emit(events, Event::BatchFailed { batch, reason: e.to_string() }),
+                    Ok(Err(e)) => {
+                        emit(events, Event::BatchFailed { batch, reason: format!("{e:#}"), kind: classify(&e) })
+                    }
+                    Err(e) => {
+                        emit(events, Event::BatchFailed { batch, reason: e.to_string(), kind: FailureKind::Other })
+                    }
                 }
                 ControlFlow::Continue(())
             }
@@ -274,7 +289,7 @@ async fn session<L: Link>(
     write_msg(&mut wr, &hello).await?;
     let (session_id, receiver_nonce) = match read_msg(&mut rd).await? {
         Control::Welcome { session, nonce, .. } => (session, nonce),
-        Control::Reject { reason } => return Err(Fatal(reason).into()),
+        Control::Reject { reason, kind } => return Err(Fatal::new(kind.unwrap_or(FailureKind::Other), reason).into()),
         other => bail!("unexpected reply: {other:?}"),
     };
     if let Some(ours) = nonce {
@@ -294,7 +309,9 @@ async fn session<L: Link>(
         tokio::select! {
             msg = control_rx.recv() => match msg {
                 Some(Ok(Control::Ready)) => break,
-                Some(Ok(Control::Reject { reason })) => return Err(Fatal(reason).into()),
+                Some(Ok(Control::Reject { reason, kind })) => {
+                    return Err(Fatal::new(kind.unwrap_or(FailureKind::Other), reason).into());
+                }
                 Some(Ok(Control::Bye)) => {
                     emit(events, Event::PeerLeft);
                     return Ok(());
@@ -389,10 +406,16 @@ async fn session<L: Link>(
                 }
                 // The receiver refused this batch, for example for lack of space;
                 // the connection stays for the next one.
-                Some(Ok(Control::Reject { reason })) => {
-                    if let Some((batch, _)) = batches.current.take() {
-                        emit(events, Event::BatchFailed { batch, reason });
+                Some(Ok(Control::Reject { reason, kind })) => {
+                    if let Some((batch, _)) = batches.current.clone() {
+                        fail_current(batches, &jobs_rx, events, batch, reason, kind.unwrap_or(FailureKind::Other));
                     }
+                }
+                // The receiver started the batch but can't go on, for example because its
+                // storage filled up. What's left of it is dropped, the connection stays.
+                Some(Ok(Control::Abort { batch, kind })) => {
+                    let reason = "The receiver couldn't keep the files.".to_string();
+                    fail_current(batches, &jobs_rx, events, batch, reason, kind);
                 }
                 Some(Ok(Control::Ping)) => {}
                 Some(Ok(Control::Bye)) => {
@@ -417,25 +440,37 @@ async fn session<L: Link>(
                     Ok(Err(e)) => e,
                     Err(e) => anyhow!("a send worker failed: {e}"),
                 };
+                let current = batches.current.as_ref().map(|(batch, _)| *batch);
                 // A file that can't be read fails its batch, not the connection: the
                 // receiver is told to drop the batch, and the stream that was in the
                 // middle of that file, now unusable, is replaced.
-                if is_fatal(&error) {
-                    if let Some((batch, _)) = batches.current.take() {
-                        emit(events, Event::BatchFailed { batch, reason: format!("{error:#}") });
-                        let _ = out.send(Control::Cancel { batch });
-                        while jobs_rx.try_recv().is_ok() {}
+                if let (true, Some(batch)) = (is_fatal(&error), current) {
+                    fail_current(batches, &jobs_rx, events, batch, format!("{error:#}"), classify(&error));
+                    let _ = out.send(Control::Cancel { batch });
+                    opening.push(open(&peer.link, connector));
+                    continue;
+                }
+                // Nothing is being sent, so a broken data stream just gets replaced; if
+                // the link is really gone, opening the replacement fails and says so.
+                if current.is_none() {
+                    opening.push(open(&peer.link, connector));
+                    continue;
+                }
+                // A receiver that ends the connection, or drops the batch, closes its data
+                // streams right away, and the message that says why can arrive a moment later.
+                match settle(&mut control_rx).await {
+                    Settled::Bye => {
+                        emit(events, Event::PeerLeft);
+                        return Ok(());
+                    }
+                    Settled::Abort { batch, kind } => {
+                        let reason = "The receiver couldn't keep the files.".to_string();
+                        fail_current(batches, &jobs_rx, events, batch, reason, kind);
                         opening.push(open(&peer.link, connector));
                         continue;
                     }
+                    Settled::Neither => return Err(error),
                 }
-                // A receiver that ends the connection closes its data streams right
-                // after saying goodbye, and the goodbye can arrive a moment later.
-                if said_bye(&mut control_rx).await {
-                    emit(events, Event::PeerLeft);
-                    return Ok(());
-                }
-                return Err(error);
             }
             _ = stall_check.tick() => {
                 let pulse = remote.wrapping_add(stats.checked());
@@ -449,17 +484,44 @@ async fn session<L: Link>(
     }
 }
 
-/// Whether the receiver says goodbye within a second.
-async fn said_bye(control: &mut mpsc::UnboundedReceiver<Result<Control>>) -> bool {
-    let bye = async {
+/// What the receiver says within a second of a data stream breaking.
+enum Settled {
+    Bye,
+    Abort { batch: u32, kind: FailureKind },
+    Neither,
+}
+
+async fn settle(control: &mut mpsc::UnboundedReceiver<Result<Control>>) -> Settled {
+    let wait = async {
         while let Some(Ok(msg)) = control.recv().await {
-            if matches!(msg, Control::Bye) {
-                return true;
+            match msg {
+                Control::Bye => return Settled::Bye,
+                Control::Abort { batch, kind } => return Settled::Abort { batch, kind },
+                _ => {}
             }
         }
-        false
+        Settled::Neither
     };
-    tokio::time::timeout(Duration::from_secs(1), bye).await.unwrap_or(false)
+    tokio::time::timeout(Duration::from_secs(1), wait).await.unwrap_or(Settled::Neither)
+}
+
+/// Gives up the batch being sent, if it's `batch`: nothing more of it is sent and
+/// the app is told why. Returns whether it was the current batch.
+fn fail_current(
+    batches: &mut Batches,
+    jobs: &async_channel::Receiver<Job>,
+    events: &Option<EventSender>,
+    batch: u32,
+    reason: String,
+    kind: FailureKind,
+) -> bool {
+    if !batches.current.as_ref().is_some_and(|(b, _)| *b == batch) {
+        return false;
+    }
+    batches.current = None;
+    while jobs.try_recv().is_ok() {}
+    emit(events, Event::BatchFailed { batch, reason, kind });
+    true
 }
 
 /// Tells the receiver the connection is over, so it stops waiting for a reconnect.
@@ -535,12 +597,14 @@ async fn send_file(stream: &mut TlsStream, job: Job, stats: &Arc<Stats>) -> Resu
     let Job { batch, file, offset, manifest } = job;
     let entry = &manifest.offer.files[file as usize];
     let size = entry.size;
-    let unreadable = |e: std::io::Error| Fatal(format!("can't read {}: {e}", entry.path));
+    let unreadable =
+        |e: std::io::Error| Fatal::new(FailureKind::CannotReadFile, format!("can't read {}: {e}", entry.path));
     let (m, path, stats) = (manifest.clone(), entry.path.clone(), stats.clone());
     let (mut source, mut hasher) = tokio::task::spawn_blocking(move || -> Result<_> {
         let source = m.open(file)?;
         let mut hasher = blake3::Hasher::new();
-        hash_range(&source, 0, offset, &mut hasher, &stats).map_err(|e| Fatal(format!("can't read {path}: {e}")))?;
+        hash_range(&source, 0, offset, &mut hasher, &stats)
+            .map_err(|e| Fatal::new(FailureKind::CannotReadFile, format!("can't read {path}: {e}")))?;
         Ok((source, hasher))
     })
     .await??;
@@ -606,7 +670,11 @@ mod tests {
             fingerprint: Some(*receiver.fingerprint()),
             secret: Some([7; 16]),
         };
-        let options = SendOptions { reconnect_for: Duration::from_secs(2), ..SendOptions::default() };
+        let options = SendOptions {
+            reconnect_for: Duration::from_secs(2),
+            first_connect_for: Duration::from_secs(2),
+            ..SendOptions::default()
+        };
         let (_commands, queue) = mpsc::unbounded_channel();
         let (events, mut seen) = mpsc::unbounded_channel();
         let result = connect(&sender, &peer, &options, queue, Arc::new(Stats::default()), Some(events)).await;
