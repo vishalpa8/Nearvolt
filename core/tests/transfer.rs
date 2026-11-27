@@ -11,9 +11,10 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
 use futures::FutureExt;
+use nearvolt_core::protocol::FileEntry;
 use nearvolt_core::{
     connect, send, Approver, Command, Event, EventSender, FileSet, Identity, Link, MuxLink, Peer, RawStream,
-    ReceiveOptions, Receiver, SendOptions, Stats, Summary, TcpLink,
+    ReceiveOptions, Receiver, SendOptions, SourceOpener, Stats, Summary, TcpLink,
 };
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::mpsc;
@@ -227,6 +228,71 @@ async fn a_cut_in_the_middle_of_a_file_resumes_instead_of_restarting() {
     let on_the_wire = written.load(Ordering::SeqCst) as usize;
     assert!(on_the_wire < BIG + BIG / 2, "sent {on_the_wire} bytes for a {BIG}-byte file: it restarted");
     assert_same(&src.join("album"), &dst.join("album"));
+}
+
+/// Opens the first file for real and fails every other, as when a picked file
+/// is deleted or its permission is withdrawn in the middle of sending.
+struct HalfGone(std::path::PathBuf);
+
+impl SourceOpener for HalfGone {
+    fn open(&self, index: u32) -> std::io::Result<fs::File> {
+        match index {
+            0 => fs::File::open(&self.0),
+            _ => Err(std::io::Error::new(std::io::ErrorKind::NotFound, "the file is gone")),
+        }
+    }
+}
+
+/// A file that can't be read fails its own batch only: both phones say so, the
+/// half-sent batch is thrown away, and the next batch goes through on the same
+/// connection.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unreadable_file_fails_its_batch_and_the_connection_goes_on() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (src, dst) = (tmp.path().join("src"), tmp.path().join("dst"));
+    sample_files(&src);
+    fs::write(src.join("first.bin"), vec![7u8; 1 << 20]).unwrap();
+    let rx = receiver(&dst, false);
+    let peer = Peer::from_ticket(&rx.ticket());
+    let (receiver_events, mut receiver_seen) = mpsc::unbounded_channel();
+
+    let entry = |path: &str, size: u64| FileEntry { path: path.into(), size, modified: None };
+    let broken = FileSet::Opened {
+        files: vec![entry("first.bin", 1 << 20), entry("second.bin", 5 << 20)],
+        opener: Arc::new(HalfGone(src.join("first.bin"))),
+    };
+    let (commands, queue) = mpsc::unbounded_channel();
+    commands.send(Command::Send(broken)).unwrap();
+    commands.send(Command::Send(FileSet::Paths(vec![src.join("album")]))).unwrap();
+    drop(commands);
+    let (events_tx, mut events_rx) = mpsc::unbounded_channel();
+    let identity = Identity::generate().unwrap();
+    let options = SendOptions::default();
+    let sending = connect(&identity, &peer, &options, queue, Arc::new(Stats::default()), Some(events_tx));
+    let receiving = rx.run(approve_all(Arc::default()), Arc::new(Stats::default()), Some(receiver_events));
+    let (received, sent) =
+        tokio::time::timeout(std::time::Duration::from_secs(20), async { tokio::join!(receiving, sending) })
+            .await
+            .expect("the connection should finish");
+    received.unwrap();
+    let sent = sent.unwrap();
+
+    assert_eq!(sent.files, 3, "only the second batch counts as sent");
+    let failed = |events: Vec<Event>| -> Vec<u32> {
+        events
+            .into_iter()
+            .filter_map(|e| match e {
+                Event::BatchFailed { batch, .. } => Some(batch),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(failed(drain(&mut events_rx)), vec![0], "the sender reports the broken batch");
+    assert_eq!(failed(drain(&mut receiver_seen)), vec![0], "so does the receiver");
+    assert_same(&src.join("album"), &dst.join("album"));
+    let leftovers: Vec<String> = files_under(&dst).into_iter().filter(|p| p.ends_with(".nvpart")).collect();
+    assert_eq!(leftovers, Vec::<String>::new(), "no half file is left");
+    assert!(!dst.join("second.bin").exists());
 }
 
 fn files_under(dir: &Path) -> Vec<String> {

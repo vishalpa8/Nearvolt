@@ -123,6 +123,10 @@ Send at least 5 GB for each of these.
 | 21 | Push a change to `main` and wait for its release. Tap Check for updates. | It downloads version N+1. The first time, Android opens "Install unknown apps"; turn it on and go back, and the update continues by itself. Nearvolt closes for a moment; reopened, it runs N+1. |
 | 22 | Repeat 21 on Android 12 or later. | No prompt at all this time. |
 | 23 | On B, tap Check for updates and, while it downloads, open Receive and accept a connection from A. | Nothing is installed while connected; the update card says to disconnect first. |
+| 23a | Update from the app and wait. | Nearvolt closes for a moment and opens again by itself on the new version. If your phone blocks that, a "Nearvolt updated to N · Tap to open" notification appears and goes away once the app is open. |
+| 23b | Scan a code, then look at the recent apps list. | Only one Nearvolt window; no second one for the scanner, before or after scanning. |
+| 23c | While connected and idle for 10 minutes, check Settings › Battery for Nearvolt. | Negligible use; the wake lock is held only while data moves (the log's `[speed]` lines). |
+| 23d | Close the app on B while connected, and leave it closed for 5 minutes. | A shows "Link dropped · Reconnecting…", then after 5 minutes "Connection failed" with a reason and stops retrying. |
 | 24 | On a Samsung phone, turn on Settings › Security and privacy › Auto Blocker, then tap Check for updates. | The card stops spinning and says Auto Blocker stopped the update. |
 | 25 | Tap Check for updates again. | No second download: the log says "using the N download from earlier". Turn Auto Blocker off and tap again: it installs. |
 | 26 | After an update, open the app once. | The downloaded APK is gone from the app's cache (Settings › Apps › Nearvolt › Storage shows no growth). |

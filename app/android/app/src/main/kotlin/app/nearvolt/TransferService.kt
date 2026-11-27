@@ -9,7 +9,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.wifi.WifiManager
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 
 /**
@@ -20,6 +22,7 @@ import android.os.PowerManager
 class TransferService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
+    private val handler = Handler(Looper.getMainLooper())
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -40,21 +43,39 @@ class TransferService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
+        instance = this
+        return START_NOT_STICKY
+    }
+
+    /**
+     * Keeps the CPU awake and Wi-Fi at full speed while data is moving, and lets
+     * both go 15 seconds after it stops. An open but idle connection then costs
+     * only the small foreground notification, not a held wake lock.
+     */
+    private fun hold() {
         if (wakeLock == null) {
-            wakeLock = getSystemService(PowerManager::class.java)
-                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "nearvolt:transfer")
-                .apply { acquire(MAX_HOLD_MS) }
+            wakeLock = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "nearvolt:transfer")
             wifiLock = getSystemService(WifiManager::class.java)
                 .createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "nearvolt:transfer")
-                .apply { acquire() }
         }
-        return START_NOT_STICKY
+        wakeLock?.acquire(IDLE_RELEASE_MS * 2)
+        if (wifiLock?.isHeld == false) wifiLock?.acquire()
+        handler.removeCallbacks(release)
+        handler.postDelayed(release, IDLE_RELEASE_MS)
+    }
+
+    private val release = Runnable { releaseLocks() }
+
+    private fun releaseLocks() {
+        wakeLock?.takeIf { it.isHeld }?.release()
+        wifiLock?.takeIf { it.isHeld }?.release()
     }
 
     override fun onDestroy() {
         started = false
-        wakeLock?.takeIf { it.isHeld }?.release()
-        wifiLock?.takeIf { it.isHeld }?.release()
+        instance = null
+        handler.removeCallbacks(release)
+        releaseLocks()
         super.onDestroy()
     }
 
@@ -63,11 +84,14 @@ class TransferService : Service() {
         private const val NOTIFICATION_ID = 1
         private const val EXTRA_TITLE = "title"
 
-        /** Upper bound so a lock can never outlive a stuck transfer by days. */
-        private const val MAX_HOLD_MS = 24L * 60 * 60 * 1000
+        /** Locks are let go this long after the last progress update. */
+        private const val IDLE_RELEASE_MS = 15_000L
 
         @Volatile
         private var title = ""
+
+        @Volatile
+        private var instance: TransferService? = null
 
         /** True while a transfer runs; updates wait until it ends. */
         @Volatile
@@ -93,10 +117,12 @@ class TransferService : Service() {
             }
         }
 
+        /** Data is moving: refreshes the notification and keeps the locks held. */
         fun update(context: Context, text: String, percent: Int) {
             if (!active) return
             context.getSystemService(NotificationManager::class.java)
                 .notify(NOTIFICATION_ID, notification(context, title, text, percent))
+            instance?.hold()
         }
 
         fun stop(context: Context) {

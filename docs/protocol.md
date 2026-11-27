@@ -1,4 +1,4 @@
-# Nearvolt wire protocol, version 2
+# Nearvolt wire protocol, version 3
 
 ## Transport
 
@@ -94,7 +94,10 @@ sender                                               receiver
 - Eight seconds without a message on the control stream means the link is
   gone; shorter pauses, such as a phone's Wi-Fi briefly stalling, are left to
   TCP. The sender reconnects through the same address, with backoff from 100 ms
-  up to 2 s, until it gets through or the user disconnects. The backoff starts
+  up to 5 s, until it gets through, the user disconnects, or 5 minutes pass; the
+  receiver likewise stops waiting after 5 minutes, and both phones then show
+  the connection as ended with a reason, so a phone that left for good doesn't
+  keep the other one retrying. The backoff starts
   over only after a connection that lasted 5 seconds, so a receiver that hangs
   up at once is retried more and more slowly. The receiver lets the same sender
   back in without asking, and the sender re-offers the batch it was on.
@@ -105,6 +108,13 @@ sender                                               receiver
   the transfer can resume.
 - A batch the receiver can't take, for example for lack of space, is rejected
   on its own; the connection stays open for the next one.
+- A batch the sender can't finish, because a file can't be read any more, is
+  ended with `cancel {batch}`: the receiver throws away what it has of that
+  batch (files already complete and verified stay), both phones report the batch
+  as failed, and the connection carries on with the next one.
+- When Receive opens, part files and journals not touched for 7 days are
+  deleted: a transfer nobody came back for in a week can't be resumed, and they
+  would otherwise stay for good. Only files Nearvolt itself named are touched.
 - If nothing moves for 30 seconds while a batch is open, the sender restarts the
   connection so the receiver can report what's missing. Reading a file back to
   check it counts as moving (`checked` is the bytes read so far), on both sides,

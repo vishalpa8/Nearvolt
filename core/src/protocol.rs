@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 pub const ALPN: &[u8] = b"nearvolt/1";
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// Both sides send a control message at least this often.
 pub const HEARTBEAT_INTERVAL: Duration = Duration::from_millis(500);
@@ -115,6 +115,11 @@ pub enum Control {
         batch: u32,
         files: u64,
         bytes: u64,
+    },
+    /// The sender gives up this batch, for example because a file can't be read
+    /// any more. The receiver throws away what it has of it; the connection stays.
+    Cancel {
+        batch: u32,
     },
     /// Ends the connection on purpose; the other side stops reconnecting.
     Bye,

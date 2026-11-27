@@ -1,5 +1,8 @@
 package app.nearvolt
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -189,6 +192,9 @@ class Updater(private val activity: MainActivity, private val emit: (PlatformEve
         }
         val id = installer.createSession(params)
         val answer = UpdateReceiver.expect(id)
+        // Android closes the app to replace it; this tells the app that comes back it
+        // was our own update, so it opens again by itself.
+        UpdatedReceiver.expectUpdate(context)
         installer.openSession(id).use { session ->
             session.openWrite("nearvolt.apk", 0, apk.length()).use { out ->
                 apk.inputStream().use { it.copyTo(out) }
@@ -241,6 +247,8 @@ class UpdateReceiver : BroadcastReceiver() {
             }
             return
         }
+        // Not installed: the app stays, so there's nothing to reopen.
+        if (status != PackageInstaller.STATUS_SUCCESS) UpdatedReceiver.forgetUpdate(context)
         waiting.remove(id)?.complete(status to message)
     }
 
@@ -250,6 +258,63 @@ class UpdateReceiver : BroadcastReceiver() {
         /** Call before committing session `id`, so even an instant answer is caught. */
         fun expect(id: Int): CompletableDeferred<Pair<Int, String?>> = CompletableDeferred<Pair<Int, String?>>().also {
             waiting[id] = it
+        }
+    }
+}
+
+/**
+ * Android closes the app to replace it. When that was our own update, this opens
+ * the new version again. Android may refuse to open a screen from the background,
+ * so a one-tap notice is posted too; it goes away once the app is open.
+ */
+class UpdatedReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != Intent.ACTION_MY_PACKAGE_REPLACED) return
+        val prefs = context.getSharedPreferences("nearvolt", Context.MODE_PRIVATE)
+        val asked = prefs.getLong(UPDATING, 0)
+        forgetUpdate(context)
+        // Updated some other way (an app store, adb): leave the user alone.
+        if (System.currentTimeMillis() - asked > EXPECT_FOR_MS) return
+        val version = context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        AppLog.write("update", "updated to $version; opening the app again")
+        val open = Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        runCatching { context.startActivity(open) }.onFailure { AppLog.error("update", it) }
+        runCatching {
+            val manager = context.getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(NotificationChannel(CHANNEL, "App updates", NotificationManager.IMPORTANCE_DEFAULT))
+            val tap = PendingIntent.getActivity(context, 0, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            manager.notify(
+                NOTIFICATION_ID,
+                Notification.Builder(context, CHANNEL)
+                    .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                    .setContentTitle("Nearvolt updated to $version")
+                    .setContentText("Tap to open")
+                    .setAutoCancel(true)
+                    .setContentIntent(tap)
+                    .build(),
+            )
+        }.onFailure { AppLog.error("update", it) }
+    }
+
+    companion object {
+        private const val UPDATING = "updating_since"
+        private const val CHANNEL = "updates"
+        private const val NOTIFICATION_ID = 2
+
+        /** An update takes seconds; anything much later wasn't ours. */
+        private const val EXPECT_FOR_MS = 15 * 60_000L
+
+        fun expectUpdate(context: Context) {
+            context.getSharedPreferences("nearvolt", Context.MODE_PRIVATE).edit()
+                .putLong(UPDATING, System.currentTimeMillis()).apply()
+        }
+
+        fun forgetUpdate(context: Context) {
+            context.getSharedPreferences("nearvolt", Context.MODE_PRIVATE).edit().remove(UPDATING).apply()
+        }
+
+        fun dismiss(context: Context) {
+            context.getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)
         }
     }
 }

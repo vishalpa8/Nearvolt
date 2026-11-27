@@ -14,7 +14,7 @@ use tokio::io::{AsyncReadExt, ReadHalf};
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 
-use super::state::{plan_files, transfer_id, TransferState};
+use super::state::{plan_files, sweep_stale, transfer_id, TransferState};
 use super::{emit, is_fatal, Event, EventSender, Fatal, Stats, Summary};
 use crate::identity::{Fingerprint, Identity};
 use crate::pairing::{self, constant_time_eq, truncate_utf8, Secret, Ticket, MAX_NAME_LEN};
@@ -28,6 +28,10 @@ use crate::util::AbortOnDrop;
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_AUTH_FAILURES: u32 = 20;
 const STATE_DIR: &str = ".nearvolt";
+/// A connection that dropped and isn't back after this long is ended on both phones.
+const RECONNECT_WAIT: Duration = Duration::from_secs(5 * 60);
+/// A half-received file nobody came back for in this long is removed when Receive opens.
+const STALE_AFTER: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 const BLOCK: usize = 1 << 20;
 
 #[derive(Clone, Debug)]
@@ -136,6 +140,8 @@ impl Receiver {
     pub async fn run(&self, approve: Approver, stats: Arc<Stats>, events: Option<EventSender>) -> Result<Summary> {
         fs::create_dir_all(&self.options.dir)
             .with_context(|| format!("can't create {}", self.options.dir.display()))?;
+        let (dir, journals) = (self.options.dir.clone(), self.options.journal_root());
+        tokio::task::spawn_blocking(move || sweep_stale(&dir, &journals, STALE_AFTER));
         let shared = Arc::new(Shared {
             options: self.options.clone(),
             fingerprint: self.fingerprint,
@@ -152,8 +158,15 @@ impl Receiver {
         let (auth_tx, mut auth_rx) = mpsc::channel::<Option<Authed>>(32);
         let mut current: Option<Current> = None;
         let mut failures = 0;
+        // When a connection that was working dropped; cleared when the sender is back.
+        let mut lost_since: Option<Instant> = None;
         loop {
+            let still_waiting = lost_since.map(|t| RECONNECT_WAIT.saturating_sub(t.elapsed()));
             tokio::select! {
+                // The sender had its chance to come back; stop waiting and listening.
+                () = tokio::time::sleep(still_waiting.unwrap_or_default()), if still_waiting.is_some() && current.is_none() => {
+                    return Err(Fatal("The other phone didn't come back after the link dropped.".into()).into());
+                }
                 Some(raw) = incoming.recv() => {
                     let tx = auth_tx.clone();
                     let (acceptor, secrets, code) =
@@ -186,6 +199,7 @@ impl Receiver {
                             // A reconnecting sender replaces its stale session at once
                             // instead of waiting for the old one to time out.
                             drop(current.take());
+                            lost_since = None;
                             let (session, sender) = (pairing::new_secret(), authed.sender);
                             let (data_tx, data_rx) = mpsc::channel(64);
                             let task = serve(shared.clone(), authed, session, data_rx, self.ending.subscribe());
@@ -202,7 +216,13 @@ impl Receiver {
                         }
                         Ok(Outcome::Declined) => {}
                         Err(e) if is_fatal(&e) => return Err(e),
-                        Err(e) => emit(&events, Event::ConnectionLost { reason: format!("{e:#}") }),
+                        Err(e) => {
+                            // Only a connection that was set up has anything to wait for.
+                            if shared.trusted.lock().unwrap().is_some() {
+                                lost_since.get_or_insert_with(Instant::now);
+                            }
+                            emit(&events, Event::ConnectionLost { reason: format!("{e:#}") });
+                        }
                     }
                 }
                 _ = ending.changed(), if current.is_none() => {
@@ -397,6 +417,19 @@ async fn serve(
                     }
                 },
                 Some(Ok(Control::Ping)) => {}
+                // The sender gave up this batch: throw away what arrived of it.
+                Some(Ok(Control::Cancel { batch })) => {
+                    let mut active = shared.active.lock().await;
+                    if active.as_ref().is_some_and(|a| a.batch == batch) {
+                        if let Some(Active { state, .. }) = active.take() {
+                            complete = None;
+                            drop(active);
+                            let _ = tokio::task::spawn_blocking(move || state.discard()).await;
+                            let reason = "The sender couldn't read one of the files.".to_string();
+                            emit(&shared.events, Event::BatchFailed { batch, reason });
+                        }
+                    }
+                }
                 Some(Ok(Control::Bye)) => {
                     emit(&shared.events, Event::PeerLeft);
                     return Ok(Outcome::Ended);

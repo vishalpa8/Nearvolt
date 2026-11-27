@@ -191,7 +191,8 @@ fn backoff(attempt: u32) -> Duration {
         2 => 250,
         3 => 500,
         4 => 1000,
-        _ => 2000,
+        5..=8 => 2000,
+        _ => 5000,
     })
 }
 
@@ -416,6 +417,18 @@ async fn session<L: Link>(
                     Ok(Err(e)) => e,
                     Err(e) => anyhow!("a send worker failed: {e}"),
                 };
+                // A file that can't be read fails its batch, not the connection: the
+                // receiver is told to drop the batch, and the stream that was in the
+                // middle of that file, now unusable, is replaced.
+                if is_fatal(&error) {
+                    if let Some((batch, _)) = batches.current.take() {
+                        emit(events, Event::BatchFailed { batch, reason: format!("{error:#}") });
+                        let _ = out.send(Control::Cancel { batch });
+                        while jobs_rx.try_recv().is_ok() {}
+                        opening.push(open(&peer.link, connector));
+                        continue;
+                    }
+                }
                 // A receiver that ends the connection closes its data streams right
                 // after saying goodbye, and the goodbye can arrive a moment later.
                 if said_bye(&mut control_rx).await {

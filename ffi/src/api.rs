@@ -338,9 +338,13 @@ pub fn attach_usb(fd: i32, host: bool) -> Result<()> {
 
 fn start_connection<L: Link + 'static>(peer: Peer<L>, events: StreamSink<TransferEvent>) -> Result<()> {
     let engine = engine()?;
-    // Reconnecting never gives up on its own; only the user disconnects.
-    let options =
-        SendOptions { device_name: engine.device_name.clone(), reconnect_for: Duration::MAX, ..Default::default() };
+    // A dropped link is retried for a while, then the connection ends with a message,
+    // so a phone that left for good doesn't keep this one retrying and its radio busy.
+    let options = SendOptions {
+        device_name: engine.device_name.clone(),
+        reconnect_for: Duration::from_secs(5 * 60),
+        ..Default::default()
+    };
     let (commands, queue) = mpsc::unbounded_channel();
     let task = engine.runtime.spawn(drive(
         move |stats, events| async move {

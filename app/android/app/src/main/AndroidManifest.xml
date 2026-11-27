@@ -1,4 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <!-- Local network only: the app never talks to a server except to check for updates. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -100,6 +101,24 @@
         <receiver
             android:name=".UpdateReceiver"
             android:exported="false" />
+
+        <!-- After an update installed from the app, Android closes it; this opens it again. -->
+        <receiver
+            android:name=".UpdatedReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Google's code scanner starts through this invisible screen, in a task of its
+             own. It must not stay in the recent apps list as a second Nearvolt window. -->
+        <activity
+            android:name="com.google.mlkit.vision.codescanner.internal.GmsBarcodeScanningDelegateActivity"
+            android:excludeFromRecents="true"
+            android:autoRemoveFromRecents="true"
+            android:noHistory="true"
+            tools:node="merge" />
 
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->

@@ -347,17 +347,7 @@ impl TransferState {
             }
             slot.handle = None;
             drop(slot);
-            let part = self.part_path(i);
-            if fs::remove_file(&part).is_ok() {
-                // Folders go from the inside out, and only while they're empty.
-                let mut dir = part.parent();
-                while let Some(d) = dir.filter(|d| *d != self.root && d.starts_with(&self.root)) {
-                    if fs::remove_dir(d).is_err() {
-                        break;
-                    }
-                    dir = d.parent();
-                }
-            }
+            remove_part(&self.part_path(i), &self.root);
         }
         self.cleanup();
     }
@@ -410,6 +400,58 @@ pub(super) fn hash_range(
     Ok(())
 }
 
+/// Removes what an unfinished transfer left behind and nobody came back for:
+/// part files in `dir` and journals in `journal_root` untouched for `max_age`.
+/// A phone that vanished mid-transfer, or an app that was killed, leaves these;
+/// a week later there's no transfer left to resume. Best effort, and only files
+/// Nearvolt itself named are ever touched.
+pub(super) fn sweep_stale(dir: &Path, journal_root: &Path, max_age: Duration) {
+    let stale = |path: &Path| {
+        fs::metadata(path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|age| age > max_age)
+    };
+    // Part files at any depth, since folders keep their structure.
+    fn walk(dir: &Path, root: &Path, depth: u32, stale: &dyn Fn(&Path) -> bool) {
+        let Ok(entries) = fs::read_dir(dir) else { return };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if depth < 12 {
+                    walk(&path, root, depth + 1, stale);
+                }
+            } else if path.to_string_lossy().ends_with(PART_SUFFIX) && stale(&path) {
+                remove_part(&path, root);
+            }
+        }
+    }
+    walk(dir, dir, 0, &stale);
+    if let Ok(entries) = fs::read_dir(journal_root) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() && stale(&path.join("journal")) {
+                let _ = fs::remove_dir_all(&path);
+            }
+        }
+    }
+}
+
+/// Deletes a part file, then the folders that held only it, from the inside out.
+fn remove_part(part: &Path, root: &Path) {
+    if fs::remove_file(part).is_err() {
+        return;
+    }
+    let mut dir = part.parent();
+    while let Some(d) = dir.filter(|d| *d != root && d.starts_with(root)) {
+        if fs::remove_dir(d).is_err() {
+            break;
+        }
+        dir = d.parent();
+    }
+}
+
 fn spawn_checkpointer(weak: Weak<TransferState>) {
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(CHECKPOINT_EVERY);
@@ -423,4 +465,41 @@ fn spawn_checkpointer(weak: Weak<TransferState>) {
             let _ = tokio::task::spawn_blocking(move || state.checkpoint()).await;
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn aged(path: &Path, days: u64) {
+        let file = fs::OpenOptions::new().write(true).open(path).unwrap();
+        file.set_modified(std::time::SystemTime::now() - Duration::from_secs(days * 86_400)).unwrap();
+    }
+
+    #[test]
+    fn a_week_old_leftover_goes_and_everything_else_stays() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (dir, journals) = (tmp.path().join("Nearvolt"), tmp.path().join("journals"));
+        fs::create_dir_all(dir.join("trip/day1")).unwrap();
+        fs::create_dir_all(dir.join("my empty folder")).unwrap();
+        fs::create_dir_all(dir.join("recent")).unwrap();
+        fs::write(dir.join("trip/day1/old.mp4.nvpart"), b"old").unwrap();
+        fs::write(dir.join("trip/photo.jpg"), b"finished").unwrap();
+        fs::write(dir.join("recent/new.mp4.nvpart"), b"new").unwrap();
+        aged(&dir.join("trip/day1/old.mp4.nvpart"), 8);
+        for (name, days) in [("old", 8), ("new", 1)] {
+            fs::create_dir_all(journals.join(name)).unwrap();
+            fs::write(journals.join(name).join("journal"), b"x").unwrap();
+            aged(&journals.join(name).join("journal"), days);
+        }
+
+        sweep_stale(&dir, &journals, Duration::from_secs(7 * 86_400));
+
+        assert!(!dir.join("trip/day1").exists(), "the folder that held only the old part file goes");
+        assert!(dir.join("trip/photo.jpg").exists(), "a finished file is never touched");
+        assert!(dir.join("recent/new.mp4.nvpart").exists(), "a recent part file is kept for resuming");
+        assert!(dir.join("my empty folder").exists(), "folders the sweep didn't empty stay");
+        assert!(!journals.join("old").exists());
+        assert!(journals.join("new").exists());
+    }
 }

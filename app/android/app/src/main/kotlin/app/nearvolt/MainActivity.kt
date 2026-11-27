@@ -19,6 +19,12 @@ class MainActivity : FlutterFragmentActivity() {
 
     private var host: PlatformHost? = null
 
+    override fun onCreate(savedInstanceState: android.os.Bundle?) {
+        super.onCreate(savedInstanceState)
+        // The app is open, so the "updated, tap to open" notice has done its job.
+        UpdatedReceiver.dismiss(this)
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         NativeBridge.register(applicationContext)
