@@ -80,7 +80,28 @@ mixin NeedsMixin<T extends StatefulWidget> on State<T> {
   void initState() {
     super.initState();
     _lifecycle = AppLifecycleListener(onResume: _recheck);
-    _update(engine.prepare(purpose), always: true);
+    _update(engine.prepare(purpose), always: true).then((_) => _offerNfc());
+  }
+
+  /// Android can't turn NFC on for an app, so the page asks, then opens the
+  /// settings page where it's one switch. Asked once per page; the notice stays
+  /// if the user says no.
+  Future<void> _offerNfc() async {
+    if (!mounted || !needs.contains(Need.nfc)) return;
+    final turnOn = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Turn on NFC?'),
+        content: Text(
+          purpose == Purpose.tap ? 'Tapping phones together needs NFC on, on both phones.' : 'So the other phone can tap yours to connect. You can still scan the code or pick this phone from a list.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Not now')),
+          TextButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Turn on')),
+        ],
+      ),
+    );
+    if (turnOn == true && mounted) await _update(_fix(Need.nfc));
   }
 
   @override

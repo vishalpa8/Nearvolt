@@ -70,7 +70,7 @@ Start with a fresh install, Bluetooth off.
 | P2 | Tap Nearby phones. | Android asks for Nearby devices and notifications, then asks to turn on Bluetooth. Allow all: no notice on the page. |
 | P3 | Reinstall, open Nearby phones and deny Nearby devices. | A notice asks to allow it. Tap Allow and grant it: the notice goes away and Bluetooth phones start appearing. |
 | P4 | Deny Nearby devices twice. | The notice's button says Settings and opens Nearvolt's app settings; granting it there and coming back clears the notice. |
-| P5 | Turn NFC off, open Tap phones. | An NFC notice; Turn on opens Android's NFC settings. No permission or Bluetooth prompt. |
+| P5 | Turn NFC off, open Tap phones. Then, on the other phone, turn NFC off and open Receive. | Both ask "Turn on NFC?"; Turn on opens Android's NFC settings, Not now leaves a notice with a Turn on button. No permission or Bluetooth prompt on Tap. |
 | P6 | Turn Wi-Fi off, open Nearby phones. | A Wi-Fi notice; Turn on opens Android's Wi-Fi panel. |
 | P7 | Android 11 or 12 only: turn Location off, open Nearby phones. | A Location notice; Turn on opens Location settings. |
 | P8 | With Nearby phones open, turn Bluetooth off from quick settings. | The Bluetooth notice appears without leaving the page. |
@@ -85,6 +85,9 @@ Start with a fresh install, Bluetooth off.
 | 4 | Both with Wi-Fi on but not connected to the same network (or none). B opens Receive. | B appears on A marked "Bluetooth". Connecting joins B's Wi-Fi Direct group with no pop-up; then as in 2 and 3. |
 | 5 | B opens Receive. On A, Send › Scan code, scan B's QR code. | No code to compare; B is asked once to accept. |
 | 6 | B opens Receive. On A, Send › Tap phones, then hold the backs together. | Connected at once, with no prompt on B. |
+| 6a | As 6, but first choose files on A's Send page. | The files start sending as soon as A says Connected, with no "Add files" tap. |
+| 6b | On A, choose a way to connect, then keep B's screen on its accept prompt for 10 seconds before accepting. | A shows "Connecting…" or "Waiting for B to accept" with Cancel and no Add files. B is asked once. After accepting, A says Connected and shows Add files and Disconnect. |
+| 6c | Turn B's Wi-Fi off for 15 seconds while connected. | A shows "Link dropped · Reconnecting…" with Stop reconnecting and no Add files, then Connected again. |
 | 7 | B opens Receive, A opens Send › USB cable, then connect the phones with a cable. Answer Android's prompts ("Allow access", "Open Nearvolt"). | A connects by itself; both show the same code, as in 2. |
 | 8 | B closes Receive. | B disappears from A's Nearby list. |
 | 9 | B declines. | A shows "Connection failed" with "The receiver declined." |

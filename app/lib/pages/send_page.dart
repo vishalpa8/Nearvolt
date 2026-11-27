@@ -6,21 +6,40 @@ import 'package:material_ui/material_ui.dart';
 import '../engine/engine.dart';
 import '../engine/models.dart';
 import '../theme.dart';
+import '../ui/atoms.dart';
+import '../ui/format.dart';
 import '../ui/molecules.dart';
 import '../ui/organisms.dart';
 import '../ui/templates.dart';
 import 'connection_page.dart';
 
 /// The ways to reach a phone with Receive open. Only the one chosen runs, and
-/// it asks only for what it needs.
-class SendPage extends StatelessWidget {
+/// it asks only for what it needs. Files can be chosen first, and then go as
+/// soon as the connection is set up, or after connecting.
+class SendPage extends StatefulWidget {
   const SendPage({super.key, required this.engine, required this.profile});
 
   final TransferEngine engine;
   final DeviceProfile profile;
 
+  @override
+  State<SendPage> createState() => _SendPageState();
+}
+
+class _SendPageState extends State<SendPage> {
+  Selection? _files;
+
+  TransferEngine get engine => widget.engine;
+
   void _open(BuildContext context, Widget page) =>
       Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => page));
+
+  Future<void> _choose() async {
+    final kind = await showPickMenu(context);
+    if (kind == null) return;
+    final picked = kind == PickKind.folder ? await engine.pickFolder() : await engine.pickFiles();
+    if (picked != null && mounted) setState(() => _files = picked);
+  }
 
   Future<void> _scan(BuildContext context) async {
     void tell(String message) {
@@ -41,31 +60,70 @@ class SendPage extends StatelessWidget {
     } on Object {
       return tell("That isn't a Nearvolt code.");
     }
-    if (context.mounted) await openConnection(context, engine, device);
+    if (context.mounted) await openConnection(context, engine, device, files: _files);
   }
 
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    final files = _files;
     return PageScaffold(
       title: 'Send',
       onBack: () => Navigator.of(context).maybePop(),
       body: ListView(
         padding: const EdgeInsets.only(top: Space.l, bottom: Space.xl),
         children: [
-          Text('How do you want to connect?', style: text.titleLarge),
+          Text('What do you want to send?', style: text.titleLarge),
+          const SizedBox(height: Space.xs),
+          Text(
+            files == null
+                ? 'Choose now and it starts as soon as you connect, or connect first and add files after.'
+                : 'Sent as soon as the connection is set up.',
+            style: text.bodyMedium?.copyWith(color: AppColors.textSecondary),
+          ),
+          const SizedBox(height: Space.l),
+          if (files == null)
+            ChoiceTile(
+              icon: Icons.add_rounded,
+              title: 'Choose files',
+              detail: 'Optional. Files or a folder.',
+              onTap: _choose,
+            )
+          else
+            Panel(
+              child: Row(
+                children: [
+                  const Icon(Icons.insert_drive_file_outlined, color: AppColors.accent),
+                  const SizedBox(width: Space.m),
+                  Expanded(
+                    child: Text(
+                      '${filesLabel(files.files.length)} · ${formatBytes(files.bytes)}',
+                      style: text.bodyLarge,
+                    ),
+                  ),
+                  TextButton(onPressed: _choose, child: const Text('Change')),
+                  IconButton(
+                    onPressed: () => setState(() => _files = null),
+                    tooltip: 'Remove',
+                    icon: const Icon(Icons.close_rounded, color: AppColors.textSecondary),
+                  ),
+                ],
+              ),
+            ),
+          const SizedBox(height: Space.xl),
+          Text('How do you want to connect?', style: text.titleMedium),
           const SizedBox(height: Space.xs),
           Text(
             'Open Receive on the other phone first.',
             style: text.bodyMedium?.copyWith(color: AppColors.textSecondary),
           ),
-          const SizedBox(height: Space.xl),
-          if (profile.hasNfc)
+          const SizedBox(height: Space.l),
+          if (widget.profile.hasNfc)
             ChoiceTile(
               icon: Icons.nfc_rounded,
               title: 'Tap phones',
               detail: 'Hold the backs together. Connects at once, nothing to approve.',
-              onTap: () => _open(context, _TapPage(engine: engine)),
+              onTap: () => _open(context, _TapPage(engine: engine, files: _files)),
             ),
           ChoiceTile(
             icon: Icons.qr_code_scanner_rounded,
@@ -77,13 +135,13 @@ class SendPage extends StatelessWidget {
             icon: Icons.radar_rounded,
             title: 'Nearby phones',
             detail: 'Pick it from a list. The other phone approves with a code.',
-            onTap: () => _open(context, _NearbyPage(engine: engine)),
+            onTap: () => _open(context, _NearbyPage(engine: engine, files: _files)),
           ),
           ChoiceTile(
             icon: Icons.usb_rounded,
             title: 'USB cable',
             detail: 'Plug the phones into each other. No Wi-Fi needed.',
-            onTap: () => _open(context, _UsbPage(engine: engine)),
+            onTap: () => _open(context, _UsbPage(engine: engine, files: _files)),
           ),
         ],
       ),
@@ -92,7 +150,8 @@ class SendPage extends StatelessWidget {
 }
 
 /// Connects to [device] and shows the connection until the user leaves it.
-Future<void> openConnection(BuildContext context, TransferEngine engine, NearbyDevice device) {
+/// [files], if chosen first, are sent once the connection is set up.
+Future<void> openConnection(BuildContext context, TransferEngine engine, NearbyDevice device, {Selection? files}) {
   final updates = engine.connect(device);
   return Navigator.of(context).push(
     MaterialPageRoute<void>(
@@ -101,6 +160,7 @@ Future<void> openConnection(BuildContext context, TransferEngine engine, NearbyD
         updates: updates,
         initial: Connection(peer: device.name, link: device.link),
         sending: true,
+        files: files,
       ),
     ),
   );
@@ -110,6 +170,9 @@ Future<void> openConnection(BuildContext context, TransferEngine engine, NearbyD
 /// and stops listening while a connection it opened is showing.
 mixin _MethodMixin<T extends StatefulWidget, F> on State<T>, NeedsMixin<T> {
   StreamSubscription<F>? _sub;
+
+  /// Chosen on the Send page before connecting, if at all.
+  Selection? get files;
 
   Stream<F> find();
 
@@ -130,15 +193,16 @@ mixin _MethodMixin<T extends StatefulWidget, F> on State<T>, NeedsMixin<T> {
   Future<void> connectTo(NearbyDevice device) async {
     _sub?.cancel();
     _sub = null;
-    await openConnection(context, engine, device);
+    await openConnection(context, engine, device, files: files);
     if (mounted) restart();
   }
 }
 
 class _TapPage extends StatefulWidget {
-  const _TapPage({required this.engine});
+  const _TapPage({required this.engine, this.files});
 
   final TransferEngine engine;
+  final Selection? files;
 
   @override
   State<_TapPage> createState() => _TapPageState();
@@ -147,6 +211,9 @@ class _TapPage extends StatefulWidget {
 class _TapPageState extends State<_TapPage> with NeedsMixin, _MethodMixin<_TapPage, String> {
   @override
   TransferEngine get engine => widget.engine;
+
+  @override
+  Selection? get files => widget.files;
 
   @override
   Purpose get purpose => Purpose.tap;
@@ -178,9 +245,10 @@ class _TapPageState extends State<_TapPage> with NeedsMixin, _MethodMixin<_TapPa
 }
 
 class _UsbPage extends StatefulWidget {
-  const _UsbPage({required this.engine});
+  const _UsbPage({required this.engine, this.files});
 
   final TransferEngine engine;
+  final Selection? files;
 
   @override
   State<_UsbPage> createState() => _UsbPageState();
@@ -189,6 +257,9 @@ class _UsbPage extends StatefulWidget {
 class _UsbPageState extends State<_UsbPage> with NeedsMixin, _MethodMixin<_UsbPage, NearbyDevice?> {
   @override
   TransferEngine get engine => widget.engine;
+
+  @override
+  Selection? get files => widget.files;
 
   @override
   Purpose get purpose => Purpose.usb;
@@ -212,9 +283,10 @@ class _UsbPageState extends State<_UsbPage> with NeedsMixin, _MethodMixin<_UsbPa
 }
 
 class _NearbyPage extends StatefulWidget {
-  const _NearbyPage({required this.engine});
+  const _NearbyPage({required this.engine, this.files});
 
   final TransferEngine engine;
+  final Selection? files;
 
   @override
   State<_NearbyPage> createState() => _NearbyPageState();
@@ -225,6 +297,9 @@ class _NearbyPageState extends State<_NearbyPage> with NeedsMixin, _MethodMixin<
 
   @override
   TransferEngine get engine => widget.engine;
+
+  @override
+  Selection? get files => widget.files;
 
   @override
   Purpose get purpose => Purpose.nearby;

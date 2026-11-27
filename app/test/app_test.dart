@@ -225,14 +225,99 @@ void main() {
     expect(engine.discoveries, 2);
   });
 
-  testWidgets('NFC turned off is pointed out on the tap page', (tester) async {
+  testWidgets('NFC turned off is asked about on the tap page, and the notice stays if declined', (tester) async {
     engine.missing = const [Need.nfc];
     await openMethod(tester, 'Tap phones');
+    await tester.pump();
+    expect(find.text('Turn on NFC?'), findsOneWidget);
+
+    await go(tester, 'Not now');
+    expect(engine.fixed, isEmpty);
     expect(find.text('NFC is off. Turn it on to tap phones together.'), findsOneWidget);
 
     await tester.tap(find.text('Turn on'));
     await tester.pump();
     expect(engine.fixed, [Need.nfc]);
+  });
+
+  testWidgets('accepting the NFC question opens the NFC settings', (tester) async {
+    engine.missing = const [Need.nfc];
+    await openMethod(tester, 'Tap phones');
+    await tester.pump();
+    await go(tester, 'Turn on');
+    expect(engine.fixed, [Need.nfc]);
+  });
+
+  testWidgets('Receive also asks to turn NFC on, so the other phone can tap it', (tester) async {
+    engine.missing = const [Need.nfc];
+    await open(tester);
+    await go(tester, 'Receive');
+    await tester.pump();
+    expect(find.text('Turn on NFC?'), findsOneWidget);
+    expect(find.textContaining('the other phone can tap yours'), findsOneWidget);
+  });
+
+  testWidgets('files chosen first are sent once the connection is set up, not before', (tester) async {
+    await open(tester);
+    await go(tester, 'Send');
+    await go(tester, 'Choose files');
+    await go(tester, 'Files');
+    expect(find.text('4 files · 821 MB'), findsOneWidget);
+
+    await go(tester, 'Tap phones');
+    engine.tapped.add('NV1TAP');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('Sending to'), findsOneWidget);
+    expect(engine.queued, isEmpty, reason: 'still connecting');
+
+    engine.sending!.add(const Connection(phase: LinkPhase.waiting, peer: 'Tapped phone'));
+    await tester.pump();
+    expect(engine.queued, isEmpty, reason: 'not accepted yet');
+
+    engine.sending!.add(const Connection(phase: LinkPhase.connected, peer: 'Tapped phone'));
+    await tester.pump();
+    expect(engine.queued, [album]);
+
+    engine.sending!.add(const Connection(phase: LinkPhase.reconnecting, peer: 'Tapped phone'));
+    engine.sending!.add(const Connection(phase: LinkPhase.connected, peer: 'Tapped phone'));
+    await tester.pump();
+    expect(engine.queued, [album], reason: 'sent once, not again after a reconnect');
+  });
+
+  testWidgets('until the other phone accepts there is Cancel, not Disconnect, and no Add files', (tester) async {
+    await openMethod(tester, 'Nearby phones');
+    engine.devices.add([rahul]);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(rahulName));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Connecting…'), findsOneWidget);
+    expect(find.text('Cancel'), findsOneWidget);
+    expect(find.text('Disconnect'), findsNothing);
+    expect(find.text('Add files'), findsNothing);
+
+    engine.sending!.add(const Connection(phase: LinkPhase.waiting, peer: rahulName, code: '4821'));
+    await tester.pumpAndSettle();
+    expect(find.text('Cancel'), findsOneWidget);
+    expect(find.text('Add files'), findsNothing);
+
+    engine.sending!.add(connected);
+    await tester.pumpAndSettle();
+    expect(find.text('Disconnect'), findsOneWidget);
+    expect(find.text('Add files'), findsOneWidget);
+
+    engine.sending!.add(connected.copyWith(phase: LinkPhase.reconnecting));
+    await tester.pumpAndSettle();
+    expect(find.text('Stop reconnecting'), findsOneWidget);
+    expect(find.text('Disconnect'), findsNothing);
+    expect(find.text('Add files'), findsNothing);
+
+    // Cancelling before the connection is set up needs no confirmation.
+    await tester.tap(find.text('Stop reconnecting'));
+    await tester.pumpAndSettle();
+    expect(engine.disconnects, 1);
+    expect(find.text('Disconnect from $rahulName?'), findsNothing);
   });
 
   testWidgets('accepts one connection, receives every batch, then opens Receive again', (tester) async {

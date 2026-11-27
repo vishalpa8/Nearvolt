@@ -19,12 +19,16 @@ class ConnectionPage extends StatefulWidget {
     required this.updates,
     required this.initial,
     required this.sending,
+    this.files,
   });
 
   final TransferEngine engine;
   final Stream<Connection> updates;
   final Connection initial;
   final bool sending;
+
+  /// Chosen before connecting: sent as soon as the connection is fully set up.
+  final Selection? files;
 
   @override
   State<ConnectionPage> createState() => _ConnectionPageState();
@@ -34,11 +38,22 @@ class _ConnectionPageState extends State<ConnectionPage> {
   late Connection _c = widget.initial;
   late final StreamSubscription<Connection> _sub;
   var _leaving = false;
+  late var _pending = widget.files;
 
   @override
   void initState() {
     super.initState();
-    _sub = widget.updates.listen((c) => setState(() => _c = c));
+    _sub = widget.updates.listen(_update);
+    _update(_c);
+  }
+
+  void _update(Connection c) {
+    // Files chosen first wait for the connection to be fully set up.
+    if (c.phase == LinkPhase.connected && _pending != null) {
+      widget.engine.queue(_pending!);
+      _pending = null;
+    }
+    if (mounted) setState(() => _c = c);
   }
 
   @override
@@ -55,7 +70,14 @@ class _ConnectionPageState extends State<ConnectionPage> {
     if (selection != null) engine.queue(selection);
   }
 
+  /// Before the other phone has accepted there's nothing to disconnect from, so
+  /// leaving just cancels; only a connection that was set up asks first.
   Future<void> _disconnect() async {
+    if (_c.phase != LinkPhase.connected) {
+      setState(() => _leaving = true);
+      widget.engine.disconnect();
+      return;
+    }
     final sure = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -77,6 +99,9 @@ class _ConnectionPageState extends State<ConnectionPage> {
     final text = Theme.of(context).textTheme;
     final c = _c;
     final (status, color) = switch (c.phase) {
+      LinkPhase.connecting ||
+      LinkPhase.waiting ||
+      LinkPhase.reconnecting when _leaving => ('Cancelling…', AppColors.warning),
       LinkPhase.connecting => ('Connecting…', AppColors.accent),
       LinkPhase.waiting => ('Waiting for ${c.peer} to accept', AppColors.accent),
       LinkPhase.connected when _leaving => ('Disconnecting…', AppColors.warning),
@@ -120,14 +145,22 @@ class _ConnectionPageState extends State<ConnectionPage> {
             : Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (widget.sending)
+                  // Files can be added once the connection is set up, not before.
+                  if (widget.sending && c.phase == LinkPhase.connected)
                     FilledButton.icon(
                       onPressed: _leaving ? null : _add,
                       icon: const Icon(Icons.add_rounded),
                       label: const Text('Add files'),
                     ),
                   const SizedBox(height: Space.s),
-                  TextButton(onPressed: _leaving ? null : _disconnect, child: const Text('Disconnect')),
+                  TextButton(
+                    onPressed: _leaving ? null : _disconnect,
+                    child: Text(switch (c.phase) {
+                      LinkPhase.connected => 'Disconnect',
+                      LinkPhase.reconnecting => 'Stop reconnecting',
+                      _ => 'Cancel',
+                    }),
+                  ),
                 ],
               ),
       ),

@@ -60,15 +60,19 @@ Golden screenshots of each one are in [app/test/goldens](../app/test/goldens).
 1. **Home.** Two large cards, Send and Receive, and a "Check for updates" button
    that downloads and installs a new version in place. Nothing looks for other
    phones, or for updates, until asked.
-2. **Send.** "How do you want to connect?" with four choices: Tap phones (only
-   on phones with NFC), Scan code, Nearby phones and USB cable. Only the chosen
-   one runs.
+2. **Send.** An optional "Choose files" step, then "How do you want to connect?"
+   with four choices: Tap phones (only on phones with NFC), Scan code, Nearby
+   phones and USB cable. Only the chosen one runs. Files chosen first are sent
+   the moment the connection is set up, so choosing files and then tapping is
+   enough; with none chosen, files are added after connecting.
 3. **Tap phones, USB cable.** One picture and one instruction; the connection
    opens by itself when the phones touch or the cable answers.
 4. **Nearby phones.** Phones with Receive open, as round avatars with names.
    Anything a method still needs (a permission, NFC, Wi-Fi, Bluetooth,
    Location) shows as one notice at the top with the button that fixes it;
-   Receive shows the same.
+   Receive shows the same. NFC off, on Tap phones and on Receive, is also asked
+   about when the page opens ("Turn on NFC?"), since Android only lets the user
+   switch it on, in its settings.
 5. **Receive.** A large QR code, the name others see, and the ways to connect.
 6. **Receive prompt.** One sheet, "Rahul's Pixel 9 wants to connect and send you
    files", with the 4-digit code when there is one, and Accept and Decline.
@@ -76,6 +80,8 @@ Golden screenshots of each one are in [app/test/goldens](../app/test/goldens).
 7. **Connection.** Both phones: who they're connected to and how, the batch on
    the move as a large progress ring with percent, speed, time left and file
    count, and every batch so far, newest first. While the receiver decides it
-   shows the 4-digit code to compare. The sender's "Add files" asks Files or
-   Folder and queues them; "Disconnect" on either phone ends it for both, after
-   a confirmation. Back asks the same.
+   shows the 4-digit code to compare. "Connected" appears only once the other
+   phone has accepted. Until then, and while reconnecting, the screen offers
+   Cancel (or Stop reconnecting) and no Add files. Once connected, the sender's
+   "Add files" asks Files or Folder and queues them; "Disconnect" on either
+   phone ends it for both, after a confirmation. Back does the same.

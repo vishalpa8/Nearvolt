@@ -82,6 +82,37 @@ async fn qr_ticket_connects_after_the_user_accepts() {
     assert!(!dst.join(".nearvolt").exists(), "journal should be cleaned up");
 }
 
+/// The sender pings every half second while the receiver's user decides. A slow
+/// answer must neither drop the sender nor ask the user again.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_user_who_takes_a_few_seconds_to_accept_is_asked_once() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (src, dst) = (tmp.path().join("src"), tmp.path().join("dst"));
+    sample_files(&src);
+    let rx = receiver(&dst, false);
+    let peer = Peer::from_ticket(&rx.ticket());
+    let asked = Arc::new(AtomicU32::new(0));
+    let count = asked.clone();
+    let approve: Approver = Arc::new(move |_| {
+        count.fetch_add(1, Ordering::SeqCst);
+        async {
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            true
+        }
+        .boxed()
+    });
+    let (events_tx, mut events_rx) = mpsc::unbounded_channel();
+
+    let (received, sent) =
+        tokio::join!(rx.run(approve, Arc::new(Stats::default()), None), send_album(&peer, &src, Some(events_tx)));
+    received.unwrap();
+    sent.unwrap();
+
+    assert_eq!(asked.load(Ordering::SeqCst), 1);
+    assert!(!drain(&mut events_rx).iter().any(|e| matches!(e, Event::ConnectionLost { .. })));
+    assert_same(&src.join("album"), &dst.join("album"));
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_tap_connects_without_asking() {
     let tmp = tempfile::tempdir().unwrap();

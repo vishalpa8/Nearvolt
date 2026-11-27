@@ -334,15 +334,27 @@ async fn serve(
     let accepted = tapped || *shared.trusted.lock().unwrap() == Some(sender);
     if !accepted {
         let request = Request { sender_name: sender_name.clone(), code };
-        let approved = tokio::select! {
-            approved = (shared.approve)(request) => approved,
-            msg = control_rx.recv() => match msg {
-                Some(Err(e)) => return Err(e),
-                _ => bail!("the sender left before the connection was accepted"),
-            },
-            _ = ending.changed() => {
-                let _ = write_msg(&mut send, &Control::Bye).await;
-                return Ok(Outcome::Ended);
+        let decision = (shared.approve)(request);
+        tokio::pin!(decision);
+        let approved = loop {
+            tokio::select! {
+                approved = &mut decision => break approved,
+                // Pings keep arriving while the user decides; only a goodbye, an
+                // error or a closed stream means the sender is gone.
+                msg = control_rx.recv() => match msg {
+                    Some(Ok(Control::Ping)) => {}
+                    Some(Ok(Control::Bye)) => {
+                        emit(&shared.events, Event::PeerLeft);
+                        return Ok(Outcome::Ended);
+                    }
+                    Some(Err(e)) => return Err(e),
+                    Some(Ok(other)) => bail!("unexpected message before the connection was accepted: {other:?}"),
+                    None => bail!("the sender left before the connection was accepted"),
+                },
+                _ = ending.changed() => {
+                    let _ = write_msg(&mut send, &Control::Bye).await;
+                    return Ok(Outcome::Ended);
+                }
             }
         };
         if !approved {

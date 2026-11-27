@@ -63,7 +63,8 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
 
   List<Need> _needs(Readiness r, Purpose purpose) => [
     if (purpose.findsPhones && !r.permission) r.permissionInSettings ? Need.permissionInSettings : Need.permission,
-    if (purpose == Purpose.tap && !r.nfc) Need.nfc,
+    // Receive offers tapping too, so its phone needs NFC on to be tapped.
+    if ((purpose == Purpose.tap || purpose == Purpose.receive) && !r.nfc) Need.nfc,
     if (purpose != Purpose.usb && !r.wifi) Need.wifi,
     if (purpose.findsPhones && !r.bluetooth) Need.bluetooth,
     if (purpose.findsPhones && !r.location) Need.location,
