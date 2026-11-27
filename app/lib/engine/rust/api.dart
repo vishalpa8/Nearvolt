@@ -13,28 +13,42 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 /// Loads or creates this device's identity in `data_dir`. Safe to call again.
 void startEngine({required String dataDir, required String deviceName}) =>
-    RustLib.instance.api.crateApiStartEngine(dataDir: dataDir, deviceName: deviceName);
+    RustLib.instance.api.crateApiStartEngine(
+      dataDir: dataDir,
+      deviceName: deviceName,
+    );
 
-TicketInfo readTicket({required String text}) => RustLib.instance.api.crateApiReadTicket(text: text);
+TicketInfo readTicket({required String text}) =>
+    RustLib.instance.api.crateApiReadTicket(text: text);
 
 /// Opens Receive: waits for one phone to connect, then receives its batches until
 /// either phone disconnects. Files go to `dest_dir`; journals for interrupted
 /// transfers go to `journal_dir`.
-Stream<TransferEvent> receive({required String destDir, required String journalDir}) =>
-    RustLib.instance.api.crateApiReceive(destDir: destDir, journalDir: journalDir);
+Stream<TransferEvent> receive({
+  required String destDir,
+  required String journalDir,
+}) => RustLib.instance.api.crateApiReceive(
+  destDir: destDir,
+  journalDir: journalDir,
+);
 
 /// Tickets for the open receive session. Call again once a Wi-Fi Direct group is
 /// up, so the tickets carry its details and address.
-ReceiveTickets receiveTickets({WifiInfo? wifi}) => RustLib.instance.api.crateApiReceiveTickets(wifi: wifi);
+ReceiveTickets receiveTickets({WifiInfo? wifi}) =>
+    RustLib.instance.api.crateApiReceiveTickets(wifi: wifi);
 
 /// Answers the `Request` event with this `request_id`. Returns false when that
 /// question is gone, for example because the phone asking has left.
 bool answerRequest({required PlatformInt64 requestId, required bool accept}) =>
-    RustLib.instance.api.crateApiAnswerRequest(requestId: requestId, accept: accept);
+    RustLib.instance.api.crateApiAnswerRequest(
+      requestId: requestId,
+      accept: accept,
+    );
 
 /// Ends the receiving side's connection; the sender is told, so it stops
 /// reconnecting. Receive then ends with `Disconnected`.
-void disconnectReceiving() => RustLib.instance.api.crateApiDisconnectReceiving();
+void disconnectReceiving() =>
+    RustLib.instance.api.crateApiDisconnectReceiving();
 
 /// Closes Receive at once, for example when the page goes away.
 void stopReceiving() => RustLib.instance.api.crateApiStopReceiving();
@@ -43,8 +57,13 @@ void stopReceiving() => RustLib.instance.api.crateApiStopReceiving();
 /// the same way whenever the link drops, until `disconnect`. With
 /// `direct_address`, the address of a Wi-Fi Direct group this phone has joined,
 /// only that address is used; otherwise every address in the ticket is tried.
-Stream<TransferEvent> connect({required String ticket, String? directAddress}) =>
-    RustLib.instance.api.crateApiConnect(ticket: ticket, directAddress: directAddress);
+Stream<TransferEvent> connect({
+  required String ticket,
+  String? directAddress,
+}) => RustLib.instance.api.crateApiConnect(
+  ticket: ticket,
+  directAddress: directAddress,
+);
 
 /// Connects over the USB cable. With no ticket to pin, both phones confirm a code.
 Stream<TransferEvent> connectUsb() => RustLib.instance.api.crateApiConnectUsb();
@@ -53,8 +72,13 @@ Stream<TransferEvent> connectUsb() => RustLib.instance.api.crateApiConnectUsb();
 /// connection. Batches are sent one after another, numbered from 0. A very large
 /// selection is cut into several batches; the result lists how many files go in
 /// each, in order, so the app can show the same batches.
-Uint32List queueFiles({required PlatformInt64 sourceToken, required List<SourceFile> files}) =>
-    RustLib.instance.api.crateApiQueueFiles(sourceToken: sourceToken, files: files);
+Uint32List queueFiles({
+  required PlatformInt64 sourceToken,
+  required List<SourceFile> files,
+}) => RustLib.instance.api.crateApiQueueFiles(
+  sourceToken: sourceToken,
+  files: files,
+);
 
 /// Ends the sending side's connection, even in the middle of a batch; the
 /// receiver is told. The connection then ends with `Disconnected`.
@@ -63,7 +87,8 @@ void disconnect() => RustLib.instance.api.crateApiDisconnect();
 /// A USB cable to another phone is ready: `fd` is a stream socket the engine now
 /// owns. `host` is true on the phone powering the cable, so the two ends differ.
 /// Streams the other phone opens go to Receive while it is open.
-void attachUsb({required int fd, required bool host}) => RustLib.instance.api.crateApiAttachUsb(fd: fd, host: host);
+void attachUsb({required int fd, required bool host}) =>
+    RustLib.instance.api.crateApiAttachUsb(fd: fd, host: host);
 
 enum EventKind {
   /// Receive is open; `receive_tickets` is ready.
@@ -144,7 +169,11 @@ class ReceiveTickets {
   });
 
   @override
-  int get hashCode => privateTicket.hashCode ^ tapTicket.hashCode ^ publicTicket.hashCode ^ port.hashCode;
+  int get hashCode =>
+      privateTicket.hashCode ^
+      tapTicket.hashCode ^
+      publicTicket.hashCode ^
+      port.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -271,7 +300,11 @@ class WifiInfo {
   /// MHz.
   final int frequency;
 
-  const WifiInfo({required this.ssid, required this.passphrase, required this.frequency});
+  const WifiInfo({
+    required this.ssid,
+    required this.passphrase,
+    required this.frequency,
+  });
 
   @override
   int get hashCode => ssid.hashCode ^ passphrase.hashCode ^ frequency.hashCode;
