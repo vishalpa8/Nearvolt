@@ -196,13 +196,19 @@ impl Receiver {
                 result = join(&mut current), if current.is_some() => {
                     current = None;
                     match result {
-                        Ok(Outcome::Ended) => return Ok(shared.summary()),
+                        Ok(Outcome::Ended) => {
+                            shared.discard_unfinished().await;
+                            return Ok(shared.summary());
+                        }
                         Ok(Outcome::Declined) => {}
                         Err(e) if is_fatal(&e) => return Err(e),
                         Err(e) => emit(&events, Event::ConnectionLost { reason: format!("{e:#}") }),
                     }
                 }
-                _ = ending.changed(), if current.is_none() => return Ok(shared.summary()),
+                _ = ending.changed(), if current.is_none() => {
+                    shared.discard_unfinished().await;
+                    return Ok(shared.summary());
+                }
             }
         }
     }
@@ -227,6 +233,13 @@ impl Shared {
     fn summary(&self) -> Summary {
         let (files, bytes) = *self.totals.lock().unwrap();
         Summary { files, bytes, elapsed: self.started.elapsed() }
+    }
+
+    /// A deliberate disconnect leaves nothing to resume, so a batch still in
+    /// progress is thrown away rather than kept as hidden part files.
+    async fn discard_unfinished(&self) {
+        let Some(Active { state, .. }) = self.active.lock().await.take() else { return };
+        let _ = tokio::task::spawn_blocking(move || state.discard()).await;
     }
 }
 

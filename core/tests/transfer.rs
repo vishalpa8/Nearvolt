@@ -229,6 +229,68 @@ async fn a_cut_in_the_middle_of_a_file_resumes_instead_of_restarting() {
     assert_same(&src.join("album"), &dst.join("album"));
 }
 
+fn files_under(dir: &Path) -> Vec<String> {
+    fn walk(dir: &Path, out: &mut Vec<String>) {
+        for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            out.push(path.to_string_lossy().into_owned());
+            if path.is_dir() {
+                walk(&path, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(dir, &mut out);
+    out
+}
+
+/// Ending the connection on purpose in the middle of a file leaves nothing
+/// behind: no half file, no hidden part file, no journal, no empty folder.
+#[tokio::test(flavor = "multi_thread")]
+async fn disconnecting_in_the_middle_of_a_file_removes_the_unfinished_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (src, dst, journals) = (tmp.path().join("src"), tmp.path().join("dst"), tmp.path().join("journals"));
+    fs::create_dir_all(src.join("trip")).unwrap();
+    // A sparse 400 MB file: big enough to still be arriving when we disconnect.
+    fs::File::create(src.join("trip/video.bin")).unwrap().set_len(400 * 1024 * 1024).unwrap();
+    let options = ReceiveOptions {
+        dir: dst.clone(),
+        journal_dir: Some(journals.clone()),
+        device_name: "Receiver".into(),
+        allow_code_pairing: false,
+    };
+    let rx = Receiver::bind(&Identity::generate().unwrap(), SocketAddr::from(([127, 0, 0, 1], 0)), options).unwrap();
+    let peer = Peer::from_ticket(&rx.ticket());
+    let received_stats = Arc::new(Stats::default());
+
+    let (commands, queue) = mpsc::unbounded_channel();
+    commands.send(Command::Send(FileSet::Paths(vec![src.join("trip")]))).unwrap();
+    let watch = received_stats.clone();
+    let stopper = tokio::spawn(async move {
+        // Disconnect once part of the file is on the receiver.
+        while watch.snapshot().done_bytes < 8 * 1024 * 1024 {
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
+        commands.send(Command::Disconnect).unwrap();
+        commands
+    });
+    let identity = Identity::generate().unwrap();
+    let options = SendOptions::default();
+    let sending = connect(&identity, &peer, &options, queue, Arc::new(Stats::default()), None);
+    let receiving = rx.run(approve_all(Arc::default()), received_stats.clone(), None);
+    let (received, sent) =
+        tokio::time::timeout(std::time::Duration::from_secs(20), async { tokio::join!(receiving, sending) })
+            .await
+            .expect("both sides should stop");
+    received.unwrap();
+    sent.unwrap();
+    let _ = stopper.await;
+
+    assert!(received_stats.snapshot().done_bytes < 400 * 1024 * 1024, "it should have been cut off");
+    assert_eq!(files_under(&dst), Vec::<String>::new(), "the receiver kept something");
+    assert_eq!(files_under(&journals), Vec::<String>::new(), "the receiver kept a journal");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn one_cable_carries_every_stream_of_a_transfer() {
     let tmp = tempfile::tempdir().unwrap();

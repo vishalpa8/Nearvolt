@@ -82,7 +82,7 @@ class _ConnectionPageState extends State<ConnectionPage> {
       context: context,
       builder: (context) => AlertDialog(
         title: Text('Disconnect from ${_c.peer}?'),
-        content: const Text('Files already received stay. Anything unfinished picks up where it stopped next time.'),
+        content: const Text('Files that have finished arriving stay. A file still arriving is removed.'),
         actions: [
           TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Stay connected')),
           TextButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Disconnect')),

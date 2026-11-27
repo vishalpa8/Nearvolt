@@ -336,6 +336,32 @@ impl TransferState {
     }
 
     /// Deletes the journal once the batch is complete.
+    /// The batch was ended on purpose, so nothing is left to resume: removes the
+    /// half-received files, their journal and any folder made only for them.
+    /// Files that arrived complete and verified stay where they were saved.
+    pub(super) fn discard(&self) {
+        for i in 0..self.files.len() as u32 {
+            let mut slot = self.slot(i);
+            if slot.done {
+                continue;
+            }
+            slot.handle = None;
+            drop(slot);
+            let part = self.part_path(i);
+            if fs::remove_file(&part).is_ok() {
+                // Folders go from the inside out, and only while they're empty.
+                let mut dir = part.parent();
+                while let Some(d) = dir.filter(|d| *d != self.root && d.starts_with(&self.root)) {
+                    if fs::remove_dir(d).is_err() {
+                        break;
+                    }
+                    dir = d.parent();
+                }
+            }
+        }
+        self.cleanup();
+    }
+
     pub(super) fn cleanup(&self) {
         self.journal.lock().unwrap().close();
         let _ = fs::remove_dir_all(&self.state_dir);

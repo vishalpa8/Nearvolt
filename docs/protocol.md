@@ -98,6 +98,11 @@ sender                                               receiver
   over only after a connection that lasted 5 seconds, so a receiver that hangs
   up at once is retried more and more slowly. The receiver lets the same sender
   back in without asking, and the sender re-offers the batch it was on.
+- `bye` is a deliberate end, so the receiver throws away the batch in progress:
+  the half-received file, its journal and any folder made only for it.
+  Complete, verified files stay. A dropped link, or a phone that vanishes
+  without saying `bye`, is not deliberate: the half-received file is kept so
+  the transfer can resume.
 - A batch the receiver can't take, for example for lack of space, is rejected
   on its own; the connection stays open for the next one.
 - If nothing moves for 30 seconds while a batch is open, the sender restarts the

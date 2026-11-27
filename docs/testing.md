@@ -93,6 +93,7 @@ Start with a fresh install, Bluetooth off.
 | 9 | B declines. | A shows "Connection failed" with "The receiver declined." |
 | 10 | While A and B are connected over the same Wi-Fi, look for B in a third phone's Nearby list and in its Wi-Fi Direct settings, and try connecting from the third phone with B's QR code. | B is in neither list, and the third phone is turned away: "This phone is connected to another device." |
 | 11 | Tap Disconnect on B. | A shows "B disconnected" and a Done button. Both stop. |
+| 11a | Send a large video and tap Disconnect on either phone halfway. | The receiver's `Download/Nearvolt` has no half file and no `.nvpart` file; files that had finished stay. Sending again starts the video from the beginning. |
 
 ### Keeping the connection
 
