@@ -69,8 +69,11 @@ class PageScaffold extends StatelessWidget {
 mixin NeedsMixin<T extends StatefulWidget> on State<T> {
   List<Need> needs = const [];
   late final AppLifecycleListener _lifecycle;
-  var _busy = false;
   var _checked = false;
+
+  /// Each check gets a number; only the newest one counts. A check that never ends,
+  /// for example a settings screen that never reported back, can't block the next.
+  var _latest = 0;
 
   TransferEngine get engine;
 
@@ -114,14 +117,14 @@ mixin NeedsMixin<T extends StatefulWidget> on State<T> {
 
   /// Only while this page is on top, so an open connection is never restarted.
   void _recheck() {
-    if (!_busy && (ModalRoute.of(context)?.isCurrent ?? true)) _update(engine.needs(purpose));
+    if (ModalRoute.of(context)?.isCurrent ?? true) _update(engine.needs(purpose));
   }
 
   Future<void> _update(Future<List<Need>> next, {bool always = false}) async {
-    _busy = true;
-    final now = await next;
-    _busy = false;
-    if (!mounted || (_checked && !always && listEquals(now, needs))) return;
+    final mine = ++_latest;
+    // A prompt that never answers must not leave the page blank for ever.
+    final now = await next.timeout(const Duration(seconds: 90), onTimeout: () => engine.needs(purpose));
+    if (!mounted || mine != _latest || (_checked && !always && listEquals(now, needs))) return;
     setState(() {
       needs = now;
       _checked = true;

@@ -50,6 +50,7 @@ class FakeEngine implements TransferEngine {
   /// What Android is missing; tests change it to simulate the user fixing things.
   List<Need> missing = const [];
   final fixed = <Need>[];
+  bool hangPrepare = false;
 
   @override
   Future<DeviceProfile> start() async => profile;
@@ -57,6 +58,8 @@ class FakeEngine implements TransferEngine {
   @override
   Future<List<Need>> prepare(Purpose purpose) async {
     prepared.add(purpose);
+    // A prompt that never reports back, as when a settings screen is lost.
+    if (hangPrepare) return Completer<List<Need>>().future;
     return missing;
   }
 

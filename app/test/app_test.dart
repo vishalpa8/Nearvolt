@@ -1,4 +1,4 @@
-import 'dart:ui' show Size;
+import 'dart:ui' show AppLifecycleState, Size;
 
 import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter_test/flutter_test.dart';
@@ -348,6 +348,28 @@ void main() {
     expect(engine.fixed, [Need.permission]);
     expect(find.text('Turn these on to continue'), findsNothing);
     expect(engine.discoveries, 1);
+  });
+
+  testWidgets('a prompt that never answers does not leave the page blank for ever', (tester) async {
+    engine.hangPrepare = true;
+    await openMethod(tester, 'Nearby phones');
+    expect(find.text('Turn these on to continue'), findsNothing);
+
+    // Coming back to the app checks again, even though the first check never ended.
+    engine.missing = const [Need.bluetooth];
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('Turn these on to continue'), findsOneWidget);
+
+    // The abandoned first check gives up on its own later, and changes nothing.
+    await tester.pump(const Duration(seconds: 91));
+    expect(find.text('Turn these on to continue'), findsOneWidget);
   });
 
   testWidgets('NFC off closes the tap page until it is on', (tester) async {

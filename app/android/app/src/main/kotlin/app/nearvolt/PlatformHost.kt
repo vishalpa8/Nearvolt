@@ -159,6 +159,13 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
             Requirement.BLUETOOTH -> if (nearbyGranted) {
                 val answer = activity.settings.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE))
                 if (answer.resultCode == Activity.RESULT_OK) settle { bluetooth?.isEnabled == false }
+                if (bluetooth?.isEnabled == false) {
+                    // The small dialog was closed, or this phone never showed it. Bluetooth's
+                    // own settings page always works, so the user is taken there.
+                    AppLog.write("setup", "Bluetooth is still off after the dialog; opening its settings")
+                    activity.settings.launch(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
+                    settle { bluetooth?.isEnabled == false }
+                }
             }
             Requirement.WIFI -> {
                 activity.settings.launch(Intent(Settings.Panel.ACTION_WIFI))

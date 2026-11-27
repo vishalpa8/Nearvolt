@@ -48,11 +48,24 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
       readiness = await _platform.fix(Requirement.permissions);
       if (readiness.permission && !readiness.bluetooth) readiness = await _platform.fix(Requirement.bluetooth);
     }
-    return _needs(readiness, purpose);
+    return _logged(purpose, _needs(readiness, purpose));
   }
 
   @override
-  Future<List<Need>> needs(Purpose purpose) async => _needs(await _platform.readiness(), purpose);
+  Future<List<Need>> needs(Purpose purpose) async => _logged(purpose, _needs(await _platform.readiness(), purpose));
+
+  final _lastNeeds = <Purpose, String>{};
+
+  /// Writes what a page is missing to the log, whenever that changes, so a page that
+  /// won't open can be explained afterwards.
+  List<Need> _logged(Purpose purpose, List<Need> needs) {
+    final text = needs.isEmpty ? 'ready' : 'missing ${needs.map((n) => n.name).join(', ')}';
+    if (_lastNeeds[purpose] != text) {
+      _lastNeeds[purpose] = text;
+      _platform.log('setup', '${purpose.name}: $text');
+    }
+    return needs;
+  }
 
   @override
   Future<void> fix(Need need) => _platform.fix(switch (need) {
@@ -137,6 +150,7 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
   @override
   Stream<List<NearbyDevice>> nearby() => _whileListened(
     _nearby.stream,
+    name: 'nearby',
     start: () {
       _found.clear();
       _searchFailed.value = false;
@@ -148,16 +162,17 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
 
   @override
   Stream<String> taps() =>
-      _whileListened(_taps.stream, start: _platform.startTapReading, stop: _platform.stopTapReading);
+      _whileListened(_taps.stream, name: 'tap', start: _platform.startTapReading, stop: _platform.stopTapReading);
 
   @override
   Stream<NearbyDevice?> usbPeer() =>
-      _whileListened(_usb.stream, start: _platform.watchUsb, stop: () async {}, initial: [_usbPeer]);
+      _whileListened(_usb.stream, name: 'usb', start: _platform.watchUsb, stop: () async {}, initial: [_usbPeer]);
 
   /// Runs `start` while someone listens, and `stop` once they stop. `initial`
   /// goes to the listener first.
   Stream<T> _whileListened<T>(
     Stream<T> source, {
+    required String name,
     required Future<void> Function() start,
     required Future<void> Function() stop,
     List<T> initial = const [],
@@ -168,14 +183,31 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
       onListen: () async {
         forward = source.listen(controller.add);
         initial.forEach(controller.add);
-        await start();
+        await _inOrder('$name: start', start);
       },
       onCancel: () async {
         await forward?.cancel();
-        await stop();
+        await _inOrder('$name: stop', stop);
       },
     );
     return controller.stream;
+  }
+
+  /// Turning a radio on and off is done one call at a time, in the order asked. A
+  /// page that restarts stops its old listener and starts a new one at once; without
+  /// this the old "stop" could land after the new "start" and switch it off. A failure
+  /// is written to the log instead of being lost.
+  Future<void> _radioQueue = Future.value();
+
+  Future<void> _inOrder(String what, Future<void> Function() operation) {
+    final next = _radioQueue.then((_) async {
+      try {
+        await operation();
+      } on Object catch (e) {
+        _platform.log('radio', '$what failed: $e');
+      }
+    });
+    return _radioQueue = next;
   }
 
   @override
@@ -206,8 +238,9 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
 
   @override
   Future<String?> scanCode() async {
+    _platform.log('scanner', 'opening the camera');
     final ticket = await _platform.scanQr();
-    if (ticket != null) _platform.log('scanner', 'read a code');
+    _platform.log('scanner', ticket == null ? 'closed without a code' : 'read a code');
     return ticket;
   }
 
