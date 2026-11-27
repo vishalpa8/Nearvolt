@@ -238,6 +238,11 @@ class Updater(private val activity: MainActivity, private val emit: (PlatformEve
             connectTimeout = 15_000
             readTimeout = 30_000
             instanceFollowRedirects = true
+            // Always ask GitHub, never a copy kept by the phone or a proxy: an old copy
+            // would say there is nothing new.
+            useCaches = false
+            setRequestProperty("Cache-Control", "no-cache")
+            setRequestProperty("Pragma", "no-cache")
         }
 
     companion object {
