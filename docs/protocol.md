@@ -26,8 +26,8 @@ which matters for phone battery and heat.
 The receiver creates tickets for each receive session. Text form: `NV1`
 followed by unpadded RFC 4648 base32, so it fits the QR alphanumeric mode.
 
-- The **QR ticket** carries a one-time secret. It's only shown on screen.
-- The **tap ticket** carries a different one-time secret. It's only served over
+- The **QR ticket** carries a secret that is new for each receive session. It's only shown on screen.
+- The **tap ticket** carries a different secret, also new for each receive session. It's only served over
   NFC, which works at a few centimetres. Holding the phones together is the
   consent, so a sender with this secret connects without a prompt.
 - The **public ticket** is the same without any secret. It's advertised over
@@ -41,7 +41,7 @@ Binary layout, all integers big-endian:
 | version (1) | 1 byte |
 | flags: 1 = has secret, 2 = has Wi-Fi Direct group | 1 byte |
 | receiver certificate fingerprint (BLAKE3) | 32 bytes |
-| one-time secret, if flag 1 | 16 bytes |
+| per-session secret, if flag 1 | 16 bytes |
 | address count (at most 16) | 1 byte |
 | each address: family (4 or 6), IP bytes, TCP port | 7 or 19 bytes |
 | device name | 1-byte length, then UTF-8 (at most 64 bytes) |

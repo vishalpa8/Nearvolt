@@ -565,7 +565,7 @@ async fn one_cable_carries_every_stream_of_a_transfer() {
     let (sender_link, receiver_link) = (MuxLink::default(), MuxLink::default());
     let streams = rx.streams();
     let _receiving = receiver_link.attach(receiver_end, false, move |stream| {
-        let _ = streams.try_send(stream);
+        let _ = streams.try_send(stream.into());
     });
     let _sending = sender_link.attach(sender_end, true, drop);
     let peer = Peer { link: sender_link, name: "Receiver".into(), fingerprint: None, secret: None };

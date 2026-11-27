@@ -10,6 +10,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /** Starts the log before anything else in the app runs, so crashes anywhere are recorded. */
@@ -23,8 +24,9 @@ class NearvoltApplication : Application() {
 /**
  * One plain-text log, Download/Nearvolt/nearvolt.log, that users can open and
  * share when something goes wrong: crashes, connections, update steps and
- * errors from every layer. It holds no file contents and no codes, and keeps
- * only the last week, under 1 MB.
+ * errors from every layer. It holds no file contents, no file names, no codes
+ * and no full IP addresses, and keeps only the last week, under 1 MB. Writing
+ * happens on a background thread, so logging never slows the screen.
  */
 object AppLog {
     private const val MAX_BYTES = 1_000_000L
@@ -34,6 +36,27 @@ object AppLog {
     private val time = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
     private val entryStart = Regex("(?m)^(?=\\d{4}-\\d{2}-\\d{2} )")
     private var file: File? = null
+    private val writer = Executors.newSingleThreadExecutor { r -> Thread(r, "nearvolt-log").apply { isDaemon = true } }
+    private val ipv4 = Regex("""\b(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\b""")
+    private val path = Regex("""(?<![\w.])(?:/[\w.\-@ ]+){2,}|[A-Za-z]:\\[^\s,;)]+""")
+    private val media = Regex(
+        """[^\s/\\'"()]+\.(?:jpe?g|png|gif|webp|heic|mp4|mov|mkv|avi|mp3|m4a|wav|pdf|docx?|xlsx?|pptx?|txt|zip|apk)\b""",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /** Leaves out what could identify a person or their files: full IP addresses, paths and file names. */
+    fun redact(message: String): String =
+        message
+            .replace(ipv4) { m ->
+                // A Wi-Fi Direct group address is not personal and says how the phones were linked.
+                if (m.groupValues[1] == "192" && m.groupValues[2] == "168" && m.groupValues[3] == "49") {
+                    "192.168.49.x"
+                } else {
+                    "${m.groupValues[1]}.${m.groupValues[2]}.x.x"
+                }
+            }
+            .replace(path, "<path>")
+            .replace(media, "<file>")
 
     fun start(context: Context) {
         file = runCatching { open(File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Nearvolt")) }
@@ -53,12 +76,19 @@ object AppLog {
         )
     }
 
-    @Synchronized
     fun write(tag: String, message: String) {
-        Log.i("Nearvolt", "[$tag] $message")
+        val clean = redact(message)
+        Log.i("Nearvolt", "[$tag] $clean")
+        val stamp = Date()
+        // A crash on the main thread ends the app right after, so it can't wait in a queue.
+        if (tag == "crash") append(tag, clean, stamp) else writer.execute { append(tag, clean, stamp) }
+    }
+
+    @Synchronized
+    private fun append(tag: String, message: String, stamp: Date) {
         val log = file ?: return
         runCatching {
-            log.appendText("${time.format(Date())} [$tag] $message\n")
+            log.appendText("${time.format(stamp)} [$tag] $message\n")
             if (log.length() > MAX_BYTES) trim(log)
         }
     }

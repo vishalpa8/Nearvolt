@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 
+import '../engine/engine.dart';
 import '../engine/messages.dart';
 import '../engine/models.dart';
 import '../theme.dart';
@@ -251,6 +252,40 @@ class NeedNotice extends StatelessWidget {
 }
 
 enum PickKind { files, folder }
+
+/// Picks files or a folder. A big folder takes a moment to read, so after a short
+/// wait a notice says so, instead of the screen looking frozen.
+Future<Selection?> pickSelection(BuildContext context, TransferEngine engine, PickKind kind) async {
+  final picking = kind == PickKind.folder ? engine.pickFolder() : engine.pickFiles();
+  var notice = false;
+  final navigator = Navigator.of(context, rootNavigator: true);
+  final timer = Timer(const Duration(milliseconds: 600), () {
+    if (!context.mounted) return;
+    notice = true;
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const PopScope(
+        canPop: false,
+        child: AlertDialog(
+          content: Row(
+            children: [
+              SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 3)),
+              SizedBox(width: Space.l),
+              Expanded(child: Text('Reading your files…')),
+            ],
+          ),
+        ),
+      ),
+    );
+  });
+  try {
+    return await picking;
+  } finally {
+    timer.cancel();
+    if (notice) navigator.pop();
+  }
+}
 
 /// Asks whether to pick files or a whole folder.
 Future<PickKind?> showPickMenu(BuildContext context) => showModalBottomSheet<PickKind>(

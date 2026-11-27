@@ -19,7 +19,10 @@ Golden screenshots are rendered on Windows, so CI on Linux skips them
   trace, what Android was missing when a permission or switch was asked for,
   each update step with Android's reason when an install fails, and each
   connection's milestones: connected, each batch with its size, time and speed,
-  drops, reconnects and disconnect. It holds no file contents and no codes.
+  drops, reconnects and disconnect. It holds no file contents, no file names,
+  no codes and no full IP addresses (`10.0.3.7` is written `10.0.x.x`; the
+  Wi-Fi Direct range `192.168.49.x` stays readable because it shows how the
+  phones linked). Phone names are not written either.
   It keeps the last 7 days and stays under 1 MB, so it never fills the phone.
   Share it, or with USB debugging:
   `adb pull /sdcard/Download/Nearvolt/nearvolt.log`.
@@ -118,6 +121,11 @@ Send at least 5 GB for each of these.
 |---|---|---|
 | 18 | Send as much as B's storage allows (aim for 100 GB or more), mixing large videos and thousands of photos. | Every batch ends "Sent and verified". Spot-check hashes. Record the speed below. |
 | 19 | Send a folder with nested folders and a few thousand small files. | The same folder structure appears under `Download/Nearvolt`, and the photos show up in the gallery. |
+
+| 19a | Receive a few photos and videos, then open the gallery on B without doing anything else. | They appear. If they don't, a media scan has to be added (not needed so far). |
+| 19b | On A, pick a folder with several thousand files. | After a moment a "Reading your files…" notice shows, then the files are listed. |
+| 19c | Receive on B while A is on another network: tap Scan code on A, then check B's Wi-Fi Direct group in the log. | A `192.168.49.x` address keeps the group open; any other address closes it. |
+| 19d | Check the log after a join on a phone with one Wi-Fi channel. | Two lines, `before joining: router on …` and `after joining: router on …`; note whether the router is lost. |
 
 ### Updates
 

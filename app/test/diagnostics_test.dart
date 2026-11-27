@@ -41,7 +41,7 @@ void main() {
     await Future<void>.delayed(Duration.zero);
 
     final log = platform.lines.join('\n');
-    expect(log, contains('[send] connected to Pixel 9 at 192.168.49.1:40599 (Wi-Fi Direct) in '));
+    expect(log, contains('[send] connected to the other phone at 192.168.49.1:40599 (Wi-Fi Direct) in '));
     expect(log, contains('[network] network: Wi-Fi 6'));
     expect(log, contains('[speed] batch 0: 40% (40.0 MB of 100 MB), '));
     expect(log, contains('· network: Wi-Fi 6'));
@@ -62,7 +62,10 @@ void main() {
     diagnostics.record(_event(EventKind.connected, text: 'Pixel 9', route: '10.0.0.7:40599'));
     await Future<void>.delayed(Duration.zero);
 
-    expect(platform.lines, contains(startsWith('[send] connected to Pixel 9 at 10.0.0.7:40599 (same Wi-Fi) in ')));
+    expect(
+      platform.lines,
+      contains(startsWith('[send] connected to the other phone at 10.0.0.7:40599 (same Wi-Fi) in ')),
+    );
     expect(platform.lines, contains('[send] connection lost: no word from the receiver for 4 seconds'));
     expect(platform.lines, contains(contains('again, ')));
     diagnostics.close();

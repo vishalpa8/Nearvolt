@@ -4,7 +4,7 @@
 use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
@@ -82,6 +82,9 @@ pub(super) struct TransferState {
     slots: Vec<Mutex<Slot>>,
     journal: Mutex<Journal>,
     remaining_files: AtomicU64,
+    /// Set when the batch was thrown away; a data stream still running must not
+    /// bring its part files back.
+    discarded: AtomicBool,
     pub(super) complete: watch::Sender<bool>,
     stats: Arc<Stats>,
     started: Instant,
@@ -105,6 +108,7 @@ impl TransferState {
             state_dir,
             slots: files.iter().map(|_| Mutex::new(Slot::default())).collect(),
             remaining_files: AtomicU64::new(files.len() as u64),
+            discarded: AtomicBool::new(false),
             files,
             journal: Mutex::new(journal),
             complete: watch::channel(false).0,
@@ -204,7 +208,7 @@ impl TransferState {
         let f = self.files.get(i as usize).context("data for an unknown file")?;
         ensure!(offset.checked_add(len) == Some(f.size), "data for {} has the wrong length", f.rel.display());
         let slot = self.slot(i);
-        if slot.done {
+        if slot.done || self.discarded.load(Ordering::Acquire) {
             return Ok(None);
         }
         ensure!(offset <= slot.written, "data for {} skips ahead", f.rel.display());
@@ -241,7 +245,7 @@ impl TransferState {
         let f = &self.files[i as usize];
         let file = {
             let mut slot = self.slot(i);
-            if slot.done {
+            if slot.done || self.discarded.load(Ordering::Acquire) {
                 return Ok(true);
             }
             ensure!(slot.written == f.size, "{} ended early", f.rel.display());
@@ -300,6 +304,7 @@ impl TransferState {
         if let Some(file) = &slot.handle {
             return Ok(file.clone());
         }
+        ensure!(!self.discarded.load(Ordering::Acquire), "this batch was cancelled");
         let path = self.part_path(i);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).with_context(|| format!("can't create {}", parent.display()))?;
@@ -384,6 +389,7 @@ impl TransferState {
     /// half-received files, their journal and any folder made only for them.
     /// Files that arrived complete and verified stay where they were saved.
     pub(super) fn discard(&self) {
+        self.discarded.store(true, Ordering::Release);
         for i in 0..self.files.len() as u32 {
             let mut slot = self.slot(i);
             if slot.done {

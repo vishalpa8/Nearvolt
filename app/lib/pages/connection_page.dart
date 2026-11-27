@@ -99,9 +99,9 @@ class _ConnectionPageState extends State<ConnectionPage> {
 
   Future<void> _add() async {
     final kind = await showPickMenu(context);
-    if (kind == null) return;
+    if (kind == null || !mounted) return;
     final engine = widget.engine;
-    final selection = kind == PickKind.folder ? await engine.pickFolder() : await engine.pickFiles();
+    final selection = await pickSelection(context, engine, kind);
     if (selection == null) return;
     if (selection.skipped > 0) _tell(leftOut(selection.skipped));
     if (selection.files.isEmpty) return;

@@ -37,6 +37,16 @@ two devices.
   code or a tap, which carry the group details. Tickets leave out mobile-data
   and VPN addresses too.
 
+## Limits on what a stranger can send
+
+- A code read from a tag or a scan can be at most 4 KB, and the other phone's
+  name has control and right-to-left characters removed and is cut to 64 bytes,
+  so a hostile name can't look like something else on screen.
+- The sender has 10 seconds to complete the pairing step after it connects.
+- The identity file is written to a temporary file and renamed, so a crash can't
+  leave half of it. A damaged one is moved aside (`.damaged`) and replaced.
+- The log never holds file names, full IP addresses or phone names.
+
 ## Listening
 
 The receiver listens only while the Receive page is open, on a random port, and

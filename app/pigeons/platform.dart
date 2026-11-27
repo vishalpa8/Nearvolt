@@ -191,7 +191,10 @@ abstract class NearvoltPlatform {
   /// A transfer started: stops advertising this phone over Bluetooth, the local
   /// network and NFC, and closes the Wi-Fi Direct group unless the sender
   /// joined it. The receiver keeps listening, so the sender can still reconnect.
-  void stopAdvertising();
+  ///
+  /// `senderAddress` is where the sender connected from, when known: an address of
+  /// the group means it came that way.
+  void stopAdvertising(String? senderAddress);
 
   void stopReceiving();
 

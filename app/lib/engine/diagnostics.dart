@@ -35,7 +35,7 @@ class Diagnostics {
   void record(rust.TransferEvent e) {
     switch (e.kind) {
       case rust.EventKind.request:
-        _log(_tag, 'request from ${e.text}');
+        _log(_tag, 'a phone is asking to connect');
       case rust.EventKind.code:
         _log(_tag, 'showing a confirmation code');
       case rust.EventKind.connected:
@@ -94,7 +94,7 @@ class Diagnostics {
         : '';
     _connecting = null;
     _lostAt = null;
-    _log(_tag, 'connected to ${e.text}$via$after');
+    _log(_tag, 'connected to the other phone$via$after');
     network();
   }
 

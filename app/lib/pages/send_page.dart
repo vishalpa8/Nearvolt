@@ -51,8 +51,8 @@ class _SendPageState extends State<SendPage> {
 
   Future<void> _choose() async {
     final kind = await showPickMenu(context);
-    if (kind == null) return;
-    final picked = kind == PickKind.folder ? await engine.pickFolder() : await engine.pickFiles();
+    if (kind == null || !mounted) return;
+    final picked = await pickSelection(context, engine, kind);
     if (picked == null || !mounted) return;
     if (picked.skipped > 0) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(leftOut(picked.skipped))));

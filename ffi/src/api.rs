@@ -395,7 +395,7 @@ pub fn attach_usb(fd: i32, host: bool) -> Result<()> {
     let session = engine.usb.attach(usb_stream(fd)?, host, |stream| {
         let receiving = ENGINE.get().and_then(|e| e.receiving.lock().unwrap().as_ref().map(|r| r.receiver.streams()));
         if let Some(streams) = receiving {
-            let _ = streams.try_send(stream);
+            let _ = streams.try_send(stream.into());
         }
     });
     *engine.usb_session.lock().unwrap() = Some(session);

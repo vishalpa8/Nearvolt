@@ -234,7 +234,7 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
         final ticket = to.id == 'usb' ? null : to.ticket ?? await _platform.readTicket(to.id);
         final wifi = ticket == null ? null : rust.readTicket(text: ticket).wifi;
         await _platform.startTransferService('Connected to ${to.name}');
-        _platform.log('send', 'connecting to ${to.name} (${to.link})');
+        _platform.log('send', 'connecting to the other phone (${to.link})');
         await diagnostics.network();
         // Phone to phone is the fastest route, so even on a shared Wi-Fi the sender
         // joins the receiver's own Wi-Fi Direct network first (asking for the
@@ -344,7 +344,7 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
           live.apply(event);
           if (event.kind == rust.EventKind.connected) {
             // Connected: the radios that found this phone have done their job.
-            await _platform.stopAdvertising();
+            await _platform.stopAdvertising(event.route);
             if (!serving) await _platform.startTransferService('Connected to ${live.state.peer}');
             serving = true;
           }

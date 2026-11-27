@@ -84,6 +84,8 @@ impl Ticket {
     }
 
     pub fn decode(text: &str) -> Result<Self> {
+        // Far larger than any real code; stops a hostile tag or scan from costing memory.
+        ensure!(text.len() <= 4096, "the code is damaged");
         let text = text.trim().to_ascii_uppercase();
         let body = text.strip_prefix(PREFIX).context("this is not a Nearvolt code")?;
         let bytes = BASE32_NOPAD.decode(body.as_bytes()).context("the code is damaged")?;
@@ -190,6 +192,19 @@ pub fn truncate_utf8(s: &str, max: usize) -> &str {
     &s[..end]
 }
 
+/// A device name that is safe to show: no control characters, no text-direction
+/// tricks (which could make a name read backwards), trimmed and length-limited.
+pub fn clean_name(s: &str) -> String {
+    let kept: String = s
+        .chars()
+        .filter(|c| {
+            !c.is_control()
+                && !matches!(*c, '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+        })
+        .collect();
+    truncate_utf8(kept.trim(), MAX_NAME_LEN).to_string()
+}
+
 fn put_str(b: &mut Vec<u8>, s: &str) {
     let s = truncate_utf8(s, MAX_NAME_LEN);
     b.push(s.len() as u8);
@@ -217,7 +232,8 @@ impl<'a> Reader<'a> {
     fn str(&mut self) -> Result<String> {
         let len = self.u8()? as usize;
         ensure!(len <= MAX_NAME_LEN, "the code is damaged");
-        String::from_utf8(self.take(len)?.to_vec()).context("the code is damaged")
+        let text = String::from_utf8(self.take(len)?.to_vec()).context("the code is damaged")?;
+        Ok(clean_name(&text))
     }
 }
 
@@ -267,6 +283,12 @@ mod tests {
         for good in ["wlan0", "p2p-wlan0-0", "eth0", "ap0", "Wi-Fi", "en0"] {
             assert!(!is_unreachable_interface(good), "{good}");
         }
+    }
+
+    #[test]
+    fn names_lose_control_and_direction_characters() {
+        assert_eq!(clean_name("  Ra\u{202E}hul\u{0007}\n's phone "), "Rahul's phone");
+        assert_eq!(clean_name(&"x".repeat(200)).len(), MAX_NAME_LEN);
     }
 
     #[test]

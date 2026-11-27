@@ -958,14 +958,17 @@ class NearvoltPlatform {
   /// A transfer started: stops advertising this phone over Bluetooth, the local
   /// network and NFC, and closes the Wi-Fi Direct group unless the sender
   /// joined it. The receiver keeps listening, so the sender can still reconnect.
-  Future<void> stopAdvertising() async {
+  ///
+  /// `senderAddress` is where the sender connected from, when known: an address of
+  /// the group means it came that way.
+  Future<void> stopAdvertising(String? senderAddress) async {
     final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.stopAdvertising$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
       binaryMessenger: pigeonVar_binaryMessenger,
     );
-    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(null);
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[senderAddress]);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
     _extractReplyValueOrThrow(
         pigeonVar_replyList,

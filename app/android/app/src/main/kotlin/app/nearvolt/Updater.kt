@@ -52,7 +52,11 @@ class Updater(private val activity: MainActivity, private val emit: (PlatformEve
         AppLog.write("update", "latest ${manifest.optString("version")} (${manifest.optLong("code")}), installed ${installedCode()}")
         if (manifest.getLong("code") <= installedCode()) return@withContext null
         val apks = manifest.getJSONObject("apks")
-        val abi = Build.SUPPORTED_ABIS.firstOrNull(apks::has) ?: return@withContext null
+        val abi = Build.SUPPORTED_ABIS.firstOrNull(apks::has) ?: run {
+            // A newer version exists, just not for this phone: say so instead of "latest".
+            AppLog.write("update", "no build for ${Build.SUPPORTED_ABIS.joinToString()}")
+            throw FlutterError("no-build", "A newer version exists, but it isn't available for this phone yet.")
+        }
         val apk = apks.getJSONObject(abi)
         UpdateInfo(manifest.getString("version"), manifest.optString("notes"), apk.getString("url"), apk.getString("sha256"))
     }

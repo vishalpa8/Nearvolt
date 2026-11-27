@@ -315,11 +315,11 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
 
     override fun releaseSelection(token: Long) = NativeBridge.release(token)
 
-    override fun stopAdvertising() {
+    override fun stopAdvertising(senderAddress: String?) {
         nfc.stopServing()
         local.stopAdvertising()
         ble.stopAdvertising()
-        if (nearbyGranted) scope.launch { wifiDirect.removeGroupIfUnused() }
+        if (nearbyGranted) scope.launch { wifiDirect.removeGroupIfUnused(senderAddress) }
     }
 
     override fun stopReceiving() {

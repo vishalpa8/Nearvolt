@@ -826,8 +826,11 @@ interface NearvoltPlatform {
    * A transfer started: stops advertising this phone over Bluetooth, the local
    * network and NFC, and closes the Wi-Fi Direct group unless the sender
    * joined it. The receiver keeps listening, so the sender can still reconnect.
+   *
+   * `senderAddress` is where the sender connected from, when known: an address of
+   * the group means it came that way.
    */
-  fun stopAdvertising()
+  fun stopAdvertising(senderAddress: String?)
   fun stopReceiving()
   /** Looks for receivers on the local network and over Bluetooth. */
   fun startNearby()
@@ -1057,9 +1060,11 @@ interface NearvoltPlatform {
       run {
         val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.nearvolt.NearvoltPlatform.stopAdvertising$separatedMessageChannelSuffix", codec)
         if (api != null) {
-          channel.setMessageHandler { _, reply ->
+          channel.setMessageHandler { message, reply ->
+            val args = message as List<Any?>
+            val senderAddressArg = args[0] as String?
             val wrapped: List<Any?> = try {
-              api.stopAdvertising()
+              api.stopAdvertising(senderAddressArg)
               listOf(null)
             } catch (exception: Throwable) {
               PlatformPigeonUtils.wrapError(exception)

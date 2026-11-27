@@ -72,6 +72,7 @@ dependencies {
     implementation("androidx.annotation:annotation:1.9.1")
     implementation("com.google.android.gms:play-services-base:18.11.1")
     implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
+    testImplementation("junit:junit:4.13.2")
 }
 
 // Builds the Rust engine (ffi crate) for every ABI into jniLibs before each build.

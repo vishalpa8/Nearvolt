@@ -28,17 +28,31 @@ impl Identity {
 
     pub fn load_or_create(path: &Path) -> Result<Self> {
         match fs::read(path) {
-            Ok(bytes) => Self::decode(&bytes).with_context(|| format!("reading identity {}", path.display())),
-            Err(e) if e.kind() == ErrorKind::NotFound => {
-                let identity = Self::generate()?;
-                if let Some(parent) = path.parent() {
-                    fs::create_dir_all(parent)?;
+            Ok(bytes) => match Self::decode(&bytes) {
+                Ok(identity) => Ok(identity),
+                Err(_) => {
+                    // A damaged file must not stop the app from starting: keep it aside
+                    // for inspection and make a fresh identity.
+                    let aside = path.with_extension("damaged");
+                    let _ = fs::rename(path, &aside);
+                    Self::create(path)
                 }
-                fs::write(path, identity.encode())?;
-                Ok(identity)
-            }
-            Err(e) => Err(e.into()),
+            },
+            Err(e) if e.kind() == ErrorKind::NotFound => Self::create(path),
+            Err(e) => Err(e).with_context(|| format!("reading identity {}", path.display())),
         }
+    }
+
+    /// Writes to a temporary file first, so a crash never leaves half an identity behind.
+    fn create(path: &Path) -> Result<Self> {
+        let identity = Self::generate()?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let temp = path.with_extension("tmp");
+        fs::write(&temp, identity.encode())?;
+        fs::rename(&temp, path)?;
+        Ok(identity)
     }
 
     pub fn fingerprint(&self) -> &Fingerprint {
@@ -107,5 +121,15 @@ mod tests {
         let a = Identity::load_or_create(&path).unwrap();
         let b = Identity::load_or_create(&path).unwrap();
         assert_eq!(a.fingerprint(), b.fingerprint());
+    }
+
+    #[test]
+    fn a_damaged_file_is_set_aside_and_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("id");
+        std::fs::write(&path, b"garbage").unwrap();
+        let fresh = Identity::load_or_create(&path).unwrap();
+        assert!(dir.path().join("id.damaged").exists());
+        assert_eq!(Identity::load_or_create(&path).unwrap().fingerprint(), fresh.fingerprint());
     }
 }

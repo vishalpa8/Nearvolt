@@ -37,6 +37,19 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> Io for T {}
 
 /// An unencrypted byte stream to the peer.
 pub type RawStream = Box<dyn Io>;
+
+/// A stream the receiver was handed, with where it came from when that is known
+/// (over a cable there is no address).
+pub struct Arrival {
+    pub stream: RawStream,
+    pub from: Option<std::net::IpAddr>,
+}
+
+impl From<RawStream> for Arrival {
+    fn from(stream: RawStream) -> Self {
+        Self { stream, from: None }
+    }
+}
 pub type TlsStream = tokio_rustls::TlsStream<RawStream>;
 
 /// Opens raw byte streams to one peer.
@@ -176,20 +189,20 @@ fn always_reading(stream: tokio_yamux::StreamHandle) -> RawStream {
 
 /// Accepts TCP connections on `addr` and forwards them as raw streams into
 /// `streams`. Returns the bound address and the task, which stops when dropped.
-pub fn listen_tcp(addr: SocketAddr, streams: mpsc::Sender<RawStream>) -> Result<(SocketAddr, AbortOnDrop<()>)> {
+pub fn listen_tcp(addr: SocketAddr, streams: mpsc::Sender<Arrival>) -> Result<(SocketAddr, AbortOnDrop<()>)> {
     let std_listener = std::net::TcpListener::bind(addr)?;
     std_listener.set_nonblocking(true)?;
     let listener = TcpListener::from_std(std_listener)?;
     let local = listener.local_addr()?;
     let task = tokio::spawn(async move {
         loop {
-            let Ok((tcp, _)) = listener.accept().await else {
+            let Ok((tcp, from)) = listener.accept().await else {
                 // Out of file descriptors and the like: wait instead of spinning.
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 continue;
             };
             tune(&tcp);
-            if streams.send(Box::new(tcp)).await.is_err() {
+            if streams.send(Arrival { stream: Box::new(tcp), from: Some(from.ip()) }).await.is_err() {
                 break;
             }
         }

@@ -11,19 +11,19 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use futures::future::BoxFuture;
-use tokio::io::{AsyncReadExt, ReadHalf};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::sync::{mpsc, watch, Semaphore};
 use tokio::task::JoinSet;
 
 use super::state::{plan_files, sweep_stale, transfer_id, TransferState};
 use super::{classify, emit, is_fatal, Event, EventSender, FailureKind, Fatal, Stats, Summary};
 use crate::identity::{Fingerprint, Identity};
-use crate::pairing::{self, constant_time_eq, truncate_utf8, Secret, Ticket, MAX_NAME_LEN};
+use crate::pairing::{self, constant_time_eq, Secret, Ticket};
 use crate::protocol::{
     read_header, read_msg, write_msg, Control, FileHeader, Offer, SessionId, FILE_HEADER_LEN, HASH_LEN,
     HEARTBEAT_INTERVAL, HEARTBEAT_TIMEOUT, PROTOCOL_VERSION,
 };
-use crate::transport::{listen_tcp, Acceptor, RawStream, TlsStream};
+use crate::transport::{listen_tcp, Acceptor, Arrival, RawStream, TlsStream};
 use crate::util::AbortOnDrop;
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -77,8 +77,8 @@ pub struct Receiver {
     bind_ip: IpAddr,
     port: u16,
     options: Arc<ReceiveOptions>,
-    streams_tx: mpsc::Sender<RawStream>,
-    streams_rx: tokio::sync::Mutex<mpsc::Receiver<RawStream>>,
+    streams_tx: mpsc::Sender<Arrival>,
+    streams_rx: tokio::sync::Mutex<mpsc::Receiver<Arrival>>,
     ending: watch::Sender<bool>,
     _tcp: AbortOnDrop<()>,
 }
@@ -131,7 +131,7 @@ impl Receiver {
     }
 
     /// Feeds raw streams from another link, such as a USB cable.
-    pub fn streams(&self) -> mpsc::Sender<RawStream> {
+    pub fn streams(&self) -> mpsc::Sender<Arrival> {
         self.streams_tx.clone()
     }
 
@@ -181,7 +181,7 @@ impl Receiver {
                     )
                     .into());
                 }
-                Some(raw) = incoming.recv() => {
+                Some(Arrival { stream: raw, from }) = incoming.recv() => {
                     // Too many at once: drop it. Counted, and reported now and then.
                     let Ok(permit) = handshakes.clone().try_acquire_owned() else {
                         ignored.fetch_add(1, Ordering::Relaxed);
@@ -192,7 +192,7 @@ impl Receiver {
                         (self.acceptor.clone(), [self.secret, self.tap_secret], self.options.allow_code_pairing);
                     let ignored = ignored.clone();
                     tokio::spawn(async move {
-                        let authed = authenticate(raw, acceptor, secrets, code).await.ok();
+                        let authed = authenticate(raw, from, acceptor, secrets, code).await.ok();
                         if authed.is_none() {
                             ignored.fetch_add(1, Ordering::Relaxed);
                         }
@@ -323,6 +323,8 @@ struct Authed {
     commitment: Option<[u8; 32]>,
     /// The sender got the ticket by tapping phones.
     tapped: bool,
+    /// Where the sender connected from, when it came over a network.
+    from: Option<std::net::IpAddr>,
 }
 
 /// The connection currently being served. Data streams join it by session ID.
@@ -341,7 +343,13 @@ async fn join(current: &mut Option<Current>) -> Result<Outcome> {
 }
 
 /// `secrets` holds the QR code's secret, then the NFC tap's.
-async fn authenticate(raw: RawStream, acceptor: Acceptor, secrets: [Secret; 2], allow_code: bool) -> Result<Authed> {
+async fn authenticate(
+    raw: RawStream,
+    from: Option<std::net::IpAddr>,
+    acceptor: Acceptor,
+    secrets: [Secret; 2],
+    allow_code: bool,
+) -> Result<Authed> {
     let (mut stream, sender) = acceptor.handshake(raw).await?;
     let hello = tokio::time::timeout(HANDSHAKE_TIMEOUT, read_msg(&mut stream)).await??;
     let Control::Hello { version, secret: offered, device_name, session, commitment } = hello else {
@@ -363,9 +371,9 @@ async fn authenticate(raw: RawStream, acceptor: Acceptor, secrets: [Secret; 2], 
         let _ = write_msg(&mut stream, &invalid).await;
         bail!("unauthorized sender");
     }
-    let sender_name = truncate_utf8(device_name.trim(), MAX_NAME_LEN).to_string();
+    let sender_name = pairing::clean_name(&device_name);
     let commitment = if offered.is_none() { commitment } else { None };
-    Ok(Authed { stream, sender, sender_name, session, commitment, tapped })
+    Ok(Authed { stream, sender, sender_name, session, commitment, tapped, from })
 }
 
 fn reject(kind: FailureKind, reason: &str) -> Control {
@@ -396,14 +404,16 @@ async fn serve(
     mut data_rx: mpsc::Receiver<TlsStream>,
     mut ending: watch::Receiver<bool>,
 ) -> Result<Outcome> {
-    let Authed { stream, sender, sender_name, commitment, tapped, .. } = authed;
+    let Authed { stream, sender, sender_name, commitment, tapped, from, .. } = authed;
     let (mut recv, mut send) = tokio::io::split(stream);
     let nonce = commitment.map(|_| pairing::new_secret());
     let welcome = Control::Welcome { device_name: shared.options.device_name.clone(), session, nonce };
     write_msg(&mut send, &welcome).await?;
     let code = match (commitment, nonce) {
         (Some(commitment), Some(ours)) => {
-            let Control::Reveal { nonce: theirs } = read_msg(&mut recv).await? else {
+            let Control::Reveal { nonce: theirs } =
+                tokio::time::timeout(HANDSHAKE_TIMEOUT, read_msg(&mut recv)).await??
+            else {
                 bail!("expected the sender's pairing nonce");
             };
             ensure!(
@@ -444,7 +454,7 @@ async fn serve(
                     None => bail!("the sender left before the connection was accepted"),
                 },
                 _ = ending.changed() => {
-                    let _ = write_msg(&mut send, &Control::Bye).await;
+                    close_with(&mut send, &mut control_rx, &Control::Bye).await;
                     return Ok(Outcome::Ended);
                 }
             }
@@ -452,13 +462,16 @@ async fn serve(
         question.answered = true;
         drop(question);
         if !approved {
-            let _ = write_msg(&mut send, &reject(FailureKind::Declined, "The receiver declined.")).await;
+            close_with(&mut send, &mut control_rx, &reject(FailureKind::Declined, "The receiver declined.")).await;
             return Ok(Outcome::Declined);
         }
     }
     *shared.trusted.lock().unwrap() = Some(sender);
     write_msg(&mut send, &Control::Ready).await?;
-    emit(&shared.events, Event::Connected { peer: sender_name, route: String::new() });
+    emit(
+        &shared.events,
+        Event::Connected { peer: sender_name, route: from.map(|ip| ip.to_string()).unwrap_or_default() },
+    );
 
     let (resend_tx, mut resend_rx) = mpsc::unbounded_channel();
     let mut readers = JoinSet::new();
@@ -528,8 +541,12 @@ async fn serve(
                 if let Ok(Err(e)) = joined {
                     if is_fatal(&e) {
                         let kind = classify(&e);
+                        let from = e.downcast_ref::<InBatch>().map(|b| b.0);
                         let mut active = shared.active.lock().await;
-                        if let Some(Active { batch, state }) = active.take() {
+                        // Two streams can fail on the same batch; the second report must not
+                        // take down the batch that came after it.
+                        if active.as_ref().is_some_and(|a| from.is_none_or(|b| b == a.batch)) {
+                            let Some(Active { batch, state }) = active.take() else { continue };
                             complete = None;
                             drop(active);
                             let reason = format!("{e:#}");
@@ -550,7 +567,7 @@ async fn serve(
                 tokio::time::timeout(HEARTBEAT_TIMEOUT, write_msg(&mut send, &msg)).await??;
             }
             _ = ending.changed() => {
-                let _ = write_msg(&mut send, &Control::Bye).await;
+                close_with(&mut send, &mut control_rx, &Control::Bye).await;
                 return Ok(Outcome::Ended);
             }
         }
@@ -602,11 +619,51 @@ async fn read_loop(mut recv: ReadHalf<TlsStream>, tx: mpsc::UnboundedSender<Resu
 
 /// Receives whole files from one data stream: each one is written as it
 /// arrives, then verified on disk against the sender's hash.
-async fn read_data(mut stream: TlsStream, shared: Arc<Shared>, resend: mpsc::UnboundedSender<Vec<u32>>) -> Result<()> {
+async fn read_data(stream: TlsStream, shared: Arc<Shared>, resend: mpsc::UnboundedSender<Vec<u32>>) -> Result<()> {
+    let mut batch = None;
+    read_data_for(stream, shared, resend, &mut batch).await.map_err(|e| match batch {
+        // Which batch it was working on, so a late error from an old batch can't end the next one.
+        Some(b) => e.context(InBatch(b)),
+        None => e,
+    })
+}
+
+/// Ends the connection so the other phone is sure to read `last`. Dropping a
+/// socket that still has unread data makes the system reset it, which can throw
+/// away what was just written; so the write side is closed properly and what the
+/// other phone still sends is read until it hangs up.
+async fn close_with(
+    send: &mut WriteHalf<TlsStream>,
+    control_rx: &mut mpsc::UnboundedReceiver<Result<Control>>,
+    last: &Control,
+) {
+    let _ = write_msg(send, last).await;
+    let _ = send.shutdown().await;
+    let drain = async { while let Some(Ok(_)) = control_rx.recv().await {} };
+    let _ = tokio::time::timeout(Duration::from_secs(1), drain).await;
+}
+
+/// The batch a data stream was working on when it failed.
+#[derive(Debug)]
+struct InBatch(u32);
+
+impl std::fmt::Display for InBatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "while receiving batch {}", self.0)
+    }
+}
+
+async fn read_data_for(
+    mut stream: TlsStream,
+    shared: Arc<Shared>,
+    resend: mpsc::UnboundedSender<Vec<u32>>,
+    working_on: &mut Option<u32>,
+) -> Result<()> {
     let mut header = [0u8; FILE_HEADER_LEN];
     let mut buf = vec![0u8; BLOCK];
     while read_header(&mut stream, &mut header).await? {
         let h = FileHeader::decode(&header);
+        *working_on = Some(h.batch);
         let end = h.offset.checked_add(h.len).context("file data has an impossible length")?;
         // Data from an earlier batch, or for a file already saved, is read and dropped.
         let state = shared.active.lock().await.as_ref().filter(|a| a.batch == h.batch).map(|a| a.state.clone());

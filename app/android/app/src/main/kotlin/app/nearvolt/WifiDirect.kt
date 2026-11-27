@@ -68,6 +68,9 @@ class WifiDirect(private val context: Context) {
         val channel = channel ?: return null
         val config = config(group.ssid, group.passphrase) { setGroupOperatingFrequency(group.frequency.toInt()) }
         if (!clear(manager, channel)) return null
+        // Phones with one Wi-Fi channel may drop the router while joining; record it so a
+        // test shows whether that happens (nothing is changed on the strength of it yet).
+        AppLog.write("wifi-direct", "before joining: router on ${routerFrequency()?.let { "$it MHz" } ?: "no router"}")
         var joined = manager.perform("join ${group.ssid}") { connect(channel, config, it) }
         if (!joined) {
             // Android can still be settling after a group closes; one more try covers it.
@@ -80,7 +83,10 @@ class WifiDirect(private val context: Context) {
                 suspendCancellableCoroutine<WifiP2pInfo?> { c -> manager.requestConnectionInfo(channel) { c.resume(it) } }
             }
             val owner = info?.groupOwnerAddress?.hostAddress
-            if (info?.groupFormed == true && owner != null) return owner
+            if (info?.groupFormed == true && owner != null) {
+                AppLog.write("wifi-direct", "after joining: router on ${routerFrequency()?.let { "$it MHz" } ?: "no router"}")
+                return owner
+            }
             delay(200)
         }
         return null
@@ -131,11 +137,18 @@ class WifiDirect(private val context: Context) {
     }
 
     /** Closes the group unless a sender joined it, so an unused group doesn't run through a transfer. */
-    suspend fun removeGroupIfUnused() {
+    suspend fun removeGroupIfUnused(senderAddress: String?) {
         val manager = manager ?: return
         val channel = channel ?: return
         val group = groupInfo(manager, channel) ?: return
-        if (group.clientList.isEmpty()) {
+        // The sender's own address says which way it came; the client list can still be
+        // empty for a moment after a sender joins.
+        val joined = if (senderAddress.isNullOrEmpty()) {
+            group.clientList.isNotEmpty()
+        } else {
+            senderAddress.startsWith(GROUP_SUBNET)
+        }
+        if (!joined) {
             AppLog.write("wifi-direct", "closed the group: the sender came over the router or the cable")
             removeGroup()
         } else {
@@ -220,6 +233,9 @@ class WifiDirect(private val context: Context) {
 
         /** Every group Nearvolt makes is named this way, so its leftovers can be told apart. */
         private const val PREFIX = "DIRECT-NV-"
+
+        /** Addresses Android gives a Wi-Fi Direct group's members. */
+        private const val GROUP_SUBNET = "192.168.49."
         private const val FIVE_GHZ = 5_000
         private const val ANSWER_MS = 5_000L
         private const val BUSY_TRIES = 4
