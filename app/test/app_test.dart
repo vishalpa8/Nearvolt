@@ -387,6 +387,30 @@ void main() {
     expect(lines.any((l) => l.startsWith('[tap] "Nearby phones')), isTrue, reason: lines.join('\n'));
     expect(lines.any((l) => l.startsWith('[screen] opened')), isTrue, reason: lines.join('\n'));
   });
+  testWidgets('a scanner that closes at once says so and leaves the other buttons working', (tester) async {
+    await openMethod(tester, 'Scan code');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text(scannerClosedAtOnce), findsOneWidget);
+
+    // Nothing stays locked: Nearby phones opens straight away.
+    await tester.pump(const Duration(seconds: 5));
+    await go(tester, 'Nearby phones');
+    expect(find.text('Nearby'), findsWidgets);
+  });
+  testWidgets('a switch turned on outside the app opens the page by itself', (tester) async {
+    engine.missing = const [Need.wifi];
+    await openMethod(tester, 'Nearby phones');
+    expect(find.text('Turn these on to continue'), findsOneWidget);
+    expect(engine.discoveries, 0);
+
+    // Switched on from the quick panel: no tap in the app, no return to the app.
+    engine.missing = const [];
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('Turn these on to continue'), findsNothing);
+    expect(engine.discoveries, 1);
+  });
   testWidgets('NFC off closes the tap page until it is on', (tester) async {
     engine.missing = const [Need.nfc];
     await openMethod(tester, 'Tap phones');

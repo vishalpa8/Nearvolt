@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart' show listEquals;
 import 'package:material_ui/material_ui.dart';
 
@@ -75,6 +77,11 @@ mixin NeedsMixin<T extends StatefulWidget> on State<T> {
   /// for example a settings screen that never reported back, can't block the next.
   var _latest = 0;
 
+  /// While something is off, the page checks again every few seconds. A radio that is
+  /// switched on from the quick panel takes a moment to come up, so a single check
+  /// when the app returns can still see it as off, and nothing would check again.
+  Timer? _watching;
+
   TransferEngine get engine;
 
   Purpose get purpose;
@@ -94,6 +101,7 @@ mixin NeedsMixin<T extends StatefulWidget> on State<T> {
 
   @override
   void dispose() {
+    _watching?.cancel();
     _lifecycle.dispose();
     super.dispose();
   }
@@ -130,8 +138,11 @@ mixin NeedsMixin<T extends StatefulWidget> on State<T> {
       _checked = true;
     });
     if (now.isEmpty) {
+      _watching?.cancel();
+      _watching = null;
       restart();
     } else {
+      _watching ??= Timer.periodic(const Duration(seconds: 2), (_) => _recheck());
       pause();
     }
   }

@@ -69,4 +69,8 @@ String leftOut(int count) =>
     count == 1 ? "1 file couldn't be read and was left out." : "$count files couldn't be read and were left out.";
 
 /// Shown when the connection ended before files could be queued.
+/// The scanner screen opened and closed again at once, so it was not a person backing out.
+const scannerClosedAtOnce =
+    "The scanner closed before it could read a code. Try again, or use Tap phones or Nearby phones.";
+
 const connectionEnded = 'The connection ended before the files could be sent.';

@@ -245,6 +245,12 @@ class NeedsGate extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text('Turn these on to continue', style: text.titleLarge, textAlign: TextAlign.center),
+            const SizedBox(height: Space.xs),
+            Text(
+              'Already on? This checks again by itself.',
+              style: text.bodySmall?.copyWith(color: AppColors.textSecondary),
+              textAlign: TextAlign.center,
+            ),
             const SizedBox(height: Space.l),
             for (final need in needs) ...[
               Panel(

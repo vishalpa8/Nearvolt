@@ -31,12 +31,17 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
 import java.io.File
 import java.util.Locale
 
@@ -257,7 +262,7 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
     private suspend fun scan(retry: Boolean): String? {
         val started = SystemClock.elapsedRealtime()
         return try {
-            scanner.startScan().await().rawValue
+            scanUntilClosed()
         } catch (e: MlKitException) {
             val open = SystemClock.elapsedRealtime() - started
             if (open >= SCANNER_SHOWN_MS) {
@@ -269,6 +274,47 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
             prepareScanner()
             delay(1_000)
             scan(retry = false)
+        }
+    }
+
+    /**
+     * Shows the scanner and waits for its answer. The scanner is its own screen: this app
+     * pauses while it shows and resumes when it closes, and the answer follows within
+     * moments. On some phones it closes without ever answering, which left the Send screen
+     * stuck; so if no answer comes shortly after the app is back, that counts as going back.
+     */
+    private suspend fun scanUntilClosed(): String? = coroutineScope {
+        val back = CompletableDeferred<Unit>()
+        var paused = false
+        val watcher = object : DefaultLifecycleObserver {
+            override fun onPause(owner: LifecycleOwner) {
+                paused = true
+            }
+
+            override fun onResume(owner: LifecycleOwner) {
+                if (paused) back.complete(Unit)
+            }
+        }
+        activity.lifecycle.addObserver(watcher)
+        try {
+            val answer = async { scanner.startScan().await().rawValue }
+            val silent = async {
+                back.await()
+                delay(SCANNER_ANSWER_GRACE_MS)
+            }
+            select<String?> {
+                answer.onAwait {
+                    silent.cancel()
+                    it
+                }
+                silent.onAwait {
+                    AppLog.write("scanner", "the scanner closed without an answer; counting it as going back")
+                    answer.cancel()
+                    null
+                }
+            }
+        } finally {
+            activity.lifecycle.removeObserver(watcher)
         }
     }
 
@@ -400,6 +446,9 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
 
         /** Longer than Google's scanner takes to open and fail; shorter than anyone takes to go back. */
         const val SCANNER_SHOWN_MS = 1_500L
+
+        /** How long the scanner may take to answer once the app is back in front. */
+        const val SCANNER_ANSWER_GRACE_MS = 3_000L
     }
 }
 

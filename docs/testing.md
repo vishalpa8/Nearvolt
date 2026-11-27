@@ -90,6 +90,7 @@ Start with a fresh install, Bluetooth off.
 | P4 | Deny Nearby devices twice. | The button says Settings and opens Nearvolt's app settings; granting it there and coming back opens the page. |
 | P5 | Turn NFC off, open Tap phones. Then, on the other phone, turn NFC off and open Receive. | Neither page opens; each shows an NFC gate whose Turn on button opens Android's NFC settings, and the page opens once NFC is on. No permission or Bluetooth prompt on Tap. |
 | P6 | Turn Wi-Fi off, open Nearby phones. | The page stays closed behind a Wi-Fi gate; Turn on opens Android's Wi-Fi panel. Also try Receive and Scan code: Receive doesn't start, and the camera doesn't open until Wi-Fi is on. |
+| P6a | With the gate showing, turn the switch on from the quick settings panel (pull down from the top) and don't touch the app. | The page opens by itself within a couple of seconds; it re-checks every 2 s while the gate shows. |
 | P7 | Android 11 or 12 only: turn Location off, open Nearby phones. | A Location gate; Turn on opens Location settings. |
 | P8 | With Nearby phones open, turn Bluetooth off from quick settings. | The page closes behind the Bluetooth gate, and opens again when it is back on. |
 

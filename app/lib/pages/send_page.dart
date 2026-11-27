@@ -7,6 +7,7 @@ import '../engine/engine.dart';
 import '../engine/messages.dart';
 import '../engine/models.dart';
 import '../theme.dart';
+import '../debug.dart';
 import '../ui/atoms.dart';
 import '../ui/format.dart';
 import '../ui/molecules.dart';
@@ -37,7 +38,10 @@ class _SendPageState extends State<SendPage> {
   var _busy = false;
 
   Future<void> _once(Future<void> Function() action) async {
-    if (_busy) return;
+    if (_busy) {
+      DebugLog.log('tap', 'ignored: the previous action has not finished');
+      return;
+    }
     _busy = true;
     try {
       await action();
@@ -76,12 +80,18 @@ class _SendPageState extends State<SendPage> {
     // The camera stays closed until what a transfer needs is on.
     if (!await ensureReady(context, engine, Purpose.scan)) return;
     final String? ticket;
+    final shown = Stopwatch()..start();
     try {
-      ticket = await engine.scanCode();
+      // A scanner that never answers must not leave the buttons locked for ever.
+      ticket = await engine.scanCode().timeout(const Duration(minutes: 3), onTimeout: () => null);
     } on PlatformException catch (e) {
       return tell(friendlyPlatform(e));
     }
-    if (ticket == null) return;
+    if (ticket == null) {
+      // Closing straight away is not someone changing their mind: say what to do instead.
+      if (shown.elapsed < const Duration(seconds: 4)) tell(scannerClosedAtOnce);
+      return;
+    }
     final NearbyDevice device;
     try {
       device = engine.deviceFor(ticket);
