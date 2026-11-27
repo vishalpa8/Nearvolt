@@ -209,8 +209,9 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
     final closed = Completer<void>();
     _sendClosed = closed.future;
 
+    var cancelled = false;
+
     Future<void> run() async {
-      Timer? fallback;
       var joined = false;
       final diagnostics = Diagnostics(_platform, 'send', sending: true);
       try {
@@ -220,19 +221,21 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
         await _platform.startTransferService('Connected to ${to.name}');
         _platform.log('send', 'connecting to ${to.name} (${to.link})');
         await diagnostics.network();
-        final events = ticket == null ? rust.connectUsb() : rust.connect(ticket: ticket);
-        // Not on the same network: join the receiver's Wi-Fi Direct group, asking
-        // for the permission it needs only now. The engine keeps trying every
-        // address in the ticket, including the group's.
+        // Phone to phone is the fastest route, so even on a shared Wi-Fi the sender
+        // joins the receiver's own Wi-Fi Direct network first (asking for the
+        // permission it needs only now) and connects through it alone. If that
+        // can't be done, every address in the code is tried, the router's included.
+        String? direct;
         if (wifi != null) {
-          fallback = Timer(const Duration(milliseconds: 2500), () async {
-            if (live.state.phase != LinkPhase.connecting) return;
-            if (!(await _platform.readiness()).permission) await _platform.fix(Requirement.permissions);
-            joined = await _platform.joinWifi(
-              WifiGroup(ssid: wifi.ssid, passphrase: wifi.passphrase, frequency: wifi.frequency),
-            );
-          });
+          if (!(await _platform.readiness()).permission) await _platform.fix(Requirement.permissions);
+          direct = await _platform.joinWifi(
+            WifiGroup(ssid: wifi.ssid, passphrase: wifi.passphrase, frequency: wifi.frequency),
+          );
+          joined = direct != null;
+          if (!joined) _platform.log('send', 'falling back to the shared network');
         }
+        if (cancelled) return;
+        final events = ticket == null ? rust.connectUsb() : rust.connect(ticket: ticket, directAddress: direct);
         await for (final event in events) {
           diagnostics.record(event);
           live.apply(event);
@@ -243,7 +246,6 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
         live.emit(live.state.copyWith(phase: LinkPhase.failed, error: '$e'));
       } finally {
         diagnostics.close();
-        fallback?.cancel();
         await _platform.stopTransferService();
         if (joined) await _platform.leaveWifi();
         if (_sending == live) _sending = null;
@@ -254,8 +256,12 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
 
     out
       ..onListen = run
-      // Leaving the connection page ends the connection.
-      ..onCancel = rust.disconnect;
+      // Leaving the connection page ends the connection, even while it's still
+      // joining Wi-Fi Direct.
+      ..onCancel = () {
+        cancelled = true;
+        rust.disconnect();
+      };
     return out.stream;
   }
 

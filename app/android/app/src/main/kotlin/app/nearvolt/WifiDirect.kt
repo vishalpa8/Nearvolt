@@ -53,27 +53,28 @@ class WifiDirect(private val context: Context) {
         return null
     }
 
-    /** Joins the receiver's group. Returns once the link is up. */
-    suspend fun join(group: WifiGroup): Boolean {
-        val manager = manager ?: return false
-        val channel = channel ?: return false
+    /** Joins the receiver's group. Returns the receiver's address in it once the link is up, or null. */
+    suspend fun join(group: WifiGroup): String? {
+        val manager = manager ?: return null
+        val channel = channel ?: return null
         val config = config(group.ssid, group.passphrase) { setGroupOperatingFrequency(group.frequency.toInt()) }
-        if (!clear(manager, channel)) return false
+        if (!clear(manager, channel)) return null
         var joined = manager.perform("join ${group.ssid}") { connect(channel, config, it) }
         if (!joined) {
             // Android can still be settling after a group closes; one more try covers it.
             delay(1_000)
             joined = manager.perform("join ${group.ssid} again") { connect(channel, config, it) }
         }
-        if (!joined) return false
+        if (!joined) return null
         repeat(75) {
             val info = withTimeoutOrNull(ANSWER_MS) {
                 suspendCancellableCoroutine<WifiP2pInfo?> { c -> manager.requestConnectionInfo(channel) { c.resume(it) } }
             }
-            if (info?.groupFormed == true) return true
+            val owner = info?.groupOwnerAddress?.hostAddress
+            if (info?.groupFormed == true && owner != null) return owner
             delay(200)
         }
-        return false
+        return null
     }
 
     fun removeGroup() {

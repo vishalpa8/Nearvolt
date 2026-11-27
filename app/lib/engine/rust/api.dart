@@ -50,9 +50,16 @@ void disconnectReceiving() =>
 void stopReceiving() => RustLib.instance.api.crateApiStopReceiving();
 
 /// Connects to the receiver in `ticket` and keeps the connection, reconnecting
-/// the same way whenever the link drops, until `disconnect`.
-Stream<TransferEvent> connect({required String ticket}) =>
-    RustLib.instance.api.crateApiConnect(ticket: ticket);
+/// the same way whenever the link drops, until `disconnect`. With
+/// `direct_address`, the address of a Wi-Fi Direct group this phone has joined,
+/// only that address is used; otherwise every address in the ticket is tried.
+Stream<TransferEvent> connect({
+  required String ticket,
+  String? directAddress,
+}) => RustLib.instance.api.crateApiConnect(
+  ticket: ticket,
+  directAddress: directAddress,
+);
 
 /// Connects over the USB cable. With no ticket to pin, both phones confirm a code.
 Stream<TransferEvent> connectUsb() => RustLib.instance.api.crateApiConnectUsb();

@@ -135,8 +135,9 @@ run, share `nearvolt.log` from both phones.
 
 | # | Link | How to set it up | What the sender's log should say |
 |---|---|---|---|
-| S1 | Same Wi-Fi, 5 GHz | Both phones on the same 5 GHz network. Send › Nearby phones. | `connected … (same Wi-Fi)`, `network: … 5 GHz` |
-| S2 | Same Wi-Fi, 2.4 GHz | Both on a 2.4 GHz network (or a router with 5 GHz turned off). | `(same Wi-Fi)`, `2.4 GHz` |
+| S1 | Both phones on the same 5 GHz Wi-Fi | Send › Scan code. | `joined the receiver's Wi-Fi Direct group in … s`, `connected … (Wi-Fi Direct)`: the phones go direct even though they share the router |
+| S2 | Both on a 2.4 GHz Wi-Fi | As S1. | As S1; the `network:` line shows 2.4 GHz for the router |
+| S2a | Shared Wi-Fi only (to compare) | Turn off Wi-Fi Direct on the receiver or use a phone that can't create a group; the log then says `falling back to the shared network`. | `connected … (same Wi-Fi)` |
 | S3 | Wi-Fi Direct, no router | Wi-Fi on, but forget or switch off the router on both. Send › Scan code. | `joined the receiver's Wi-Fi Direct group in … s`, `(Wi-Fi Direct)` |
 | S4 | Wi-Fi Direct, phones on different networks | Each phone on a different Wi-Fi network. Send › Tap phones. | As S3 |
 | S5 | A third phone's hotspot | Both phones join the hotspot. Send › Nearby phones. | `(same Wi-Fi)` |

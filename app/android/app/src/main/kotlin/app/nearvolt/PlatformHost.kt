@@ -322,15 +322,19 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
 
     override suspend fun readTicket(receiverId: String): String = ble.readTicket(receiverId)
 
-    override suspend fun joinWifi(group: WifiGroup): Boolean {
+    override suspend fun joinWifi(group: WifiGroup): String? {
         val started = SystemClock.elapsedRealtime()
-        val joined = nearbyGranted && wifiDirect.join(group)
+        val address = if (nearbyGranted) wifiDirect.join(group) else null
         val seconds = "%.1f".format(Locale.US, (SystemClock.elapsedRealtime() - started) / 1000.0)
         AppLog.write(
             "send",
-            if (joined) "joined the receiver's Wi-Fi Direct group in $seconds s" else "couldn't join the receiver's Wi-Fi Direct group",
+            if (address != null) {
+                "joined the receiver's Wi-Fi Direct group in $seconds s, receiver at $address"
+            } else {
+                "couldn't join the receiver's Wi-Fi Direct group after $seconds s"
+            },
         )
-        return joined
+        return address
     }
 
     override fun leaveWifi() = wifiDirect.removeGroup()

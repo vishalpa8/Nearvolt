@@ -85,7 +85,10 @@ abstract class RustLibApi extends BaseApi {
 
   void crateApiAttachUsb({required int fd, required bool host});
 
-  Stream<TransferEvent> crateApiConnect({required String ticket});
+  Stream<TransferEvent> crateApiConnect({
+    required String ticket,
+    String? directAddress,
+  });
 
   Stream<TransferEvent> crateApiConnectUsb();
 
@@ -173,7 +176,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "attach_usb", argNames: ["fd", "host"]);
 
   @override
-  Stream<TransferEvent> crateApiConnect({required String ticket}) {
+  Stream<TransferEvent> crateApiConnect({
+    required String ticket,
+    String? directAddress,
+  }) {
     final events = RustStreamSink<TransferEvent>();
     unawaited(
       handler.executeNormal(
@@ -181,6 +187,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           callFfi: (port_) {
             final serializer = SseSerializer(generalizedFrbRustBinding);
             sse_encode_String(ticket, serializer);
+            sse_encode_opt_String(directAddress, serializer);
             sse_encode_StreamSink_transfer_event_Sse(events, serializer);
             pdeCallFfi(
               generalizedFrbRustBinding,
@@ -194,7 +201,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             decodeErrorData: sse_decode_AnyhowException,
           ),
           constMeta: kCrateApiConnectConstMeta,
-          argValues: [ticket, events],
+          argValues: [ticket, directAddress, events],
           apiImpl: this,
         ),
       ),
@@ -202,8 +209,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     return events.stream;
   }
 
-  TaskConstMeta get kCrateApiConnectConstMeta =>
-      const TaskConstMeta(debugName: "connect", argNames: ["ticket", "events"]);
+  TaskConstMeta get kCrateApiConnectConstMeta => const TaskConstMeta(
+    debugName: "connect",
+    argNames: ["ticket", "directAddress", "events"],
+  );
 
   @override
   Stream<TransferEvent> crateApiConnectUsb() {

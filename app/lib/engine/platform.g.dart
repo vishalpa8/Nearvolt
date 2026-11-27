@@ -1016,7 +1016,7 @@ class NearvoltPlatform {
     return pigeonVar_replyValue! as String;
   }
 
-  Future<bool> joinWifi(WifiGroup group) async {
+  Future<String?> joinWifi(WifiGroup group) async {
     final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.joinWifi$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
@@ -1028,10 +1028,10 @@ class NearvoltPlatform {
     final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
         pigeonVar_replyList,
         pigeonVar_channelName,
-        isNullValid: false,
+        isNullValid: true,
     )
     ;
-    return pigeonVar_replyValue! as bool;
+    return pigeonVar_replyValue as String?;
   }
 
   Future<void> leaveWifi() async {

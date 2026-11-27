@@ -118,6 +118,7 @@ fn wire__crate__api__connect_impl(
             };
             let mut deserializer = flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_ticket = <String>::sse_decode(&mut deserializer);
+            let api_direct_address = <Option<String>>::sse_decode(&mut deserializer);
             let api_events =
                 <StreamSink<crate::api::TransferEvent, flutter_rust_bridge::for_generated::SseCodec>>::sse_decode(
                     &mut deserializer,
@@ -125,7 +126,7 @@ fn wire__crate__api__connect_impl(
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, flutter_rust_bridge::for_generated::anyhow::Error>((move || {
-                    let output_ok = crate::api::connect(api_ticket, api_events)?;
+                    let output_ok = crate::api::connect(api_ticket, api_direct_address, api_events)?;
                     std::result::Result::Ok(output_ok)
                 })())
             }

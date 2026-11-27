@@ -195,7 +195,7 @@ abstract class NearvoltPlatform {
   String readTicket(String receiverId);
 
   @async
-  bool joinWifi(WifiGroup group);
+  String? joinWifi(WifiGroup group);
 
   void leaveWifi();
 

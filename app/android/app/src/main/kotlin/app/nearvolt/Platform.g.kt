@@ -775,7 +775,7 @@ interface NearvoltPlatform {
   fun watchUsb()
   /** Reads the public ticket of a receiver found over Bluetooth. */
   suspend fun readTicket(receiverId: String): String
-  suspend fun joinWifi(group: WifiGroup): Boolean
+  suspend fun joinWifi(group: WifiGroup): String?
   fun leaveWifi()
   fun startTransferService(title: String)
   fun updateTransferService(text: String, percent: Long)

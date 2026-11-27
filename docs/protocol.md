@@ -49,9 +49,10 @@ Binary layout, all integers big-endian:
 | if flag 2: group frequency in MHz | 2 bytes |
 
 The tickets are refreshed when the receiver's Wi-Fi Direct group comes up, so
-they also carry the group's address. A sender that can't reach any address
-within 2.5 seconds joins the group (no pop-up on Android 10 and later) and keeps
-trying every address. Once one address has worked, every later stream and every
+they also carry the group's address. A sender that finds a group in the ticket
+joins it (no pop-up on Android 10 and later) and connects to the receiver's
+address in the group alone. If joining fails, it tries every address in the
+ticket at once. Once one address has worked, every later stream and every
 reconnect uses only that address.
 
 ## Connection

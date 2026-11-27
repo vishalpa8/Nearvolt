@@ -273,9 +273,19 @@ pub fn stop_receiving() {
 }
 
 /// Connects to the receiver in `ticket` and keeps the connection, reconnecting
-/// the same way whenever the link drops, until `disconnect`.
-pub fn connect(ticket: String, events: StreamSink<TransferEvent>) -> Result<()> {
-    start_connection(Peer::from_ticket(&Ticket::decode(&ticket)?), events)
+/// the same way whenever the link drops, until `disconnect`. With
+/// `direct_address`, the address of a Wi-Fi Direct group this phone has joined,
+/// only that address is used; otherwise every address in the ticket is tried.
+pub fn connect(ticket: String, direct_address: Option<String>, events: StreamSink<TransferEvent>) -> Result<()> {
+    let mut ticket = Ticket::decode(&ticket)?;
+    // After joining the receiver's Wi-Fi Direct network, only its address is
+    // used, so the files go phone to phone and never through a router.
+    if let Some(ip) = direct_address {
+        let ip: std::net::IpAddr = ip.parse().context("the Wi-Fi Direct address isn't valid")?;
+        let port = ticket.addrs.first().context("the code has no addresses")?.port();
+        ticket.addrs = vec![SocketAddr::new(ip, port)];
+    }
+    start_connection(Peer::from_ticket(&ticket), events)
 }
 
 /// Connects over the USB cable. With no ticket to pin, both phones confirm a code.

@@ -56,12 +56,15 @@ ticket (or a USB stream) and the engine takes over.
 | NFC tap | The receiver's phone acts as an NFC card (host card emulation) serving its tap ticket | Its own secret; the tap is the consent, no prompt |
 | USB cable | Android Open Accessory, with streams multiplexed by yamux | 4-digit code |
 
-When the two phones don't share a network, the receiver has already created a
-Wi-Fi Direct group on the router's channel, and the ticket carries its name,
-passphrase and frequency. The sender joins it without a pop-up after 2.5 seconds
-without a connection, asking for the Nearby devices permission only then if it's
-missing, while the engine keeps trying every address in the ticket. The first
-address that answers is the one used from then on, including for reconnects.
+When Receive opens, the receiver creates a Wi-Fi Direct group (on the router's
+channel when Wi-Fi Direct may use it), and the ticket carries its name,
+passphrase and frequency. A sender that finds a group in the ticket joins it
+first, without a pop-up, asking for the Nearby devices permission only then if
+it's missing, and connects through the group alone, even when both phones share
+a Wi-Fi network: phone to phone, the files cross the air once instead of twice
+(to the router and on to the other phone). If joining fails, the sender tries
+every address in the ticket, the router's included, and the first that answers
+is used from then on, including for reconnects.
 
 Finding a phone and moving files are separate jobs. Bluetooth, NFC, the local
 network's service records and QR codes only exchange the ticket; files always
