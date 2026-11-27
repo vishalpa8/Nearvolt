@@ -32,17 +32,37 @@ class _SendPageState extends State<SendPage> {
 
   TransferEngine get engine => widget.engine;
 
-  void _open(BuildContext context, Widget page) =>
-      Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => page));
+  /// A second tap while a screen or the scanner is opening does nothing, so one tap
+  /// can't start two connections.
+  var _busy = false;
+
+  Future<void> _once(Future<void> Function() action) async {
+    if (_busy) return;
+    _busy = true;
+    try {
+      await action();
+    } finally {
+      _busy = false;
+    }
+  }
+
+  Future<void> _open(BuildContext context, Widget page) =>
+      _once(() => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => page)));
 
   Future<void> _choose() async {
     final kind = await showPickMenu(context);
     if (kind == null) return;
     final picked = kind == PickKind.folder ? await engine.pickFolder() : await engine.pickFiles();
-    if (picked != null && mounted) setState(() => _files = picked);
+    if (picked == null || !mounted) return;
+    if (picked.skipped > 0) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(leftOut(picked.skipped))));
+    }
+    if (picked.files.isNotEmpty) setState(() => _files = picked);
   }
 
-  Future<void> _scan(BuildContext context) async {
+  Future<void> _scan(BuildContext context) => _once(() => _scanOnce(context));
+
+  Future<void> _scanOnce(BuildContext context) async {
     void tell(String message) {
       if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
     }
@@ -135,7 +155,7 @@ class _SendPageState extends State<SendPage> {
           ChoiceTile(
             icon: Icons.radar_rounded,
             title: 'Nearby phones',
-            detail: 'Pick it from a list. The other phone approves with a code.',
+            detail: 'Pick it from a list when you are on the same Wi-Fi. The other phone approves with a code.',
             onTap: () => _open(context, _NearbyPage(engine: engine, files: _files)),
           ),
           ChoiceTile(
@@ -191,10 +211,20 @@ mixin _MethodMixin<T extends StatefulWidget, F> on State<T>, NeedsMixin<T> {
     super.dispose();
   }
 
+  var _connecting = false;
+
+  /// Opens the connection. A second tap, or a second tap-read, while one is opening
+  /// does nothing, so there's never two connections to the same phone.
   Future<void> connectTo(NearbyDevice device) async {
+    if (_connecting) return;
+    _connecting = true;
     _sub?.cancel();
     _sub = null;
-    await openConnection(context, engine, device, files: files);
+    try {
+      await openConnection(context, engine, device, files: files);
+    } finally {
+      _connecting = false;
+    }
     if (mounted) restart();
   }
 }
@@ -323,7 +353,31 @@ class _NearbyPageState extends State<_NearbyPage> with NeedsMixin, _MethodMixin<
           if (needNotice case final notice?) ...[const SizedBox(height: Space.l), notice],
           const SizedBox(height: Space.xl),
           Text('Nearby', style: text.titleMedium),
+          const SizedBox(height: Space.xs),
+          Text(
+            'Phones on the same Wi-Fi with Receive open. For phones on different networks, use Scan code or Tap.',
+            style: text.bodySmall?.copyWith(color: AppColors.textSecondary),
+          ),
           const SizedBox(height: Space.m),
+          // Searching the network couldn't start: say so, instead of an empty list that
+          // looks like nobody is there.
+          ValueListenableBuilder<bool>(
+            valueListenable: engine.searchFailed,
+            builder: (context, failed, _) => failed
+                ? Padding(
+                    padding: const EdgeInsets.only(bottom: Space.m),
+                    child: Panel(
+                      child: Row(
+                        children: [
+                          const Icon(Icons.info_outline_rounded, color: AppColors.warning),
+                          const SizedBox(width: Space.m),
+                          Expanded(child: Text(searchFailedText, style: text.bodyMedium)),
+                        ],
+                      ),
+                    ),
+                  )
+                : const SizedBox.shrink(),
+          ),
           DeviceList(devices: _devices, onTap: connectTo),
         ],
       ),

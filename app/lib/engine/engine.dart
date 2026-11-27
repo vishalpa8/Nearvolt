@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart' show ValueListenable;
+
 import 'models.dart';
 
 /// Everything the UI needs. [NativeEngine] implements it with the Rust engine and
@@ -18,6 +20,10 @@ abstract interface class TransferEngine {
 
   /// Devices with Receive open on the local network or over Bluetooth, while listened to.
   Stream<List<NearbyDevice>> nearby();
+
+  /// True when searching the local network couldn't start, even after retrying;
+  /// the Nearby page then says so and points to the other ways to connect.
+  ValueListenable<bool> get searchFailed;
 
   /// Tickets from phones tapped against this one, while listened to.
   Stream<String> taps();

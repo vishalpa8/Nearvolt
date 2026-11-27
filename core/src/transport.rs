@@ -55,11 +55,21 @@ pub trait Link: Send + Sync {
 pub struct TcpLink {
     addrs: Vec<SocketAddr>,
     preferred: Mutex<Option<SocketAddr>>,
+    /// Tried alone first, and only if it doesn't answer is every address tried.
+    first: Option<SocketAddr>,
 }
 
 impl TcpLink {
     pub fn new(addrs: Vec<SocketAddr>) -> Self {
-        Self { addrs, preferred: Mutex::new(None) }
+        Self { addrs, preferred: Mutex::new(None), first: None }
+    }
+
+    /// Like [`TcpLink::new`], but `first` gets the first try on its own: the receiver's
+    /// address in a Wi-Fi Direct group this phone has just joined, which beats the
+    /// router. If it doesn't answer, the other addresses are tried, so a joined group
+    /// that turns out unusable doesn't leave the sender stuck.
+    pub fn preferring(first: SocketAddr, addrs: Vec<SocketAddr>) -> Self {
+        Self { addrs, preferred: Mutex::new(None), first: Some(first) }
     }
 }
 
@@ -68,6 +78,12 @@ impl Link for TcpLink {
         let preferred = *self.preferred.lock().unwrap();
         if let Some(addr) = preferred {
             return connect_tcp(addr).await;
+        }
+        if let Some(addr) = self.first {
+            if let Ok(stream) = connect_tcp(addr).await {
+                *self.preferred.lock().unwrap() = Some(addr);
+                return Ok(stream);
+            }
         }
         ensure!(!self.addrs.is_empty(), "the code has no addresses");
         let (stream, addr) = race(&self.addrs).await?;

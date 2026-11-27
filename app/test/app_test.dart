@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart'
     show CircularProgressIndicator, LinearProgressIndicator, NavigatorState, Navigator;
 import 'package:nearvolt/app.dart';
+import 'package:nearvolt/engine/messages.dart';
 import 'package:nearvolt/engine/models.dart';
 
 import 'fake_engine.dart';
@@ -188,6 +189,126 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Nearby'), findsOneWidget);
     expect(engine.devices.hasListener, isTrue, reason: 'searching again once disconnected');
+  });
+
+  Future<void> connectByCode(WidgetTester tester) async {
+    await open(tester);
+    await go(tester, 'Send');
+    await go(tester, 'Choose files');
+    await go(tester, 'Files');
+    await go(tester, 'Nearby phones');
+    engine.devices.add([rahul]);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(rahulName));
+    await tester.pumpAndSettle();
+    engine.sending!.add(connected.copyWith(code: '4821'));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('a code the sender must compare holds back files and Add files until it matches', (tester) async {
+    await connectByCode(tester);
+    expect(find.text("Does $rahulName show this same code?"), findsOneWidget);
+    expect(find.text('Connected · check the code'), findsOneWidget);
+    expect(engine.queued, isEmpty);
+    expect(find.text('Add files'), findsNothing);
+
+    await tester.tap(find.text('It matches'));
+    await tester.pumpAndSettle();
+    expect(engine.queued, [album]);
+    expect(find.text('Add files'), findsOneWidget);
+    expect(find.text('It matches'), findsNothing);
+  });
+
+  testWidgets('a code that does not match disconnects and sends nothing', (tester) async {
+    await connectByCode(tester);
+    await tester.tap(find.text("It doesn't match"));
+    await tester.pump();
+
+    expect(engine.disconnects, 1);
+    expect(engine.queued, isEmpty);
+    expect(find.textContaining('this may not be $rahulName'), findsOneWidget);
+  });
+
+  testWidgets('Cancel before the other phone accepts leaves the screen at once', (tester) async {
+    await openMethod(tester, 'Nearby phones');
+    engine.devices.add([rahul]);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(rahulName));
+    await tester.pumpAndSettle();
+    expect(find.text('Connecting…'), findsOneWidget);
+
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+
+    expect(engine.disconnects, 1);
+    expect(find.text('Connecting…'), findsNothing);
+    expect(find.text('Nearby'), findsOneWidget, reason: 'back on the Nearby page, not stuck on "Cancelling…"');
+  });
+
+  testWidgets('a second tap while a way to connect is opening does nothing', (tester) async {
+    await open(tester);
+    await go(tester, 'Send');
+    await tester.tap(find.text('Tap phones'));
+    await tester.tap(find.text('Tap phones'), warnIfMissed: false);
+    await tester.pumpAndSettle();
+    expect(find.text('Hold the backs of the phones together'), findsOneWidget);
+    await tester.tap(find.byTooltip('Back'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('How do you want to connect?'),
+      findsOneWidget,
+      reason: 'one Back leaves it: only one page was opened',
+    );
+  });
+
+  testWidgets('searching the network failing is said in words, not shown as an empty list', (tester) async {
+    await openMethod(tester, 'Nearby phones');
+    expect(find.text(searchFailedText), findsNothing);
+    engine.searchFailed.value = true;
+    await tester.pump();
+    expect(find.text(searchFailedText), findsOneWidget);
+  });
+
+  testWidgets('tapping Check for updates again while one is running does nothing', (tester) async {
+    engine.update = '0.1.9';
+    await open(tester);
+    await tester.tap(find.text('Check for updates'));
+    await tester.pump();
+    await tester.pump();
+    await tester.tap(find.text('Check for updates'), warnIfMissed: false);
+    await tester.pump();
+    expect(engine.updateChecks, 1);
+  });
+
+  testWidgets('Receive says what stops other phones finding it, and what still works', (tester) async {
+    await open(tester);
+    await go(tester, 'Receive');
+    engine.receiving!.add(
+      const Connection(ticket: 'NV1ABC', problems: [SetupProblem.otherNetworks, SetupProblem.notListed]),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text(setupProblemText(SetupProblem.otherNetworks)), findsOneWidget);
+    expect(find.text(setupProblemText(SetupProblem.notListed)), findsOneWidget);
+  });
+
+  testWidgets('Receive closes itself after ten quiet minutes and opens again on request', (tester) async {
+    await open(tester);
+    await go(tester, 'Receive');
+    engine.receiving!.add(const Connection(ticket: 'NV1ABC'));
+    await tester.pumpAndSettle();
+    expect(engine.receiveSessions, 1);
+
+    await tester.pump(const Duration(minutes: 9));
+    expect(find.text(receiveIdleText), findsNothing);
+    await tester.pump(const Duration(minutes: 2));
+    await tester.pump();
+    expect(find.text(receiveIdleText), findsOneWidget);
+    expect(find.bySemanticsLabel('QR code to connect'), findsNothing);
+
+    await tester.tap(find.text('Open Receive again'));
+    await tester.pump();
+    expect(engine.receiveSessions, 2);
+    expect(find.text(receiveIdleText), findsNothing);
   });
 
   testWidgets('tapping phones connects at once', (tester) async {

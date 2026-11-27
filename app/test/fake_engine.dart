@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show ValueNotifier;
 import 'package:nearvolt/engine/engine.dart';
 import 'package:nearvolt/engine/models.dart';
 
@@ -63,6 +64,9 @@ class FakeEngine implements TransferEngine {
 
   @override
   Future<void> fix(Need need) async => fixed.add(need);
+
+  @override
+  final ValueNotifier<bool> searchFailed = ValueNotifier<bool>(false);
 
   @override
   Stream<List<NearbyDevice>> nearby() {

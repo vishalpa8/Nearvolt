@@ -18,7 +18,10 @@ import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelUuid
+import android.os.SystemClock
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeout
 import java.io.IOException
@@ -39,6 +42,27 @@ class Ble(private val context: Context, private val emit: (PlatformEvent) -> Uni
     @Volatile private var ticket = ByteArray(0)
     private val found = mutableMapOf<String, BluetoothDevice>()
 
+    /** When each receiver was last heard, so one that stops advertising leaves the list. */
+    private val lastSeen = mutableMapOf<String, Long>()
+    private val handler = Handler(Looper.getMainLooper())
+    private val sweep = object : Runnable {
+        override fun run() {
+            expire(SystemClock.elapsedRealtime())
+            handler.postDelayed(this, SWEEP_MS)
+        }
+    }
+
+    /** Announces every receiver not heard for [GONE_AFTER_MS] as gone. */
+    private fun expire(now: Long) {
+        val gone = synchronized(found) {
+            lastSeen.filterValues { now - it > GONE_AFTER_MS }.keys.toList().onEach {
+                lastSeen.remove(it)
+                found.remove(it)
+            }
+        }
+        gone.forEach { emit(PlatformEvent(PlatformEventKind.RECEIVER_LOST, id = "$ID_PREFIX$it")) }
+    }
+
     private val advertising = object : AdvertiseCallback() {
         override fun onStartFailure(errorCode: Int) {
             // A long device name can overflow the scan response; advertise without it.
@@ -56,7 +80,10 @@ class Ble(private val context: Context, private val emit: (PlatformEvent) -> Uni
 
         private fun found(result: ScanResult) {
             val device = result.device
-            val isNew = synchronized(found) { found.put(device.address, device) == null }
+            val isNew = synchronized(found) {
+                lastSeen[device.address] = SystemClock.elapsedRealtime()
+                found.put(device.address, device) == null
+            }
             if (isNew) {
                 emit(
                     PlatformEvent(
@@ -102,7 +129,7 @@ class Ble(private val context: Context, private val emit: (PlatformEvent) -> Uni
     private fun startAdvertising(includeName: Boolean) {
         val advertiser = adapter?.bluetoothLeAdvertiser ?: return
         val settings = AdvertiseSettings.Builder()
-            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
+            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_BALANCED)
             .setConnectable(true)
             .build()
         val data = AdvertiseData.Builder().addServiceUuid(ParcelUuid(SERVICE)).build()
@@ -117,13 +144,21 @@ class Ble(private val context: Context, private val emit: (PlatformEvent) -> Uni
     }
 
     fun scan() {
-        synchronized(found) { found.clear() }
+        synchronized(found) {
+            found.clear()
+            lastSeen.clear()
+        }
         val filter = ScanFilter.Builder().setServiceUuid(ParcelUuid(SERVICE)).build()
-        val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
+        // Balanced: a receiver shows up within a couple of seconds, and the radio isn't
+        // kept at full tilt for as long as the page is open.
+        val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_BALANCED).build()
         runCatching { adapter?.bluetoothLeScanner?.startScan(listOf(filter), settings, scanning) }
+        handler.removeCallbacks(sweep)
+        handler.postDelayed(sweep, SWEEP_MS)
     }
 
     fun stopScan() {
+        handler.removeCallbacks(sweep)
         runCatching { adapter?.bluetoothLeScanner?.stopScan(scanning) }
     }
 
@@ -184,5 +219,9 @@ class Ble(private val context: Context, private val emit: (PlatformEvent) -> Uni
         val SERVICE: UUID = UUID.fromString("6e766f6c-7400-4b8e-9c4a-2f6a0e3b5a01")
         val TICKET: UUID = UUID.fromString("6e766f6c-7400-4b8e-9c4a-2f6a0e3b5a02")
         const val ID_PREFIX = "ble:"
+
+        /** A receiver advertises several times a second; this long without a sign means it's gone. */
+        const val GONE_AFTER_MS = 15_000L
+        const val SWEEP_MS = 5_000L
     }
 }

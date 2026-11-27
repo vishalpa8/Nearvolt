@@ -361,6 +361,7 @@ class UpdateCard extends StatefulWidget {
     required this.check,
     required this.install,
     required this.onClose,
+    this.onDone,
   });
 
   /// The installed version.
@@ -368,6 +369,9 @@ class UpdateCard extends StatefulWidget {
   final Future<String?> Function() check;
   final Stream<double> Function() install;
   final VoidCallback onClose;
+
+  /// Called once the check, and any install it started, has ended one way or another.
+  final VoidCallback? onDone;
 
   @override
   State<UpdateCard> createState() => _UpdateCardState();
@@ -386,6 +390,14 @@ class _UpdateCardState extends State<UpdateCard> {
   }
 
   Future<void> _run() async {
+    try {
+      await _checkAndInstall();
+    } finally {
+      widget.onDone?.call();
+    }
+  }
+
+  Future<void> _checkAndInstall() async {
     try {
       final version = await widget.check();
       if (!mounted) return;

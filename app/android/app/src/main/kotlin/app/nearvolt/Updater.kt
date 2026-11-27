@@ -57,7 +57,21 @@ class Updater(private val activity: MainActivity, private val emit: (PlatformEve
         UpdateInfo(manifest.getString("version"), manifest.optString("notes"), apk.getString("url"), apk.getString("sha256"))
     }
 
+    /** Only one install runs at a time; a second request while one is under way is told so. */
+    private val installing = java.util.concurrent.atomic.AtomicBoolean(false)
+
     suspend fun install(update: UpdateInfo) {
+        if (!installing.compareAndSet(false, true)) {
+            throw FlutterError("busy", "An update is already being installed.")
+        }
+        try {
+            installOnce(update)
+        } finally {
+            installing.set(false)
+        }
+    }
+
+    private suspend fun installOnce(update: UpdateInfo) {
         requireIdle()
         if (!context.packageManager.canRequestPackageInstalls()) {
             activity.settings.launch(

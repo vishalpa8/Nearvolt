@@ -238,7 +238,9 @@ enum class PlatformEventKind(val raw: Int) {
   USB_CONNECTED(3),
   USB_DISCONNECTED(4),
   /** Update download progress, 0 to 1. */
-  UPDATE_PROGRESS(5);
+  UPDATE_PROGRESS(5),
+  /** Searching the local network for receivers couldn't start, even after retries. */
+  SEARCH_FAILED(6);
 
   companion object {
     private val pigeonValues = values()
@@ -368,20 +370,24 @@ data class PickedFile (
 data class PickResult (
   /** Lets the engine open the files later, one at a time. */
   val token: Long,
-  val files: List<PickedFile>
+  val files: List<PickedFile>,
+  /** Files in the pick that couldn't be read (no size, no access) and were left out. */
+  val skipped: Long
 )
  {
   companion object {
     fun fromList(pigeonVar_list: List<Any?>): PickResult {
       val token = pigeonVar_list[0] as Long
       val files = pigeonVar_list[1] as List<PickedFile>
-      return PickResult(token, files)
+      val skipped = pigeonVar_list[2] as Long
+      return PickResult(token, files, skipped)
     }
   }
   fun toList(): List<Any?> {
     return listOf(
       token,
       files,
+      skipped,
     )
   }
   override fun equals(other: Any?): Boolean {
@@ -392,17 +398,64 @@ data class PickResult (
       return true
     }
     val other = other as PickResult
-    return PlatformPigeonUtils.deepEquals(this.token, other.token) && PlatformPigeonUtils.deepEquals(this.files, other.files)
+    return PlatformPigeonUtils.deepEquals(this.token, other.token) && PlatformPigeonUtils.deepEquals(this.files, other.files) && PlatformPigeonUtils.deepEquals(this.skipped, other.skipped)
   }
 
   override fun hashCode(): Int {
     var result = javaClass.hashCode()
     result = 31 * result + PlatformPigeonUtils.deepHash(this.token)
     result = 31 * result + PlatformPigeonUtils.deepHash(this.files)
+    result = 31 * result + PlatformPigeonUtils.deepHash(this.skipped)
     return result
   }
   override fun toString(): String {
-    return "PickResult(token=$token, files=$files)"
+    return "PickResult(token=$token, files=$files, skipped=$skipped)"
+  }
+}
+
+/**
+ * What came of opening Receive: the Wi-Fi Direct group, if one could be made, and
+ * whether this phone could be listed for others on the local network.
+ *
+ * Generated class from Pigeon that represents data sent in messages.
+ */
+data class ReceiveSetup (
+  val group: WifiGroup? = null,
+  val listed: Boolean
+)
+ {
+  companion object {
+    fun fromList(pigeonVar_list: List<Any?>): ReceiveSetup {
+      val group = pigeonVar_list[0] as WifiGroup?
+      val listed = pigeonVar_list[1] as Boolean
+      return ReceiveSetup(group, listed)
+    }
+  }
+  fun toList(): List<Any?> {
+    return listOf(
+      group,
+      listed,
+    )
+  }
+  override fun equals(other: Any?): Boolean {
+    if (other == null || other.javaClass != javaClass) {
+      return false
+    }
+    if (this === other) {
+      return true
+    }
+    val other = other as ReceiveSetup
+    return PlatformPigeonUtils.deepEquals(this.group, other.group) && PlatformPigeonUtils.deepEquals(this.listed, other.listed)
+  }
+
+  override fun hashCode(): Int {
+    var result = javaClass.hashCode()
+    result = 31 * result + PlatformPigeonUtils.deepHash(this.group)
+    result = 31 * result + PlatformPigeonUtils.deepHash(this.listed)
+    return result
+  }
+  override fun toString(): String {
+    return "ReceiveSetup(group=$group, listed=$listed)"
   }
 }
 
@@ -664,20 +717,25 @@ private open class PlatformPigeonCodec : StandardMessageCodec() {
       }
       134.toByte() -> {
         (readValue(buffer) as? List<Any?>)?.let {
-          WifiGroup.fromList(it)
+          ReceiveSetup.fromList(it)
         }
       }
       135.toByte() -> {
         (readValue(buffer) as? List<Any?>)?.let {
-          Readiness.fromList(it)
+          WifiGroup.fromList(it)
         }
       }
       136.toByte() -> {
         (readValue(buffer) as? List<Any?>)?.let {
-          UpdateInfo.fromList(it)
+          Readiness.fromList(it)
         }
       }
       137.toByte() -> {
+        (readValue(buffer) as? List<Any?>)?.let {
+          UpdateInfo.fromList(it)
+        }
+      }
+      138.toByte() -> {
         (readValue(buffer) as? List<Any?>)?.let {
           PlatformEvent.fromList(it)
         }
@@ -707,20 +765,24 @@ private open class PlatformPigeonCodec : StandardMessageCodec() {
         stream.write(133)
         writeValue(stream, value.toList())
       }
-      is WifiGroup -> {
+      is ReceiveSetup -> {
         stream.write(134)
         writeValue(stream, value.toList())
       }
-      is Readiness -> {
+      is WifiGroup -> {
         stream.write(135)
         writeValue(stream, value.toList())
       }
-      is UpdateInfo -> {
+      is Readiness -> {
         stream.write(136)
         writeValue(stream, value.toList())
       }
-      is PlatformEvent -> {
+      is UpdateInfo -> {
         stream.write(137)
+        writeValue(stream, value.toList())
+      }
+      is PlatformEvent -> {
+        stream.write(138)
         writeValue(stream, value.toList())
       }
       else -> super.writeValue(stream, value)
@@ -748,12 +810,17 @@ interface NearvoltPlatform {
   suspend fun fix(requirement: Requirement): Readiness
   suspend fun pickFiles(): PickResult?
   suspend fun pickFolder(): PickResult?
+  /**
+   * The batch made from this pick is over: forget the files and give back the
+   * access Android granted to them.
+   */
+  fun releaseSelection(token: Long)
   suspend fun scanQr(): String?
   /**
    * Opens Receive: serves the tap ticket over NFC and advertises the public one
    * on the local network and Bluetooth, then creates the Wi-Fi Direct group.
    */
-  suspend fun startReceiving(tapTicket: String, publicTicket: String, port: Long): WifiGroup?
+  suspend fun startReceiving(tapTicket: String, publicTicket: String, port: Long): ReceiveSetup
   fun updateTickets(tapTicket: String, publicTicket: String, port: Long)
   /**
    * A transfer started: stops advertising this phone over Bluetooth, the local
@@ -906,6 +973,24 @@ interface NearvoltPlatform {
               }
               reply.reply(wrapped)
             }
+          }
+        } else {
+          channel.setMessageHandler(null)
+        }
+      }
+      run {
+        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.nearvolt.NearvoltPlatform.releaseSelection$separatedMessageChannelSuffix", codec)
+        if (api != null) {
+          channel.setMessageHandler { message, reply ->
+            val args = message as List<Any?>
+            val tokenArg = args[0] as Long
+            val wrapped: List<Any?> = try {
+              api.releaseSelection(tokenArg)
+              listOf(null)
+            } catch (exception: Throwable) {
+              PlatformPigeonUtils.wrapError(exception)
+            }
+            reply.reply(wrapped)
           }
         } else {
           channel.setMessageHandler(null)

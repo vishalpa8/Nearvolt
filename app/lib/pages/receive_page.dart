@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:material_ui/material_ui.dart';
 
 import '../engine/engine.dart';
+import '../engine/messages.dart';
 import '../engine/models.dart';
 import '../theme.dart';
 import '../ui/atoms.dart';
@@ -37,13 +38,37 @@ class _ReceivePageState extends State<ReceivePage> with NeedsMixin {
   @override
   Purpose get purpose => Purpose.receive;
 
+  /// How long Receive stays open with nobody connecting. Advertising over
+  /// Bluetooth and the network, a Wi-Fi Direct group and NFC all cost battery.
+  static const _idleLimit = Duration(minutes: 10);
+  Timer? _idle;
+  var _idleStopped = false;
+
   /// A new session, so the code and what's advertised match what's on now.
   @override
   Future<void> restart() async {
     await _session?.cancel();
     if (!mounted) return;
-    setState(() => _c = const Connection());
+    setState(() {
+      _c = const Connection();
+      _idleStopped = false;
+    });
     _session = engine.receive().listen(_update);
+    _armIdle();
+  }
+
+  void _armIdle() {
+    _idle?.cancel();
+    _idle = Timer(_idleLimit, _stopIdle);
+  }
+
+  /// Receive closes itself, unless someone is in the middle of connecting.
+  Future<void> _stopIdle() async {
+    if (!mounted) return;
+    if (_asking || _showing) return _armIdle();
+    await _session?.cancel();
+    _session = null;
+    if (mounted) setState(() => _idleStopped = true);
   }
 
   Future<void> _update(Connection c) async {
@@ -63,6 +88,7 @@ class _ReceivePageState extends State<ReceivePage> with NeedsMixin {
     }
     if (c.phase == LinkPhase.connected && !_showing && mounted) {
       _showing = true;
+      _idle?.cancel();
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
           builder: (_) => ConnectionPage(engine: engine, updates: _updates.stream, initial: _c, sending: false),
@@ -75,6 +101,7 @@ class _ReceivePageState extends State<ReceivePage> with NeedsMixin {
 
   @override
   void dispose() {
+    _idle?.cancel();
     _session?.cancel();
     _updates.close();
     _withdrawn.close();
@@ -92,30 +119,56 @@ class _ReceivePageState extends State<ReceivePage> with NeedsMixin {
         child: Column(
           children: [
             if (needNotice case final notice?) ...[const SizedBox(height: Space.l), notice],
-            const SizedBox(height: Space.xl),
-            Panel(
-              padding: const EdgeInsets.all(Space.l),
-              child: SizedBox.square(
-                dimension: 232,
-                child: ticket == null
-                    ? const Center(child: CircularProgressIndicator(color: AppColors.accent))
-                    : QrView(data: ticket),
-              ),
-            ),
-            const SizedBox(height: Space.xl),
-            Text('Visible as ${widget.profile.name}', style: text.titleMedium, textAlign: TextAlign.center),
-            const SizedBox(height: Space.s),
-            const Pill(label: 'Waiting for a sender', color: AppColors.success),
-            const SizedBox(height: Space.xxl),
-            const _Hint(icon: Icons.qr_code_scanner_rounded, text: 'Scan this code on the other phone'),
-            if (widget.profile.hasNfc) const _Hint(icon: Icons.nfc_rounded, text: 'Or tap the phones together'),
-            _Hint(icon: Icons.radar_rounded, text: 'Or pick ${widget.profile.name} in their Nearby list'),
-            const _Hint(icon: Icons.usb_rounded, text: 'Or connect the phones with a USB cable'),
+            if (_idleStopped) ..._stopped(text) else ..._open(text, ticket),
           ],
         ),
       ),
     );
   }
+
+  /// Receive closed itself after 10 quiet minutes.
+  List<Widget> _stopped(TextTheme text) => [
+    const SizedBox(height: Space.xxl),
+    const Icon(Icons.battery_saver_rounded, size: 56, color: AppColors.textSecondary),
+    const SizedBox(height: Space.l),
+    Text(receiveIdleText, style: text.titleMedium, textAlign: TextAlign.center),
+    const SizedBox(height: Space.xl),
+    FilledButton(onPressed: restart, child: const Text('Open Receive again')),
+  ];
+
+  List<Widget> _open(TextTheme text, String? ticket) => [
+    for (final problem in _c.problems) ...[
+      const SizedBox(height: Space.l),
+      Panel(
+        child: Row(
+          children: [
+            const Icon(Icons.info_outline_rounded, color: AppColors.warning),
+            const SizedBox(width: Space.m),
+            Expanded(child: Text(setupProblemText(problem), style: text.bodyMedium)),
+          ],
+        ),
+      ),
+    ],
+    const SizedBox(height: Space.xl),
+    Panel(
+      padding: const EdgeInsets.all(Space.l),
+      child: SizedBox.square(
+        dimension: 232,
+        child: ticket == null
+            ? const Center(child: CircularProgressIndicator(color: AppColors.accent))
+            : QrView(data: ticket),
+      ),
+    ),
+    const SizedBox(height: Space.xl),
+    Text('Visible as ${widget.profile.name}', style: text.titleMedium, textAlign: TextAlign.center),
+    const SizedBox(height: Space.s),
+    const Pill(label: 'Waiting for a sender', color: AppColors.success),
+    const SizedBox(height: Space.xxl),
+    const _Hint(icon: Icons.qr_code_scanner_rounded, text: 'Scan this code on the other phone'),
+    if (widget.profile.hasNfc) const _Hint(icon: Icons.nfc_rounded, text: 'Or tap the phones together'),
+    _Hint(icon: Icons.radar_rounded, text: 'Or pick ${widget.profile.name} in their Nearby list'),
+    const _Hint(icon: Icons.usb_rounded, text: 'Or connect the phones with a USB cable'),
+  ];
 }
 
 class _Hint extends StatelessWidget {

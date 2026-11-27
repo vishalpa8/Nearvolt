@@ -39,7 +39,17 @@ class _ConnectionPageState extends State<ConnectionPage> {
   late Connection _c = widget.initial;
   late final StreamSubscription<Connection> _sub;
   var _leaving = false;
+
+  /// The engine has already been told to end this connection.
+  var _disconnected = false;
   late var _pending = widget.files;
+
+  /// Phones paired by a code (Nearby list, USB) must have it compared on this screen
+  /// too, since nothing else proves the phone that answered is the one picked.
+  var _codeChecked = false;
+
+  bool _needsCodeCheck(Connection c) =>
+      widget.sending && c.phase == LinkPhase.connected && c.code != null && !_codeChecked;
 
   @override
   void initState() {
@@ -49,12 +59,36 @@ class _ConnectionPageState extends State<ConnectionPage> {
   }
 
   void _update(Connection c) {
-    // Files chosen first wait for the connection to be fully set up.
-    if (c.phase == LinkPhase.connected && _pending != null) {
-      widget.engine.queue(_pending!);
-      _pending = null;
-    }
+    // Files chosen first wait for the connection to be fully set up, and for the code to
+    // be checked if there is one.
+    if (c.phase == LinkPhase.connected && !_needsCodeCheck(c)) _sendPending();
     if (mounted) setState(() => _c = c);
+  }
+
+  void _sendPending() {
+    final files = _pending;
+    if (files == null) return;
+    _pending = null;
+    try {
+      widget.engine.queue(files);
+    } on Object {
+      _tell(connectionEnded);
+    }
+  }
+
+  void _tell(String message) {
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _codeMatches() {
+    setState(() => _codeChecked = true);
+    _sendPending();
+  }
+
+  void _codeDiffers() {
+    setState(() => _leaving = true);
+    widget.engine.disconnect();
+    _tell("The codes differ, so this may not be ${_c.peer}. Nothing was sent.");
   }
 
   @override
@@ -68,15 +102,25 @@ class _ConnectionPageState extends State<ConnectionPage> {
     if (kind == null) return;
     final engine = widget.engine;
     final selection = kind == PickKind.folder ? await engine.pickFolder() : await engine.pickFiles();
-    if (selection != null) engine.queue(selection);
+    if (selection == null) return;
+    if (selection.skipped > 0) _tell(leftOut(selection.skipped));
+    if (selection.files.isEmpty) return;
+    try {
+      engine.queue(selection);
+    } on Object {
+      _tell(connectionEnded);
+    }
   }
 
   /// Before the other phone has accepted there's nothing to disconnect from, so
   /// leaving just cancels; only a connection that was set up asks first.
   Future<void> _disconnect() async {
     if (_c.phase != LinkPhase.connected) {
-      setState(() => _leaving = true);
+      // The screen goes at once; the engine finishes cleaning up in the background,
+      // even if it's still in the middle of joining a network.
+      _disconnected = true;
       widget.engine.disconnect();
+      if (mounted) Navigator.of(context).pop();
       return;
     }
     final sure = await showDialog<bool>(
@@ -106,15 +150,21 @@ class _ConnectionPageState extends State<ConnectionPage> {
       LinkPhase.connecting => ('Connecting…', AppColors.accent),
       LinkPhase.waiting => ('Waiting for ${c.peer} to accept', AppColors.accent),
       LinkPhase.connected when _leaving => ('Disconnecting…', AppColors.warning),
+      LinkPhase.connected when _needsCodeCheck(c) => ('Connected · check the code', AppColors.accent),
       LinkPhase.connected => (['Connected', if (c.link.isNotEmpty) c.link, 'Encrypted'].join(' · '), AppColors.success),
       LinkPhase.reconnecting => ('Link dropped · Reconnecting…', AppColors.warning),
       LinkPhase.ended => (c.endedByPeer ? '${c.peer} disconnected' : 'Disconnected', AppColors.textSecondary),
       LinkPhase.failed => ('Connection failed', AppColors.danger),
     };
     return PopScope(
-      canPop: !c.open,
+      // Only a connection that was set up asks first; before that, Back just cancels.
+      canPop: !c.open || c.phase != LinkPhase.connected,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) _disconnect();
+        if (!didPop) {
+          _disconnect();
+        } else if (c.open && !_disconnected) {
+          widget.engine.disconnect();
+        }
       },
       child: PageScaffold(
         body: ListView(
@@ -147,7 +197,7 @@ class _ConnectionPageState extends State<ConnectionPage> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   // Files can be added once the connection is set up, not before.
-                  if (widget.sending && c.phase == LinkPhase.connected)
+                  if (widget.sending && c.phase == LinkPhase.connected && !_needsCodeCheck(c))
                     FilledButton.icon(
                       onPressed: _leaving ? null : _add,
                       icon: const Icon(Icons.add_rounded),
@@ -173,6 +223,31 @@ class _ConnectionPageState extends State<ConnectionPage> {
     final p = c.progress;
     if (c.phase == LinkPhase.waiting && c.code != null) {
       return CodeBadge(code: c.code!, caption: 'Check that ${c.peer} shows the same code, then accept there');
+    }
+    if (_needsCodeCheck(c) && !_leaving) {
+      return Column(
+        children: [
+          CodeBadge(code: c.code!, caption: 'Does ${c.peer} show this same code?'),
+          const SizedBox(height: Space.l),
+          Text(
+            'If the codes differ, another phone may be pretending to be ${c.peer}.',
+            style: text.bodySmall,
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: Space.l),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(onPressed: _codeDiffers, child: const Text("It doesn't match")),
+              ),
+              const SizedBox(width: Space.m),
+              Expanded(
+                child: FilledButton(onPressed: _codeMatches, child: const Text('It matches')),
+              ),
+            ],
+          ),
+        ],
+      );
     }
     if (p != null && c.open) {
       return Column(

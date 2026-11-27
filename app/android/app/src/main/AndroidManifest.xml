@@ -45,7 +45,12 @@
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
     <uses-feature android:name="android.hardware.usb.accessory" android:required="false" />
 
+    <!-- Nothing here is backed up: identity.bin holds this phone's private key, and a
+         restored copy would let two phones pass as one. -->
     <application
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:label="@string/app_name"
         android:name=".NearvoltApplication"
         android:icon="@mipmap/ic_launcher">

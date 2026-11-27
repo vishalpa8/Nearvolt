@@ -42,11 +42,23 @@ class PickedFile {
 }
 
 class PickResult {
-  PickResult(this.token, this.files);
+  PickResult(this.token, this.files, this.skipped);
 
   /// Lets the engine open the files later, one at a time.
   int token;
   List<PickedFile> files;
+
+  /// Files in the pick that couldn't be read (no size, no access) and were left out.
+  int skipped;
+}
+
+/// What came of opening Receive: the Wi-Fi Direct group, if one could be made, and
+/// whether this phone could be listed for others on the local network.
+class ReceiveSetup {
+  ReceiveSetup(this.group, this.listed);
+
+  WifiGroup? group;
+  bool listed;
 }
 
 class WifiGroup {
@@ -117,6 +129,9 @@ enum PlatformEventKind {
 
   /// Update download progress, 0 to 1.
   updateProgress,
+
+  /// Searching the local network for receivers couldn't start, even after retries.
+  searchFailed,
 }
 
 class PlatformEvent {
@@ -159,13 +174,17 @@ abstract class NearvoltPlatform {
   @async
   PickResult? pickFolder();
 
+  /// The batch made from this pick is over: forget the files and give back the
+  /// access Android granted to them.
+  void releaseSelection(int token);
+
   @async
   String? scanQr();
 
   /// Opens Receive: serves the tap ticket over NFC and advertises the public one
   /// on the local network and Bluetooth, then creates the Wi-Fi Direct group.
   @async
-  WifiGroup? startReceiving(String tapTicket, String publicTicket, int port);
+  ReceiveSetup startReceiving(String tapTicket, String publicTicket, int port);
 
   void updateTickets(String tapTicket, String publicTicket, int port);
 

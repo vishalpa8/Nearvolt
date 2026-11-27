@@ -69,8 +69,10 @@ Stream<TransferEvent> connect({
 Stream<TransferEvent> connectUsb() => RustLib.instance.api.crateApiConnectUsb();
 
 /// Queues the picked files (`source_token` from the platform picker) on the open
-/// connection. Batches are sent one after another, numbered from 0.
-void queueFiles({
+/// connection. Batches are sent one after another, numbered from 0. A very large
+/// selection is cut into several batches; the result lists how many files go in
+/// each, in order, so the app can show the same batches.
+Uint32List queueFiles({
   required PlatformInt64 sourceToken,
   required List<SourceFile> files,
 }) => RustLib.instance.api.crateApiQueueFiles(

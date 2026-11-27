@@ -13,8 +13,9 @@ use nearvolt_core::protocol::FileEntry;
 use nearvolt_core::transfer as core_kind;
 use nearvolt_core::util::AbortOnDrop;
 use nearvolt_core::{
-    connect as connect_peer, Approver, Command, Event, EventSender, FileSet, Identity, Link, MuxLink, Peer, Progress,
-    RawStream, ReceiveOptions, Receiver, Request, SendOptions, SourceOpener, Stats, Summary, Ticket, WifiDirect,
+    connect as connect_peer, plan_batches, Approver, Command, Event, EventSender, FileSet, Identity, Link, MuxLink,
+    Peer, Progress, RawStream, ReceiveOptions, Receiver, Request, SendOptions, SourceOpener, Stats, Summary, TcpLink,
+    Ticket, WifiDirect, MAX_FILES_PER_BATCH,
 };
 use tokio::runtime::Runtime;
 use tokio::sync::{mpsc, oneshot};
@@ -336,15 +337,17 @@ pub fn stop_receiving() {
 /// `direct_address`, the address of a Wi-Fi Direct group this phone has joined,
 /// only that address is used; otherwise every address in the ticket is tried.
 pub fn connect(ticket: String, direct_address: Option<String>, events: StreamSink<TransferEvent>) -> Result<()> {
-    let mut ticket = Ticket::decode(&ticket)?;
-    // After joining the receiver's Wi-Fi Direct network, only its address is
-    // used, so the files go phone to phone and never through a router.
+    let ticket = Ticket::decode(&ticket)?;
+    let mut peer = Peer::from_ticket(&ticket);
+    // After joining the receiver's Wi-Fi Direct network, its address in that network
+    // is tried first, so the files go phone to phone and never through a router. The
+    // other addresses stay as a fallback if that one turns out not to answer.
     if let Some(ip) = direct_address {
         let ip: std::net::IpAddr = ip.parse().context("the Wi-Fi Direct address isn't valid")?;
         let port = ticket.addrs.first().context("the code has no addresses")?.port();
-        ticket.addrs = vec![SocketAddr::new(ip, port)];
+        peer.link = TcpLink::preferring(SocketAddr::new(ip, port), ticket.addrs.clone());
     }
-    start_connection(Peer::from_ticket(&ticket), events)
+    start_connection(peer, events)
 }
 
 /// Connects over the USB cable. With no ticket to pin, both phones confirm a code.
@@ -354,17 +357,21 @@ pub fn connect_usb(events: StreamSink<TransferEvent>) -> Result<()> {
 }
 
 /// Queues the picked files (`source_token` from the platform picker) on the open
-/// connection. Batches are sent one after another, numbered from 0.
+/// connection. Batches are sent one after another, numbered from 0. A very large
+/// selection is cut into several batches; the result lists how many files go in
+/// each, in order, so the app can show the same batches.
 #[frb(sync)]
-pub fn queue_files(source_token: i64, files: Vec<SourceFile>) -> Result<()> {
+pub fn queue_files(source_token: i64, files: Vec<SourceFile>) -> Result<Vec<u32>> {
     let sending = engine()?.sending.lock().unwrap();
     let sending = sending.as_ref().context("not connected")?;
-    let files = files
+    let files: Vec<FileEntry> = files
         .into_iter()
         .map(|f| FileEntry { path: f.path, size: f.size as u64, modified: f.modified_ms.map(|m| m as u64) })
         .collect();
+    let batches: Vec<u32> = plan_batches(&files, MAX_FILES_PER_BATCH).into_iter().map(|files| files as u32).collect();
     let set = FileSet::Opened { files, opener: picked_files(source_token) };
-    sending.commands.send(Command::Send(set)).ok().context("the connection has ended")
+    sending.commands.send(Command::Send(set)).ok().context("the connection has ended")?;
+    Ok(batches)
 }
 
 /// Ends the sending side's connection, even in the middle of a batch; the

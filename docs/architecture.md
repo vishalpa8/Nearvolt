@@ -51,7 +51,7 @@ ticket (or a USB stream) and the engine takes over.
 | How | What happens | Pairing |
 |---|---|---|
 | Nearby list, same Wi-Fi | The receiver advertises its public ticket over mDNS (`_nearvolt._tcp`) | 4-digit code |
-| Nearby list, Bluetooth | The receiver advertises over Bluetooth LE; the sender reads the public ticket from a GATT characteristic | 4-digit code |
+| Nearby list, Bluetooth | The receiver advertises over Bluetooth LE; the sender reads the public ticket from a GATT characteristic. The ticket has no Wi-Fi Direct details, so this works when the phones can already reach each other | 4-digit code |
 | QR code | The sender scans the receiver's private ticket with Google's code scanner | Secret in the ticket; the receiver accepts once |
 | NFC tap | The receiver's phone acts as an NFC card (host card emulation) serving its tap ticket | Its own secret; the tap is the consent, no prompt |
 | USB cable | Android Open Accessory, with streams multiplexed by yamux | 4-digit code |

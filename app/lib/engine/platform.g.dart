@@ -132,7 +132,9 @@ enum PlatformEventKind {
   usbConnected,
   usbDisconnected,
   /// Update download progress, 0 to 1.
-  updateProgress;
+  updateProgress,
+  /// Searching the local network for receivers couldn't start, even after retries.
+  searchFailed;
 }
 
 class DeviceInfo {
@@ -276,6 +278,7 @@ class PickResult {
   PickResult({
     required this.token,
     required this.files,
+    required this.skipped,
   });
 
   /// Lets the engine open the files later, one at a time.
@@ -283,10 +286,14 @@ class PickResult {
 
   List<PickedFile> files;
 
+  /// Files in the pick that couldn't be read (no size, no access) and were left out.
+  int skipped;
+
   List<Object?> _toList() {
     return <Object?>[
       token,
       files,
+      skipped,
     ];
   }
 
@@ -298,6 +305,7 @@ class PickResult {
     return PickResult(
       token: result[0]! as int,
       files: (result[1]! as List<Object?>).cast<PickedFile>(),
+      skipped: result[2]! as int,
     );
   }
 
@@ -310,7 +318,7 @@ class PickResult {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(token, other.token) && _deepEquals(files, other.files);
+    return _deepEquals(token, other.token) && _deepEquals(files, other.files) && _deepEquals(skipped, other.skipped);
   }
 
   @override
@@ -319,7 +327,59 @@ class PickResult {
 
   @override
   String toString() {
-    return 'PickResult(token: $token, files: $files)';
+    return 'PickResult(token: $token, files: $files, skipped: $skipped)';
+  }
+}
+
+/// What came of opening Receive: the Wi-Fi Direct group, if one could be made, and
+/// whether this phone could be listed for others on the local network.
+class ReceiveSetup {
+  ReceiveSetup({
+    this.group,
+    required this.listed,
+  });
+
+  WifiGroup? group;
+
+  bool listed;
+
+  List<Object?> _toList() {
+    return <Object?>[
+      group,
+      listed,
+    ];
+  }
+
+  Object encode() {
+    return _toList();  }
+
+  static ReceiveSetup decode(Object result) {
+    result as List<Object?>;
+    return ReceiveSetup(
+      group: result[0] as WifiGroup?,
+      listed: result[1]! as bool,
+    );
+  }
+
+  @override
+  // ignore: avoid_equals_and_hash_code_on_mutable_classes
+  bool operator ==(Object other) {
+    if (other is! ReceiveSetup || other.runtimeType != runtimeType) {
+      return false;
+    }
+    if (identical(this, other)) {
+      return true;
+    }
+    return _deepEquals(group, other.group) && _deepEquals(listed, other.listed);
+  }
+
+  @override
+  // ignore: avoid_equals_and_hash_code_on_mutable_classes
+  int get hashCode => _deepHash(<Object?>[runtimeType, ..._toList()]);
+
+  @override
+  String toString() {
+    return 'ReceiveSetup(group: $group, listed: $listed)';
   }
 }
 
@@ -622,17 +682,20 @@ class _PigeonCodec extends StandardMessageCodec {
     }    else if (value is PickResult) {
       buffer.putUint8(133);
       writeValue(buffer, value.encode());
-    }    else if (value is WifiGroup) {
+    }    else if (value is ReceiveSetup) {
       buffer.putUint8(134);
       writeValue(buffer, value.encode());
-    }    else if (value is Readiness) {
+    }    else if (value is WifiGroup) {
       buffer.putUint8(135);
       writeValue(buffer, value.encode());
-    }    else if (value is UpdateInfo) {
+    }    else if (value is Readiness) {
       buffer.putUint8(136);
       writeValue(buffer, value.encode());
-    }    else if (value is PlatformEvent) {
+    }    else if (value is UpdateInfo) {
       buffer.putUint8(137);
+      writeValue(buffer, value.encode());
+    }    else if (value is PlatformEvent) {
+      buffer.putUint8(138);
       writeValue(buffer, value.encode());
     } else {
       super.writeValue(buffer, value);
@@ -655,12 +718,14 @@ class _PigeonCodec extends StandardMessageCodec {
       case 133:
         return PickResult.decode(readValue(buffer)!);
       case 134:
-        return WifiGroup.decode(readValue(buffer)!);
+        return ReceiveSetup.decode(readValue(buffer)!);
       case 135:
-        return Readiness.decode(readValue(buffer)!);
+        return WifiGroup.decode(readValue(buffer)!);
       case 136:
-        return UpdateInfo.decode(readValue(buffer)!);
+        return Readiness.decode(readValue(buffer)!);
       case 137:
+        return UpdateInfo.decode(readValue(buffer)!);
+      case 138:
         return PlatformEvent.decode(readValue(buffer)!);
       default:
         return super.readValueOfType(type, buffer);
@@ -816,6 +881,25 @@ class NearvoltPlatform {
     return pigeonVar_replyValue as PickResult?;
   }
 
+  /// The batch made from this pick is over: forget the files and give back the
+  /// access Android granted to them.
+  Future<void> releaseSelection(int token) async {
+    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.releaseSelection$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channel = BasicMessageChannel<Object?>(
+      pigeonVar_channelName,
+      pigeonChannelCodec,
+      binaryMessenger: pigeonVar_binaryMessenger,
+    );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[token]);
+    final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
+    _extractReplyValueOrThrow(
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: true,
+    )
+    ;
+  }
+
   Future<String?> scanQr() async {
     final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.scanQr$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
@@ -836,7 +920,7 @@ class NearvoltPlatform {
 
   /// Opens Receive: serves the tap ticket over NFC and advertises the public one
   /// on the local network and Bluetooth, then creates the Wi-Fi Direct group.
-  Future<WifiGroup?> startReceiving(String tapTicket, String publicTicket, int port) async {
+  Future<ReceiveSetup> startReceiving(String tapTicket, String publicTicket, int port) async {
     final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.startReceiving$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
@@ -848,10 +932,10 @@ class NearvoltPlatform {
     final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
         pigeonVar_replyList,
         pigeonVar_channelName,
-        isNullValid: true,
+        isNullValid: false,
     )
     ;
-    return pigeonVar_replyValue as WifiGroup?;
+    return pigeonVar_replyValue! as ReceiveSetup;
   }
 
   Future<void> updateTickets(String tapTicket, String publicTicket, int port) async {

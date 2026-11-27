@@ -57,6 +57,8 @@ class ResultLauncher<I, O>(activity: ComponentActivity, contract: ActivityResult
     }
 
     suspend fun launch(input: I): O = suspendCancellableCoroutine { continuation ->
+        // A second request replaces the first, which would otherwise wait for ever.
+        pending?.cancel()
         pending = continuation
         launcher.launch(input)
     }

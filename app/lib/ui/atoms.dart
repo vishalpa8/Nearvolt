@@ -14,7 +14,11 @@ class Dot extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(width: size, height: size, decoration: BoxDecoration(color: color, shape: BoxShape.circle));
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+    );
   }
 }
 
@@ -109,7 +113,10 @@ class ProgressRing extends StatelessWidget {
       curve: Curves.easeOut,
       builder: (context, value, child) => CustomPaint(
         painter: _RingPainter(value, color, stroke),
-        child: SizedBox.square(dimension: size, child: Center(child: child)),
+        child: SizedBox.square(
+          dimension: size,
+          child: Center(child: child),
+        ),
       ),
       child: child,
     );
@@ -179,10 +186,7 @@ class _QrPainter extends CustomPainter {
         while (col < n && image.isDark(row, col)) {
           col++;
         }
-        canvas.drawRect(
-          Rect.fromLTWH((start + quiet) * cell, (row + quiet) * cell, (col - start) * cell, cell),
-          paint,
-        );
+        canvas.drawRect(Rect.fromLTWH((start + quiet) * cell, (row + quiet) * cell, (col - start) * cell, cell), paint);
       }
     }
   }

@@ -296,6 +296,72 @@ async fn an_unreadable_file_fails_its_batch_and_the_connection_goes_on() {
     assert!(!dst.join("second.bin").exists());
 }
 
+/// A selection bigger than one batch is sent as several, one after another, and
+/// every file arrives once.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_big_selection_is_sent_as_several_batches() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (src, dst) = (tmp.path().join("src"), tmp.path().join("dst"));
+    sample_files(&src);
+    let rx = receiver(&dst, false);
+    let peer = Peer::from_ticket(&rx.ticket());
+    let (commands, queue) = mpsc::unbounded_channel();
+    commands.send(Command::Send(FileSet::Paths(vec![src.join("album")]))).unwrap();
+    drop(commands);
+    let (events_tx, mut events_rx) = mpsc::unbounded_channel();
+    let identity = Identity::generate().unwrap();
+    // Two files to a batch: the three files of the album take two batches.
+    let options = SendOptions { max_files_per_batch: 2, ..SendOptions::default() };
+    let sending = connect(&identity, &peer, &options, queue, Arc::new(Stats::default()), Some(events_tx));
+    let receiving = rx.run(approve_all(Arc::default()), Arc::new(Stats::default()), None);
+    let (received, sent) = tokio::join!(receiving, sending);
+    assert_eq!(received.unwrap().files, 3);
+    assert_eq!(sent.unwrap().files, 3);
+
+    let completed: Vec<u32> = drain(&mut events_rx)
+        .into_iter()
+        .filter_map(|e| match e {
+            Event::Completed { batch, .. } => Some(batch),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(completed, vec![0, 1]);
+    assert_same(&src.join("album"), &dst.join("album"));
+}
+
+/// A Wi-Fi Direct address that was joined but doesn't answer must not leave the
+/// sender stuck: the other addresses in the code are tried.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_direct_address_that_does_not_answer_falls_back_to_the_others() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (src, dst) = (tmp.path().join("src"), tmp.path().join("dst"));
+    sample_files(&src);
+    let rx = receiver(&dst, false);
+    let ticket = rx.ticket();
+    // A port nothing listens on.
+    let dead = {
+        let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        socket.local_addr().unwrap()
+    };
+    let peer = Peer {
+        link: TcpLink::preferring(dead, ticket.addrs.clone()),
+        name: ticket.name.clone(),
+        fingerprint: Some(ticket.fingerprint),
+        secret: ticket.secret,
+    };
+    let (received, sent) = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        tokio::join!(
+            rx.run(approve_all(Arc::default()), Arc::new(Stats::default()), None),
+            send_album(&peer, &src, None)
+        )
+    })
+    .await
+    .expect("it should connect through the other addresses");
+    received.unwrap();
+    sent.unwrap();
+    assert_same(&src.join("album"), &dst.join("album"));
+}
+
 /// A file the receiving phone can't save fails its own batch and says why; the
 /// sender doesn't retry forever and the connection goes on.
 #[tokio::test(flavor = "multi_thread")]

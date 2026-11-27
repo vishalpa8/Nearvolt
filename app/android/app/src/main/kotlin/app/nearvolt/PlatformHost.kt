@@ -27,6 +27,7 @@ import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -35,6 +36,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.util.Locale
 
@@ -205,13 +207,22 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
         else -> emptyList()
     }
 
+    // A pick replaced by a newer one just ends, as if the user had backed out of it.
     override suspend fun pickFiles(): PickResult? {
-        val uris = activity.pickFiles.launch(arrayOf("*/*"))
+        val uris = try {
+            activity.pickFiles.launch(arrayOf("*/*"))
+        } catch (_: CancellationException) {
+            return null
+        }
         return if (uris.isEmpty()) null else withContext(Dispatchers.IO) { NativeBridge.fromDocuments(uris) }
     }
 
     override suspend fun pickFolder(): PickResult? {
-        val tree = activity.pickFolder.launch(null) ?: return null
+        val tree = try {
+            activity.pickFolder.launch(null)
+        } catch (_: CancellationException) {
+            return null
+        } ?: return null
         return withContext(Dispatchers.IO) { NativeBridge.fromTree(tree) }
     }
 
@@ -277,18 +288,32 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
         throw FlutterError("scanner", "The code scanner is still downloading. Try again in a moment.")
     }
 
-    override suspend fun startReceiving(tapTicket: String, publicTicket: String, port: Long): WifiGroup? {
-        updateTickets(tapTicket, publicTicket, port)
+    override suspend fun startReceiving(tapTicket: String, publicTicket: String, port: Long): ReceiveSetup {
+        val listing = advertise(tapTicket, publicTicket, port)
         val group = if (nearbyGranted) wifiDirect.createGroup() else null
-        AppLog.write("receive", "listening on port $port, Wi-Fi Direct group ${group?.let { "on ${it.frequency} MHz" } ?: "not created"}")
-        return group
+        // Android answers within a moment; no answer counts as not listed.
+        val listed = withTimeoutOrNull(2_000) { listing.await() } ?: false
+        AppLog.write(
+            "receive",
+            "listening on port $port, Wi-Fi Direct group ${group?.let { "on ${it.frequency} MHz" } ?: "not created"}, " +
+                "${if (listed) "listed" else "not listed"} on the network",
+        )
+        return ReceiveSetup(group, listed)
     }
 
     override fun updateTickets(tapTicket: String, publicTicket: String, port: Long) {
-        nfc.serve(tapTicket)
-        local.advertise(name, kind, publicTicket, port.toInt())
-        if (nearbyGranted) ble.advertise(publicTicket)
+        advertise(tapTicket, publicTicket, port)
     }
+
+    /** Makes this phone findable: by tap, on the local network, and over Bluetooth. */
+    private fun advertise(tapTicket: String, publicTicket: String, port: Long): CompletableDeferred<Boolean> {
+        nfc.serve(tapTicket)
+        val listed = local.advertise(name, kind, publicTicket, port.toInt())
+        if (nearbyGranted) ble.advertise(publicTicket)
+        return listed
+    }
+
+    override fun releaseSelection(token: Long) = NativeBridge.release(token)
 
     override fun stopAdvertising() {
         nfc.stopServing()

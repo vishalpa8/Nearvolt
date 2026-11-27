@@ -43,8 +43,11 @@ pub struct WifiDirect {
 
 impl Ticket {
     /// The same ticket without the secret, for sharing over the air.
+    /// The Wi-Fi Direct group's name and password stay out too: this ticket is
+    /// readable by everyone on the network and in Bluetooth range, and with the
+    /// password anyone could join the receiver's own network.
     pub fn public(&self) -> Self {
-        Self { secret: None, ..self.clone() }
+        Self { secret: None, wifi: None, ..self.clone() }
     }
 
     pub fn encode(&self) -> String {
@@ -147,18 +150,31 @@ pub fn pairing_code(
     format!("{n:04}")
 }
 
+/// Network interfaces a nearby phone can't reach this device through: mobile
+/// data, VPN and tunnel interfaces. Left out of tickets so a QR code stays small
+/// enough to scan, and the phone's mobile address isn't handed out.
+fn is_unreachable_interface(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    ["rmnet", "ccmni", "tun", "ppp", "dummy", "ipsec", "clat", "v4-", "wg", "tailscale", "docker", "veth"]
+        .iter()
+        .any(|bad| name.contains(bad))
+}
+
+/// Most addresses a ticket carries besides loopback; more only makes the QR code denser.
+const MAX_REACHABLE_ADDRS: usize = 4;
+
 /// Addresses on this device that a nearby peer could reach, loopback last.
 pub fn local_addrs(port: u16) -> Vec<SocketAddr> {
     let mut addrs: Vec<SocketAddr> = if_addrs::get_if_addrs()
         .unwrap_or_default()
         .into_iter()
-        .filter(|iface| !iface.is_loopback())
+        .filter(|iface| !iface.is_loopback() && !is_unreachable_interface(&iface.name))
         .filter_map(|iface| match iface.ip() {
             IpAddr::V4(ip) if !ip.is_link_local() => Some(SocketAddr::new(IpAddr::V4(ip), port)),
             _ => None,
         })
         .collect();
-    addrs.truncate(MAX_ADDRS - 1);
+    addrs.truncate(MAX_REACHABLE_ADDRS.min(MAX_ADDRS - 1));
     addrs.push(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port));
     addrs
 }
@@ -230,6 +246,27 @@ mod tests {
         let bare = Ticket { wifi: None, ..full.public() };
         assert_eq!(Ticket::decode(&bare.encode()).unwrap(), bare);
         assert!(bare.encode().len() < text.len());
+    }
+
+    #[test]
+    fn the_public_ticket_leaks_neither_the_secret_nor_the_wifi_direct_password() {
+        let public = ticket().public();
+        assert!(public.secret.is_none());
+        assert!(public.wifi.is_none());
+        let text = public.encode();
+        assert!(!text.contains("DIRECT"), "the group name must not appear");
+        let decoded = Ticket::decode(&text).unwrap();
+        assert!(decoded.wifi.is_none() && decoded.secret.is_none());
+    }
+
+    #[test]
+    fn tickets_leave_out_mobile_data_and_vpn_interfaces() {
+        for bad in ["rmnet_data1", "tun0", "ccmni1", "ppp0", "dummy0", "v4-rmnet_data2", "wg0"] {
+            assert!(is_unreachable_interface(bad), "{bad}");
+        }
+        for good in ["wlan0", "p2p-wlan0-0", "eth0", "ap0", "Wi-Fi", "en0"] {
+            assert!(!is_unreachable_interface(good), "{good}");
+        }
     }
 
     #[test]

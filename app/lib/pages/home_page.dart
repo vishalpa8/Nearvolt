@@ -24,6 +24,10 @@ class _HomePageState extends State<HomePage> {
   /// Counts update checks, so asking again starts a fresh one; null when none is shown.
   int? _check;
 
+  /// An update check or install is running. Tapping again then does nothing, so two
+  /// downloads never run at once.
+  var _updating = false;
+
   void _open(Widget page) => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => page));
 
   @override
@@ -33,7 +37,12 @@ class _HomePageState extends State<HomePage> {
     return PageScaffold(
       title: 'Nearvolt',
       trailing: TextButton(
-        onPressed: () => setState(() => _check = (_check ?? 0) + 1),
+        onPressed: _updating
+            ? null
+            : () => setState(() {
+                _check = (_check ?? 0) + 1;
+                _updating = true;
+              }),
         child: const Text('Check for updates'),
       ),
       body: Column(
@@ -47,6 +56,9 @@ class _HomePageState extends State<HomePage> {
               check: engine.checkForUpdate,
               install: engine.installUpdate,
               onClose: () => setState(() => _check = null),
+              onDone: () {
+                if (mounted) setState(() => _updating = false);
+              },
             ),
           ],
           const Spacer(),

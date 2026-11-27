@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show ValueListenable, ValueNotifier;
+
 import '../ui/format.dart';
 import 'diagnostics.dart';
 import 'engine.dart';
@@ -110,8 +112,16 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
         );
       case PlatformEventKind.usbDisconnected:
         _usb.add(_usbPeer = null);
+      case PlatformEventKind.searchFailed:
+        _platform.log('nearby', 'the search of the local network could not start');
+        _searchFailed.value = true;
     }
   }
+
+  final _searchFailed = ValueNotifier<bool>(false);
+
+  @override
+  ValueListenable<bool> get searchFailed => _searchFailed;
 
   /// One entry per device; the local network wins over Bluetooth because it
   /// already carries the ticket.
@@ -129,6 +139,7 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
     _nearby.stream,
     start: () {
       _found.clear();
+      _searchFailed.value = false;
       return _platform.startNearby();
     },
     stop: _platform.stopNearby,
@@ -190,6 +201,7 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
       : Selection(
           token: result.token,
           files: [for (final f in result.files) SelectedFile(path: f.path, size: f.size, modifiedMs: f.modifiedMs)],
+          skipped: result.skipped,
         );
 
   @override
@@ -206,6 +218,7 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
       Connection(peer: to.name, link: to.link),
       onChange: out.add,
       receiving: false,
+      onRelease: _platform.releaseSelection,
     );
     final previous = _sendClosed;
     final closed = Completer<void>();
@@ -271,13 +284,22 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
   void queue(Selection what) {
     final live = _sending;
     if (live == null) return;
-    rust.queueFiles(
+    // A very large selection is cut into several batches; the engine says how.
+    final sizes = rust.queueFiles(
       sourceToken: what.token,
       files: [for (final f in what.files) rust.SourceFile(path: f.path, size: f.size, modifiedMs: f.modifiedMs)],
     );
-    _platform.log('send', 'queued ${what.files.length} files, ${what.bytes} bytes');
-    final batch = Batch(id: live.queued++, files: what.files.length, bytes: what.bytes);
-    live.emit(live.state.copyWith(batches: [...live.state.batches, batch]));
+    _platform.log('send', 'queued ${what.files.length} files, ${what.bytes} bytes in ${sizes.length} batch(es)');
+    var start = 0;
+    final added = <Batch>[];
+    for (final count in sizes) {
+      final part = what.files.sublist(start, start + count);
+      added.add(Batch(id: live.queued++, files: count, bytes: part.fold(0, (sum, f) => sum + f.size)));
+      start += count;
+    }
+    // Android's access to these files is given back when their last batch is over.
+    live.hold(what.token, [for (final b in added) b.id]);
+    live.emit(live.state.copyWith(batches: [...live.state.batches, ...added]));
   }
 
   @override
@@ -302,7 +324,14 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
           if (event.kind == rust.EventKind.ready) {
             var tickets = rust.receiveTickets();
             live.emit(live.state.copyWith(ticket: tickets.privateTicket));
-            final group = await _platform.startReceiving(tickets.tapTicket, tickets.publicTicket, tickets.port);
+            final setup = await _platform.startReceiving(tickets.tapTicket, tickets.publicTicket, tickets.port);
+            final group = setup.group;
+            // What won't work is said on the page, with what still does.
+            live.emit(
+              live.state.copyWith(
+                problems: [if (group == null) SetupProblem.otherNetworks, if (!setup.listed) SetupProblem.notListed],
+              ),
+            );
             if (group != null && !cancelled) {
               final wifi = rust.WifiInfo(ssid: group.ssid, passphrase: group.passphrase, frequency: group.frequency);
               tickets = rust.receiveTickets(wifi: wifi);
@@ -406,15 +435,50 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
 /// A connection in progress: turns engine events into snapshots for the UI,
 /// with a smoothed speed.
 class _Live {
-  _Live(this.state, {this.onChange, required this.receiving});
+  _Live(this.state, {this.onChange, required this.receiving, this.onRelease});
 
   Connection state;
   final void Function(Connection)? onChange;
 
   /// Whether this phone is the receiving one: "no space" means a different phone.
   final bool receiving;
+
+  /// Called with a pick's token once none of its batches is left to send.
+  final void Function(int token)? onRelease;
   var _everConnected = false;
   int queued = 0;
+
+  /// Batches still to finish, by the pick they came from.
+  final _batchToken = <int, int>{};
+  final _openBatches = <int, int>{};
+
+  void hold(int token, Iterable<int> batches) {
+    for (final id in batches) {
+      _batchToken[id] = token;
+      _openBatches[token] = (_openBatches[token] ?? 0) + 1;
+    }
+  }
+
+  void _finished(int batch) {
+    final token = _batchToken.remove(batch);
+    if (token == null) return;
+    final left = (_openBatches[token] ?? 1) - 1;
+    if (left > 0) {
+      _openBatches[token] = left;
+    } else {
+      _openBatches.remove(token);
+      onRelease?.call(token);
+    }
+  }
+
+  void _releaseAll() {
+    for (final token in _openBatches.keys) {
+      onRelease?.call(token);
+    }
+    _openBatches.clear();
+    _batchToken.clear();
+  }
+
   DateTime? _speedAt;
   int _speedBytes = 0;
   double _speed = 0;
@@ -426,6 +490,15 @@ class _Live {
 
   void apply(rust.TransferEvent e) {
     final s = state;
+    // Files a batch was made from aren't needed once it's over, whichever way it ended.
+    switch (e.kind) {
+      case rust.EventKind.completed || rust.EventKind.batchFailed:
+        _finished(e.batch);
+      case rust.EventKind.disconnected || rust.EventKind.failed:
+        _releaseAll();
+      default:
+        break;
+    }
     emit(switch (e.kind) {
       rust.EventKind.ready => s,
       rust.EventKind.request => s.copyWith(
@@ -465,7 +538,8 @@ class _Live {
 
   Connection _connected(Connection s, rust.TransferEvent e) {
     _everConnected = true;
-    return s.copyWith(phase: LinkPhase.connected, peer: e.text, keepCode: false, keepRequest: false);
+    // The sender keeps the code on screen: it has to be compared before anything is sent.
+    return s.copyWith(phase: LinkPhase.connected, peer: e.text, keepRequest: false);
   }
 
   /// The sender already listed the batch when it was queued; the receiver lists

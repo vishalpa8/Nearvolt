@@ -15,7 +15,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 
 use super::disk;
-use super::manifest::{FileSet, Manifest};
+use super::manifest::{plan_batches, FileSet, Manifest, MAX_FILES_PER_BATCH};
 use super::state::hash_range;
 use super::{classify, emit, is_fatal, Event, EventSender, FailureKind, Fatal, Stats, Summary};
 use crate::identity::{Fingerprint, Identity};
@@ -46,6 +46,9 @@ pub struct SendOptions {
     /// shorter than `reconnect_for`: a receiver that can't be reached at all
     /// is almost always on another network, not just slow.
     pub first_connect_for: Duration,
+    /// Most files in one batch. A bigger selection is sent as several batches, one
+    /// after another, because the offer lists every file in one message.
+    pub max_files_per_batch: usize,
 }
 
 impl Default for SendOptions {
@@ -55,6 +58,7 @@ impl Default for SendOptions {
             connections: 8,
             reconnect_for: Duration::from_secs(60),
             first_connect_for: Duration::from_secs(20),
+            max_files_per_batch: MAX_FILES_PER_BATCH,
         }
     }
 }
@@ -117,7 +121,7 @@ pub async fn connect<L: Link>(
 ) -> Result<Summary> {
     let started = Instant::now();
     let connector = Connector::new(identity, peer.fingerprint)?;
-    let mut batches = Batches::default();
+    let mut batches = Batches { max_files: options.max_files_per_batch, ..Batches::default() };
     let mut failing_since: Option<Instant> = None;
     let mut attempt = 0;
     // `ConnectionLost` goes out once per outage, and only once the connection
@@ -125,7 +129,18 @@ pub async fn connect<L: Link>(
     let mut up = false;
     let mut reported = false;
     loop {
-        let error = match open(&peer.link, &connector).await {
+        // Disconnect, and batches queued meanwhile, are handled even while connecting, so
+        // cancelling a connection that's still being made takes effect at once.
+        let connecting = tokio::select! {
+            opened = open(&peer.link, &connector) => opened,
+            command = commands.recv(), if !batches.closed => {
+                if batches.handle(command, &events).await.is_break() {
+                    return Ok(batches.summary(started));
+                }
+                continue;
+            }
+        };
+        let error = match connecting {
             Ok(control) => {
                 let opened = Instant::now();
                 let mut ready = false;
@@ -210,6 +225,8 @@ fn backoff(attempt: u32) -> Duration {
 /// Batches waiting their turn, and the one being sent. Kept across reconnects.
 #[derive(Default)]
 struct Batches {
+    /// Most files in one batch; a bigger selection is cut into several.
+    max_files: usize,
     next: u32,
     pending: VecDeque<(u32, Arc<Manifest>)>,
     current: Option<(u32, Arc<Manifest>)>,
@@ -224,16 +241,22 @@ impl Batches {
     async fn handle(&mut self, command: Option<Command>, events: &Option<EventSender>) -> ControlFlow<()> {
         match command {
             Some(Command::Send(set)) => {
-                let batch = self.next;
-                self.next += 1;
-                match tokio::task::spawn_blocking(move || Manifest::build(set)).await {
-                    Ok(Ok(manifest)) => self.pending.push_back((batch, Arc::new(manifest))),
-                    Ok(Err(e)) => {
-                        emit(events, Event::BatchFailed { batch, reason: format!("{e:#}"), kind: classify(&e) })
+                // The app lists as many batches as the selection will be cut into, so a
+                // failure has to account for all of them.
+                let expected = match &set {
+                    FileSet::Opened { files, .. } => plan_batches(files, self.max_files).len().max(1) as u32,
+                    FileSet::Paths(_) => 1,
+                };
+                let max_files = self.max_files;
+                match tokio::task::spawn_blocking(move || Manifest::build(set).map(|m| m.split(max_files))).await {
+                    Ok(Ok(manifests)) => {
+                        for manifest in manifests {
+                            self.pending.push_back((self.next, Arc::new(manifest)));
+                            self.next += 1;
+                        }
                     }
-                    Err(e) => {
-                        emit(events, Event::BatchFailed { batch, reason: e.to_string(), kind: FailureKind::Other })
-                    }
+                    Ok(Err(e)) => self.fail_all(events, expected, format!("{e:#}"), classify(&e)),
+                    Err(e) => self.fail_all(events, expected, e.to_string(), FailureKind::Other),
                 }
                 ControlFlow::Continue(())
             }
@@ -242,6 +265,16 @@ impl Batches {
                 self.closed = true;
                 ControlFlow::Continue(())
             }
+        }
+    }
+
+    /// A selection that couldn't be turned into batches: each batch it would have
+    /// been is reported failed, so the app's list and the engine's ids stay in step.
+    fn fail_all(&mut self, events: &Option<EventSender>, count: u32, reason: String, kind: FailureKind) {
+        for _ in 0..count {
+            let batch = self.next;
+            self.next += 1;
+            emit(events, Event::BatchFailed { batch, reason: reason.clone(), kind });
         }
     }
 
@@ -639,6 +672,42 @@ mod tests {
 
     use super::*;
     use crate::transport::{Acceptor, RawStream};
+
+    /// Cancelling while the connection is still being made takes effect at once, not
+    /// after the handshake times out.
+    #[tokio::test]
+    async fn disconnect_works_while_still_connecting() {
+        // Accepts the connection and then says nothing, so the handshake just waits.
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let held = tokio::spawn(async move {
+            let mut keep = Vec::new();
+            while let Ok((tcp, _)) = listener.accept().await {
+                keep.push(tcp);
+            }
+        });
+        let receiver = Identity::generate().unwrap();
+        let sender = Identity::generate().unwrap();
+        let peer = Peer {
+            link: TcpLink::new(vec![addr]),
+            name: "receiver".into(),
+            fingerprint: Some(*receiver.fingerprint()),
+            secret: Some([7; 16]),
+        };
+        let (commands, queue) = mpsc::unbounded_channel();
+        let options = SendOptions::default();
+        let connecting = tokio::spawn({
+            let stats = Arc::new(Stats::default());
+            async move { connect(&sender, &peer, &options, queue, stats, None).await }
+        });
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let asked = Instant::now();
+        commands.send(Command::Disconnect).unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(2), connecting).await;
+        held.abort();
+        assert!(result.expect("it should stop at once").unwrap().is_ok());
+        assert!(asked.elapsed() < Duration::from_secs(2));
+    }
 
     /// A receiver that finishes the TLS handshake and reads the hello, then hangs
     /// up: every connection "works" and fails straight away.

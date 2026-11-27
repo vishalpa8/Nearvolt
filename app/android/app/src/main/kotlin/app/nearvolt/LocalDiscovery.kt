@@ -3,6 +3,9 @@ package app.nearvolt
 import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
+import android.os.Handler
+import android.os.Looper
+import kotlinx.coroutines.CompletableDeferred
 
 /**
  * Finds receivers on the same Wi-Fi network with mDNS. A receiver advertises its
@@ -14,9 +17,19 @@ class LocalDiscovery(context: Context, private val emit: (PlatformEvent) -> Unit
     private var browsing: NsdManager.DiscoveryListener? = null
     private val toResolve = ArrayDeque<NsdServiceInfo>()
     private var resolving = false
+    private val retry = Handler(Looper.getMainLooper())
 
-    fun advertise(name: String, kind: String, ticket: String, port: Int) {
+    /** Set by [stopBrowsing]; a retry still waiting then does nothing. */
+    @Volatile
+    private var stopped = false
+
+    /**
+     * Lists this phone for others on the network. The result says whether Android
+     * accepted it, which can fail quietly (too many listeners, no multicast).
+     */
+    fun advertise(name: String, kind: String, ticket: String, port: Int): CompletableDeferred<Boolean> {
         stopAdvertising()
+        val listed = CompletableDeferred<Boolean>()
         val info = NsdServiceInfo().apply {
             serviceName = name
             serviceType = SERVICE_TYPE
@@ -26,11 +39,19 @@ class LocalDiscovery(context: Context, private val emit: (PlatformEvent) -> Unit
             ticket.chunked(TXT_CHUNK).forEachIndexed { i, part -> setAttribute("t$i", part) }
         }
         registration = object : NsdManager.RegistrationListener {
-            override fun onServiceRegistered(info: NsdServiceInfo) {}
-            override fun onRegistrationFailed(info: NsdServiceInfo, error: Int) {}
+            override fun onServiceRegistered(info: NsdServiceInfo) {
+                listed.complete(true)
+            }
+
+            override fun onRegistrationFailed(info: NsdServiceInfo, error: Int) {
+                AppLog.write("nearby", "couldn't list this phone on the network (error $error)")
+                listed.complete(false)
+            }
+
             override fun onServiceUnregistered(info: NsdServiceInfo) {}
             override fun onUnregistrationFailed(info: NsdServiceInfo, error: Int) {}
         }.also { nsd.registerService(info, NsdManager.PROTOCOL_DNS_SD, it) }
+        return listed
     }
 
     fun stopAdvertising() {
@@ -38,12 +59,25 @@ class LocalDiscovery(context: Context, private val emit: (PlatformEvent) -> Unit
         registration = null
     }
 
-    fun browse() {
+    fun browse(attempt: Int = 1) {
+        if (attempt == 1) stopped = false
         if (browsing != null) return
         browsing = object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(serviceType: String) {}
             override fun onDiscoveryStopped(serviceType: String) {}
-            override fun onStartDiscoveryFailed(serviceType: String, error: Int) {}
+
+            override fun onStartDiscoveryFailed(serviceType: String, error: Int) {
+                AppLog.write("nearby", "searching the network failed (error $error), attempt $attempt")
+                browsing = null
+                // Android sometimes refuses at first, for example after too many searches
+                // in a row; a couple of retries usually get through. Then the app is told.
+                if (attempt < SEARCH_ATTEMPTS) {
+                    retry.postDelayed({ if (!stopped) browse(attempt + 1) }, RETRY_MS)
+                } else {
+                    emit(PlatformEvent(PlatformEventKind.SEARCH_FAILED))
+                }
+            }
+
             override fun onStopDiscoveryFailed(serviceType: String, error: Int) {}
             override fun onServiceFound(info: NsdServiceInfo) {
                 synchronized(this@LocalDiscovery) { toResolve += info }
@@ -57,6 +91,8 @@ class LocalDiscovery(context: Context, private val emit: (PlatformEvent) -> Unit
     }
 
     fun stopBrowsing() {
+        stopped = true
+        retry.removeCallbacksAndMessages(null)
         browsing?.let { runCatching { nsd.stopServiceDiscovery(it) } }
         browsing = null
         synchronized(this) { toResolve.clear() }
@@ -102,6 +138,8 @@ class LocalDiscovery(context: Context, private val emit: (PlatformEvent) -> Unit
     private fun id(info: NsdServiceInfo) = "lan:${info.serviceName}"
 
     private companion object {
+        const val SEARCH_ATTEMPTS = 3
+        const val RETRY_MS = 2_000L
         const val SERVICE_TYPE = "_nearvolt._tcp"
         const val TXT_CHUNK = 200
     }

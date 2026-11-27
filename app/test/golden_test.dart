@@ -122,6 +122,28 @@ void main() {
     });
   }
 
+  testWidgets('codecheck', (tester) async {
+    await phone(tester, connection(_connected.copyWith(code: '4821')));
+    await tester.pumpAndSettle();
+    await shoot('codecheck');
+  });
+
+  testWidgets('problems', (tester) async {
+    await phone(tester, screen(ReceivePage(engine: engine, profile: profile)));
+    engine.receiving!.add(const Connection(ticket: _ticket, problems: [SetupProblem.otherNetworks]));
+    await tester.pumpAndSettle();
+    await shoot('problems');
+  });
+
+  testWidgets('idle', (tester) async {
+    await phone(tester, screen(ReceivePage(engine: engine, profile: profile)));
+    engine.receiving!.add(const Connection(ticket: _ticket));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(minutes: 11));
+    await tester.pumpAndSettle();
+    await shoot('idle');
+  });
+
   testWidgets('add', (tester) async {
     await phone(tester, connection(_connected));
     await tester.pumpAndSettle();

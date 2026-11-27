@@ -19,6 +19,9 @@ import java.util.concurrent.atomic.AtomicLong
 object NativeBridge {
     private lateinit var resolver: ContentResolver
     private val selections = ConcurrentHashMap<Long, List<Uri>>()
+
+    /** The folder behind a picked-folder token, whose access is given back with it. */
+    private val trees = ConcurrentHashMap<Long, Uri>()
     private val nextToken = AtomicLong(1)
 
     fun register(context: Context) {
@@ -47,20 +50,33 @@ object NativeBridge {
     fun fromDocuments(uris: List<Uri>): PickResult? {
         val files = mutableListOf<PickedFile>()
         val kept = mutableListOf<Uri>()
+        var skipped = 0
         for (uri in uris) {
             val file = resolver.query(uri, null, null, null, null)?.use { cursor ->
                 if (!cursor.moveToFirst()) return@use null
                 PickedFile(
                     path = cursor.string(OpenableColumns.DISPLAY_NAME) ?: "file",
-                    size = cursor.long(OpenableColumns.SIZE) ?: return@use null,
+                    size = cursor.long(OpenableColumns.SIZE) ?: sizeOf(uri) ?: return@use null,
                     modifiedMs = cursor.long(Document.COLUMN_LAST_MODIFIED),
                 )
-            } ?: continue
+            }
+            if (file == null) {
+                skipped++
+                continue
+            }
             files += file
             kept += uri
         }
-        return remember(files, kept)
+        return remember(files, kept, skipped, tree = null)
     }
+
+    /**
+     * The size of a file the provider didn't say the size of, read from the file
+     * itself. Null when it can't be known, so the file can't be sent.
+     */
+    private fun sizeOf(uri: Uri): Long? = runCatching {
+        resolver.openFileDescriptor(uri, "r")?.use { it.statSize }?.takeIf { it >= 0 }
+    }.getOrNull()
 
     /** Walks a picked folder. Paths start with the folder's own name. */
     fun fromTree(tree: Uri): PickResult? {
@@ -70,6 +86,7 @@ object NativeBridge {
             ?.use { if (it.moveToFirst()) it.string(Document.COLUMN_DISPLAY_NAME) else null } ?: "Folder"
         val files = mutableListOf<PickedFile>()
         val uris = mutableListOf<Uri>()
+        var skipped = 0
         val pending = ArrayDeque(listOf(rootId to rootName))
         val columns = arrayOf(
             Document.COLUMN_DOCUMENT_ID,
@@ -84,24 +101,55 @@ object NativeBridge {
             resolver.query(children, columns, null, null, null)?.use { cursor ->
                 while (cursor.moveToNext()) {
                     val id = cursor.getString(0)
-                    val name = "$path/${cursor.getString(1)}"
+                    val name = "$path/${cursor.getString(1) ?: "file"}"
                     if (cursor.getString(2) == Document.MIME_TYPE_DIR) {
                         pending += id to name
                     } else {
-                        files += PickedFile(name, cursor.getLong(3), if (cursor.isNull(4)) null else cursor.getLong(4))
-                        uris += DocumentsContract.buildDocumentUriUsingTree(tree, id)
+                        val uri = DocumentsContract.buildDocumentUriUsingTree(tree, id)
+                        // Cloud and virtual files often report no size; ask the file itself.
+                        val size = if (cursor.isNull(3)) sizeOf(uri) else cursor.getLong(3)
+                        if (size == null) {
+                            skipped++
+                            continue
+                        }
+                        files += PickedFile(name, size, if (cursor.isNull(4)) null else cursor.getLong(4))
+                        uris += uri
                     }
                 }
             }
         }
-        return remember(files, uris)
+        return remember(files, uris, skipped, tree)
     }
 
-    private fun remember(files: List<PickedFile>, uris: List<Uri>): PickResult? {
-        if (files.isEmpty()) return null
+    /**
+     * The batch made from this pick is over: forgets its files, and gives back the
+     * folder access once no other pick of the same folder still needs it.
+     */
+    fun release(token: Long) {
+        selections.remove(token)
+        val tree = trees.remove(token) ?: return
+        val stillUsed = trees.values.any { it == tree }
+        if (!stillUsed) {
+            runCatching { resolver.releasePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        }
+    }
+
+    private fun remember(files: List<PickedFile>, uris: List<Uri>, skipped: Int, tree: Uri?): PickResult? {
+        if (files.isEmpty()) {
+            tree?.let { release(it) }
+            return if (skipped > 0) PickResult(0, emptyList(), skipped.toLong()) else null
+        }
         val token = nextToken.getAndIncrement()
         selections[token] = uris
-        return PickResult(token, files)
+        if (tree != null) trees[token] = tree
+        return PickResult(token, files, skipped.toLong())
+    }
+
+    /** Gives back access to a folder nothing was kept from. */
+    private fun release(tree: Uri) {
+        if (trees.values.none { it == tree }) {
+            runCatching { resolver.releasePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        }
     }
 
     private fun Cursor.string(column: String): String? =

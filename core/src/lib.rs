@@ -11,7 +11,7 @@ pub mod util;
 
 pub use identity::{Fingerprint, Identity};
 pub use pairing::{Ticket, WifiDirect};
-pub use transfer::manifest::{FileSet, SourceOpener};
+pub use transfer::manifest::{plan_batches, FileSet, SourceOpener, MAX_FILES_PER_BATCH};
 pub use transfer::receiver::{Approver, ReceiveOptions, Receiver, Request};
 pub use transfer::sender::{connect, send, Command, Peer, SendOptions};
 pub use transfer::{human_bytes, Event, EventSender, Fatal, Progress, Stats, Summary};

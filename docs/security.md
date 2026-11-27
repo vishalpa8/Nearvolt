@@ -30,7 +30,12 @@ two devices.
   is served only over NFC, at a few centimetres, so holding the phones together
   is the consent and there's no prompt.
 - The public ticket advertised over the local network and Bluetooth has no
-  secret, so connections started from it always go through the code.
+  secret, so connections started from it always go through the code. It also
+  leaves out the Wi-Fi Direct group's name and password: everyone on the network
+  and in Bluetooth range can read it, and with the password anyone could join
+  the receiver's own network. Phones on different networks connect with the QR
+  code or a tap, which carry the group details. Tickets leave out mobile-data
+  and VPN addresses too.
 
 ## Listening
 

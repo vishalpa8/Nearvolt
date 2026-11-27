@@ -68,10 +68,13 @@ class SelectedFile {
 
 /// What the user picked. The platform keeps access to the files under `token`.
 class Selection {
-  const Selection({required this.token, required this.files});
+  const Selection({required this.token, required this.files, this.skipped = 0});
 
   final int token;
   final List<SelectedFile> files;
+
+  /// Files in the pick that couldn't be read and were left out.
+  final int skipped;
 
   int get bytes => files.fold(0, (sum, f) => sum + f.size);
 
@@ -160,6 +163,16 @@ enum LinkPhase {
   failed,
 }
 
+/// Something that stops this phone being found while Receive is open. The page
+/// says so, and says what still works.
+enum SetupProblem {
+  /// No Wi-Fi Direct network could be made, so phones on other Wi-Fi networks can't connect.
+  otherNetworks,
+
+  /// This phone couldn't be listed for the Nearby list.
+  notListed,
+}
+
 /// A phone asking to connect, on the receiving side.
 class Request {
   const Request({required this.id, required this.from, this.code});
@@ -186,9 +199,13 @@ class Connection {
     this.progress,
     this.error,
     this.endedByPeer = false,
+    this.problems = const [],
   });
 
   final LinkPhase phase;
+
+  /// Receiver: what stops other phones finding this one.
+  final List<SetupProblem> problems;
 
   /// The other phone's name.
   final String peer;
@@ -226,6 +243,7 @@ class Connection {
     Progress? progress,
     String? error,
     bool? endedByPeer,
+    List<SetupProblem>? problems,
     bool keepCode = true,
     String? code,
     bool keepRequest = true,
@@ -242,5 +260,6 @@ class Connection {
     progress: progress ?? (keepProgress ? this.progress : null),
     error: error ?? this.error,
     endedByPeer: endedByPeer ?? this.endedByPeer,
+    problems: problems ?? this.problems,
   );
 }
