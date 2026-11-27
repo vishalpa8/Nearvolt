@@ -40,6 +40,7 @@ class LocalDiscovery(context: Context, private val emit: (PlatformEvent) -> Unit
         }
         registration = object : NsdManager.RegistrationListener {
             override fun onServiceRegistered(info: NsdServiceInfo) {
+                AppLog.write("nearby", "this phone is listed on the network")
                 listed.complete(true)
             }
 
@@ -63,8 +64,13 @@ class LocalDiscovery(context: Context, private val emit: (PlatformEvent) -> Unit
         if (attempt == 1) stopped = false
         if (browsing != null) return
         browsing = object : NsdManager.DiscoveryListener {
-            override fun onDiscoveryStarted(serviceType: String) {}
-            override fun onDiscoveryStopped(serviceType: String) {}
+            override fun onDiscoveryStarted(serviceType: String) {
+                AppLog.write("nearby", "searching the network")
+            }
+
+            override fun onDiscoveryStopped(serviceType: String) {
+                AppLog.write("nearby", "stopped searching the network")
+            }
 
             override fun onStartDiscoveryFailed(serviceType: String, error: Int) {
                 AppLog.write("nearby", "searching the network failed (error $error), attempt $attempt")
@@ -80,11 +86,13 @@ class LocalDiscovery(context: Context, private val emit: (PlatformEvent) -> Unit
 
             override fun onStopDiscoveryFailed(serviceType: String, error: Int) {}
             override fun onServiceFound(info: NsdServiceInfo) {
+                AppLog.write("nearby", "a Nearvolt phone appeared on the network")
                 synchronized(this@LocalDiscovery) { toResolve += info }
                 resolveNext()
             }
 
             override fun onServiceLost(info: NsdServiceInfo) {
+                AppLog.write("nearby", "a Nearvolt phone left the network")
                 emit(PlatformEvent(PlatformEventKind.RECEIVER_LOST, id = id(info)))
             }
         }.also { nsd.discoverServices(SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, it) }
@@ -106,7 +114,10 @@ class LocalDiscovery(context: Context, private val emit: (PlatformEvent) -> Unit
         val next = toResolve.removeFirstOrNull() ?: return
         resolving = true
         nsd.resolveService(next, object : NsdManager.ResolveListener {
-            override fun onResolveFailed(info: NsdServiceInfo, error: Int) = done()
+            override fun onResolveFailed(info: NsdServiceInfo, error: Int) {
+                AppLog.write("nearby", "couldn't read a phone's details (error $error)")
+                done()
+            }
 
             override fun onServiceResolved(info: NsdServiceInfo) {
                 val parts = generateSequence(0) { it + 1 }

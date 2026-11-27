@@ -46,8 +46,14 @@ class _SendPageState extends State<SendPage> {
     }
   }
 
-  Future<void> _open(BuildContext context, Widget page) =>
-      _once(() => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => page)));
+  Future<void> _open(BuildContext context, Widget page) => _once(
+    () => Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        settings: RouteSettings(name: page.runtimeType.toString()),
+        builder: (_) => page,
+      ),
+    ),
+  );
 
   Future<void> _choose() async {
     final kind = await showPickMenu(context);
@@ -55,7 +61,7 @@ class _SendPageState extends State<SendPage> {
     final picked = await pickSelection(context, engine, kind);
     if (picked == null || !mounted) return;
     if (picked.skipped > 0) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(leftOut(picked.skipped))));
+      showNote(context, leftOut(picked.skipped));
     }
     if (picked.files.isNotEmpty) setState(() => _files = picked);
   }
@@ -64,7 +70,7 @@ class _SendPageState extends State<SendPage> {
 
   Future<void> _scanOnce(BuildContext context) async {
     void tell(String message) {
-      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      if (context.mounted) showNote(context, message);
     }
 
     // The camera stays closed until what a transfer needs is on.
@@ -177,6 +183,7 @@ Future<void> openConnection(BuildContext context, TransferEngine engine, NearbyD
   final updates = engine.connect(device);
   return Navigator.of(context).push(
     MaterialPageRoute<void>(
+      settings: const RouteSettings(name: 'ConnectionPage (sending)'),
       builder: (_) => ConnectionPage(
         engine: engine,
         updates: updates,
@@ -265,8 +272,7 @@ class _TapPageState extends State<_TapPage> with NeedsMixin, _MethodMixin<_TapPa
     try {
       device = engine.deviceFor(ticket);
     } on Object {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text("That phone didn't share a Nearvolt code.")));
+      showNote(context, "That phone didn't share a Nearvolt code.");
       return;
     }
     connectTo(device);

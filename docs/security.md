@@ -80,3 +80,7 @@ over a USB cable are dropped unless Receive is open.
 - `cargo audit` and `cargo deny` clean.
 - Fuzz the ticket, frame and control-message parsers with `cargo fuzz`.
 - External security review.
+- Set `detailedLogging` to false in `app/lib/debug.dart`. Development builds
+  log every tap (by button label, which can include a phone's name), screen and
+  call into Android; codes, tickets and file names are never written, but the
+  log is far more detailed than a public release should keep.

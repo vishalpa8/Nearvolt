@@ -91,7 +91,7 @@ class _ReceivePageState extends State<ReceivePage> with NeedsMixin {
       // No answer means it left first, and an answer nobody receives means the same.
       final delivered = accepted != null && engine.answer(request.id, accept: accepted);
       if (!delivered && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${request.from} cancelled.')));
+        showNote(context, '${request.from} cancelled.');
       }
     }
     if (c.phase == LinkPhase.connected && !_showing && mounted) {
@@ -99,6 +99,7 @@ class _ReceivePageState extends State<ReceivePage> with NeedsMixin {
       _idle?.cancel();
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
+          settings: const RouteSettings(name: 'ConnectionPage (receiving)'),
           builder: (_) => ConnectionPage(engine: engine, updates: _updates.stream, initial: _c, sending: false),
         ),
       );

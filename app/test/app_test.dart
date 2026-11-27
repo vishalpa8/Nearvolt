@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart'
     show CircularProgressIndicator, LinearProgressIndicator, NavigatorState, Navigator;
 import 'package:nearvolt/app.dart';
+import 'package:nearvolt/debug.dart';
 import 'package:nearvolt/engine/messages.dart';
 import 'package:nearvolt/engine/models.dart';
 
@@ -372,6 +373,20 @@ void main() {
     expect(find.text('Turn these on to continue'), findsOneWidget);
   });
 
+  testWidgets('every tap, screen and message is written to the log', (tester) async {
+    final lines = <String>[];
+    DebugLog.sink = (tag, message) => lines.add('[$tag] $message');
+    addTearDown(() => DebugLog.sink = null);
+
+    await open(tester);
+    await go(tester, 'Send');
+    await go(tester, 'Nearby phones');
+
+    expect(lines.where((l) => l.startsWith('[tap]')), isNotEmpty, reason: lines.join('\n'));
+    expect(lines.any((l) => l.startsWith('[tap] "Send')), isTrue, reason: lines.join('\n'));
+    expect(lines.any((l) => l.startsWith('[tap] "Nearby phones')), isTrue, reason: lines.join('\n'));
+    expect(lines.any((l) => l.startsWith('[screen] opened')), isTrue, reason: lines.join('\n'));
+  });
   testWidgets('NFC off closes the tap page until it is on', (tester) async {
     engine.missing = const [Need.nfc];
     await openMethod(tester, 'Tap phones');

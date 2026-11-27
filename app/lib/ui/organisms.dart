@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 
+import '../debug.dart';
 import '../engine/engine.dart';
 import '../engine/messages.dart';
 import '../engine/models.dart';
@@ -292,6 +293,13 @@ Future<bool> ensureReady(BuildContext context, TransferEngine engine, Purpose pu
 }
 
 enum PickKind { files, folder }
+
+/// A short message at the bottom of the screen, also written to the log so what the
+/// user was told can be traced.
+void showNote(BuildContext context, String message) {
+  DebugLog.log('message', message);
+  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+}
 
 /// Picks files or a folder. A big folder takes a moment to read, so after a short
 /// wait a notice says so, instead of the screen looking frozen.

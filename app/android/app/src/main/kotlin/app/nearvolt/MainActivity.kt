@@ -29,20 +29,34 @@ class MainActivity : FlutterFragmentActivity() {
         super.configureFlutterEngine(flutterEngine)
         NativeBridge.register(applicationContext)
         val messenger = flutterEngine.dartExecutor.binaryMessenger
-        host = PlatformHost(this, NearvoltEvents(messenger)).also { NearvoltPlatform.setUp(messenger, it) }
+        // Every call the app makes into Android is written to the log (see CallLog).
+        host = PlatformHost(this, NearvoltEvents(messenger)).also { NearvoltPlatform.setUp(messenger, CallLog.wrap(it)) }
+    }
+
+    override fun onPause() {
+        AppLog.write("activity", "paused")
+        super.onPause()
+    }
+
+    override fun onStop() {
+        AppLog.write("activity", "stopped")
+        super.onStop()
     }
 
     override fun onResume() {
+        AppLog.write("activity", "resumed")
         super.onResume()
         host?.onResume()
     }
 
     override fun onNewIntent(intent: Intent) {
+        AppLog.write("activity", "new intent ${intent.action}")
         super.onNewIntent(intent)
         host?.onNewIntent(intent)
     }
 
     override fun onDestroy() {
+        AppLog.write("activity", "destroyed (changing configuration: $isChangingConfigurations)")
         host?.close()
         super.onDestroy()
     }

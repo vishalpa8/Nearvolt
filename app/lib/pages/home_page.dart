@@ -28,7 +28,12 @@ class _HomePageState extends State<HomePage> {
   /// downloads never run at once.
   var _updating = false;
 
-  void _open(Widget page) => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => page));
+  void _open(Widget page) => Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      settings: RouteSettings(name: page.runtimeType.toString()),
+      builder: (_) => page,
+    ),
+  );
 
   @override
   Widget build(BuildContext context) {

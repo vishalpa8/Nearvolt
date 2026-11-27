@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart' show ValueListenable, ValueNotifier;
 
+import '../debug.dart';
 import '../ui/format.dart';
 import 'diagnostics.dart';
 import 'engine.dart';
@@ -523,6 +524,14 @@ class _Live {
 
   void apply(rust.TransferEvent e) {
     final s = state;
+    // Progress arrives several times a second; the speed lines in the log cover it.
+    if (e.kind != rust.EventKind.progress) {
+      final failure = e.failure == null ? '' : ' failure=${e.failure!.name}';
+      DebugLog.log(
+        'event',
+        '${e.kind.name} batch=${e.batch} files=${e.doneFiles}/${e.totalFiles} bytes=${e.doneBytes}/${e.totalBytes}$failure',
+      );
+    }
     // Files a batch was made from aren't needed once it's over, whichever way it ended.
     switch (e.kind) {
       case rust.EventKind.completed || rust.EventKind.batchFailed:

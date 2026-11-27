@@ -23,7 +23,22 @@ Golden screenshots are rendered on Windows, so CI on Linux skips them
   no codes and no full IP addresses (`10.0.3.7` is written `10.0.x.x`; the
   Wi-Fi Direct range `192.168.49.x` stays readable because it shows how the
   phones linked). Phone names are not written either.
-  It keeps the last 7 days and stays under 1 MB, so it never fills the phone.
+  It keeps the last 7 days and stays under 5 MB, so it never fills the phone.
+  While the app is in development it also records what you did and what the app
+  did, so any problem can be traced afterwards. Tags to look for:
+  - `[tap]` the label of every button tapped, and `[screen]` every screen,
+    dialog and sheet that opens or closes.
+  - `[message]` every message the app shows, `[app]` and `[activity]` when the
+    app goes to the background or comes back, `[print]` the app's own prints.
+  - `[call]` every request the app makes to Android, with how it ended and how
+    long it took (a request with no "answered" line never came back).
+  - `[setup]` what each page is missing, `[event]` each step of a transfer
+    (batch started, completed, failed), `[error]` anything that went wrong.
+  - `[bluetooth]`, `[nfc]`, `[nearby]`, `[usb]`, `[wifi-direct]`: what each
+    radio did. A failure is written, never swallowed.
+  Phone names can appear in tap labels, so share the log only with people you
+  trust. All of this is switched off by `detailedLogging` in `app/lib/debug.dart`
+  before a public launch.
   Share it, or with USB debugging:
   `adb pull /sdcard/Download/Nearvolt/nearvolt.log`.
 - **More than one log file:** Android ties a file in Downloads to the install

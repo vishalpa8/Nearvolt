@@ -17,10 +17,12 @@ class Nfc(private val activity: Activity, private val emit: (PlatformEvent) -> U
     private var reading = false
 
     fun serve(ticket: String) {
+        AppLog.write("nfc", "serving the code for other phones to tap")
         TicketCardService.ticket = ticket.toByteArray()
     }
 
     fun stopServing() {
+        AppLog.write("nfc", "stopped serving the code")
         TicketCardService.ticket = null
     }
 
@@ -28,11 +30,13 @@ class Nfc(private val activity: Activity, private val emit: (PlatformEvent) -> U
         reading = true
         val flags = NfcAdapter.FLAG_READER_NFC_A or NfcAdapter.FLAG_READER_NFC_B or
             NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK or NfcAdapter.FLAG_READER_NO_PLATFORM_SOUNDS
-        runCatching { adapter?.enableReaderMode(activity, ::onTag, flags, null) }
+        AppLog.write("nfc", "reading on (${if (adapter?.isEnabled == true) "NFC is on" else "NFC is off or missing"})")
+        runCatching { adapter?.enableReaderMode(activity, ::onTag, flags, null) }.onFailure { AppLog.error("nfc", it) }
     }
 
     fun stopReading() {
         reading = false
+        AppLog.write("nfc", "reading off")
         runCatching { adapter?.disableReaderMode(activity) }
     }
 
@@ -42,12 +46,19 @@ class Nfc(private val activity: Activity, private val emit: (PlatformEvent) -> U
     }
 
     private fun onTag(tag: Tag) {
-        val iso = IsoDep.get(tag) ?: return
+        AppLog.write("nfc", "a tag or phone was touched")
+        val iso = IsoDep.get(tag) ?: run {
+            AppLog.write("nfc", "it can't talk the card protocol")
+            return
+        }
         runCatching {
             iso.use {
                 it.connect()
                 it.timeout = 2_000
-                if (!ok(it.transceive(SELECT))) return
+                if (!ok(it.transceive(SELECT))) {
+                    AppLog.write("nfc", "it is not a Nearvolt receiver (the app was not found on it)")
+                    return
+                }
                 val ticket = ByteArrayOutputStream()
                 while (true) {
                     val offset = ticket.size()
@@ -55,6 +66,7 @@ class Nfc(private val activity: Activity, private val emit: (PlatformEvent) -> U
                     if (!ok(response) || response.size == 2) break
                     ticket.write(response, 0, response.size - 2)
                 }
+                AppLog.write("nfc", "read ${ticket.size()} bytes")
                 if (ticket.size() > 0) {
                     emit(PlatformEvent(PlatformEventKind.TICKET_TAPPED, ticket = ticket.toString(Charsets.UTF_8.name())))
                 }

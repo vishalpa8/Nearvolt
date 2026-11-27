@@ -25,12 +25,13 @@ class NearvoltApplication : Application() {
  * One plain-text log, Download/Nearvolt/nearvolt.log, that users can open and
  * share when something goes wrong: crashes, connections, update steps and
  * errors from every layer. It holds no file contents, no file names, no codes
- * and no full IP addresses, and keeps only the last week, under 1 MB. Writing
+ * and no full IP addresses, and keeps only the last week, under 5 MB. Writing
  * happens on a background thread, so logging never slows the screen.
  */
 object AppLog {
-    private const val MAX_BYTES = 1_000_000L
-    private const val KEEP_BYTES = 500_000
+    // Roomy while the app is in development and logs every tap and call.
+    private const val MAX_BYTES = 5_000_000L
+    private const val KEEP_BYTES = 3_000_000
     private val DAY = TimeUnit.DAYS.toMillis(1)
     private val KEEP_FOR = 7 * DAY
     private val time = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)

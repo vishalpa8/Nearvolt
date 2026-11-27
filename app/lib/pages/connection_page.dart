@@ -77,7 +77,7 @@ class _ConnectionPageState extends State<ConnectionPage> {
   }
 
   void _tell(String message) {
-    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    if (mounted) showNote(context, message);
   }
 
   void _codeMatches() {

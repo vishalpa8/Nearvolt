@@ -64,13 +64,22 @@ class Ble(private val context: Context, private val emit: (PlatformEvent) -> Uni
     }
 
     private val advertising = object : AdvertiseCallback() {
+        override fun onStartSuccess(settingsInEffect: AdvertiseSettings) {
+            AppLog.write("bluetooth", "advertising started")
+        }
+
         override fun onStartFailure(errorCode: Int) {
+            AppLog.write("bluetooth", "advertising failed to start (error $errorCode)")
             // A long device name can overflow the scan response; advertise without it.
             if (errorCode == ADVERTISE_FAILED_DATA_TOO_LARGE) startAdvertising(includeName = false)
         }
     }
 
     private val scanning = object : ScanCallback() {
+        override fun onScanFailed(errorCode: Int) {
+            AppLog.write("bluetooth", "scan failed (error $errorCode)")
+        }
+
         override fun onScanResult(callbackType: Int, result: ScanResult) = try {
             found(result)
         } catch (e: SecurityException) {
@@ -85,6 +94,7 @@ class Ble(private val context: Context, private val emit: (PlatformEvent) -> Uni
                 found.put(device.address, device) == null
             }
             if (isNew) {
+                AppLog.write("bluetooth", "found a receiver")
                 emit(
                     PlatformEvent(
                         PlatformEventKind.RECEIVER_FOUND,
@@ -134,10 +144,12 @@ class Ble(private val context: Context, private val emit: (PlatformEvent) -> Uni
             .build()
         val data = AdvertiseData.Builder().addServiceUuid(ParcelUuid(SERVICE)).build()
         val response = AdvertiseData.Builder().setIncludeDeviceName(includeName).build()
-        runCatching { advertiser.startAdvertising(settings, data, response, advertising) }
+        AppLog.write("bluetooth", "starting to advertise")
+        runCatching { advertiser.startAdvertising(settings, data, response, advertising) }.onFailure { AppLog.error("bluetooth", it) }
     }
 
     fun stopAdvertising() {
+        AppLog.write("bluetooth", "advertising stopped")
         runCatching { adapter?.bluetoothLeAdvertiser?.stopAdvertising(advertising) }
         server?.close()
         server = null
@@ -152,12 +164,14 @@ class Ble(private val context: Context, private val emit: (PlatformEvent) -> Uni
         // Balanced: a receiver shows up within a couple of seconds, and the radio isn't
         // kept at full tilt for as long as the page is open.
         val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_BALANCED).build()
-        runCatching { adapter?.bluetoothLeScanner?.startScan(listOf(filter), settings, scanning) }
+        AppLog.write("bluetooth", "scan started (${if (adapter?.bluetoothLeScanner == null) "no scanner, Bluetooth is off" else "ok"})")
+        runCatching { adapter?.bluetoothLeScanner?.startScan(listOf(filter), settings, scanning) }.onFailure { AppLog.error("bluetooth", it) }
         handler.removeCallbacks(sweep)
         handler.postDelayed(sweep, SWEEP_MS)
     }
 
     fun stopScan() {
+        AppLog.write("bluetooth", "scan stopped")
         handler.removeCallbacks(sweep)
         runCatching { adapter?.bluetoothLeScanner?.stopScan(scanning) }
     }
