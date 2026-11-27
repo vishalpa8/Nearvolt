@@ -334,50 +334,66 @@ void main() {
     expect(engine.connectedTo?.id, 'usb');
   });
 
-  testWidgets('a missing permission shows a notice, and fixing it restarts the search', (tester) async {
+  testWidgets('a missing permission closes the page: nothing is searched until it is allowed', (tester) async {
     engine.missing = const [Need.permission, Need.bluetooth];
     await openMethod(tester, 'Nearby phones');
+    expect(find.text('Turn these on to continue'), findsOneWidget);
     expect(find.text('Allow Nearby devices so Nearvolt can find phones and be found.'), findsOneWidget);
-    expect(engine.discoveries, 1);
+    expect(find.text('Bluetooth is off. Nearvolt needs it so phones can find each other.'), findsOneWidget);
+    expect(engine.discoveries, 0);
 
     engine.missing = const [];
     await tester.tap(find.text('Allow'));
     await tester.pump();
     expect(engine.fixed, [Need.permission]);
-    expect(find.text('Allow'), findsNothing);
-    expect(engine.discoveries, 2);
+    expect(find.text('Turn these on to continue'), findsNothing);
+    expect(engine.discoveries, 1);
   });
 
-  testWidgets('NFC turned off is asked about on the tap page, and the notice stays if declined', (tester) async {
+  testWidgets('NFC off closes the tap page until it is on', (tester) async {
     engine.missing = const [Need.nfc];
     await openMethod(tester, 'Tap phones');
     await tester.pump();
-    expect(find.text('Turn on NFC?'), findsOneWidget);
+    expect(find.text('Hold the backs of the phones together'), findsNothing);
+    expect(find.text('NFC is off. Turn it on so phones can connect by tapping.'), findsOneWidget);
 
-    await go(tester, 'Not now');
-    expect(engine.fixed, isEmpty);
-    expect(find.text('NFC is off. Turn it on to tap phones together.'), findsOneWidget);
-
+    engine.missing = const [];
     await tester.tap(find.text('Turn on'));
     await tester.pump();
     expect(engine.fixed, [Need.nfc]);
+    expect(find.text('Hold the backs of the phones together'), findsOneWidget);
   });
 
-  testWidgets('accepting the NFC question opens the NFC settings', (tester) async {
-    engine.missing = const [Need.nfc];
-    await openMethod(tester, 'Tap phones');
-    await tester.pump();
-    await go(tester, 'Turn on');
-    expect(engine.fixed, [Need.nfc]);
-  });
-
-  testWidgets('Receive also asks to turn NFC on, so the other phone can tap it', (tester) async {
-    engine.missing = const [Need.nfc];
+  testWidgets('Receive does not start while Wi-Fi is off', (tester) async {
+    engine.missing = const [Need.wifi];
     await open(tester);
     await go(tester, 'Receive');
     await tester.pump();
-    expect(find.text('Turn on NFC?'), findsOneWidget);
-    expect(find.textContaining('the other phone can tap yours'), findsOneWidget);
+    expect(find.text('Wi-Fi is off. Nearvolt needs it to send and receive.'), findsOneWidget);
+    expect(engine.receiveSessions, 0);
+
+    engine.missing = const [];
+    await tester.tap(find.text('Turn on'));
+    await tester.pump();
+    expect(engine.receiveSessions, 1);
+  });
+
+  testWidgets('the camera does not open while Wi-Fi is off', (tester) async {
+    engine.missing = const [Need.wifi];
+    await openMethod(tester, 'Scan code');
+    await tester.pump();
+    expect(find.text('Wi-Fi is off. Nearvolt needs it to send and receive.'), findsOneWidget);
+    expect(engine.scans, 0);
+
+    await go(tester, 'Not now');
+    expect(engine.scans, 0);
+
+    await go(tester, 'Scan code');
+    engine.missing = const [];
+    await tester.tap(find.text('Turn on'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(engine.scans, 1);
   });
 
   testWidgets('files chosen first are sent once the connection is set up, not before', (tester) async {

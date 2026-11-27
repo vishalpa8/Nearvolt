@@ -203,51 +203,91 @@ class _ReceivePromptState extends State<_ReceivePrompt> {
   }
 }
 
-/// The most important thing stopping Nearvolt from reaching other phones, with
-/// the one button that fixes it.
-class NeedNotice extends StatelessWidget {
-  const NeedNotice({super.key, required this.need, required this.onFix});
+/// What a missing switch or permission looks like to the user: a picture, what is
+/// wrong and why it matters, and the one button that fixes it.
+(IconData, String, String) needDetails(Need need) => switch (need) {
+  Need.permission => (
+    Icons.devices_other_rounded,
+    'Allow Nearby devices so Nearvolt can find phones and be found.',
+    'Allow',
+  ),
+  Need.permissionInSettings => (
+    Icons.devices_other_rounded,
+    'Nearby devices is off for Nearvolt. Turn it on under Permissions.',
+    'Settings',
+  ),
+  Need.nfc => (Icons.nfc_rounded, 'NFC is off. Turn it on so phones can connect by tapping.', 'Turn on'),
+  Need.wifi => (Icons.wifi_off_rounded, 'Wi-Fi is off. Nearvolt needs it to send and receive.', 'Turn on'),
+  Need.bluetooth => (
+    Icons.bluetooth_disabled_rounded,
+    'Bluetooth is off. Nearvolt needs it so phones can find each other.',
+    'Turn on',
+  ),
+  Need.location => (Icons.location_off_rounded, 'This Android version needs Location on to find phones.', 'Turn on'),
+};
 
-  final Need need;
-  final VoidCallback onFix;
+/// Shown instead of a page while something it needs is off. The page, and what it
+/// would start (Bluetooth, the network, NFC, the camera), stays closed until every
+/// need is met; the page opens by itself as soon as the last one is turned on.
+class NeedsGate extends StatelessWidget {
+  const NeedsGate({super.key, required this.needs, required this.onFix});
+
+  final List<Need> needs;
+  final void Function(Need need) onFix;
 
   @override
   Widget build(BuildContext context) {
-    final (icon, message, action) = switch (need) {
-      Need.permission => (
-        Icons.devices_other_rounded,
-        'Allow Nearby devices so Nearvolt can find phones and be found.',
-        'Allow',
+    final text = Theme.of(context).textTheme;
+    return Center(
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('Turn these on to continue', style: text.titleLarge, textAlign: TextAlign.center),
+            const SizedBox(height: Space.l),
+            for (final need in needs) ...[
+              Panel(
+                padding: const EdgeInsets.fromLTRB(Space.l, Space.s, Space.s, Space.s),
+                child: Row(
+                  children: [
+                    Icon(needDetails(need).$1, color: AppColors.warning),
+                    const SizedBox(width: Space.m),
+                    Expanded(child: Text(needDetails(need).$2, style: text.bodyMedium)),
+                    TextButton(onPressed: () => onFix(need), child: Text(needDetails(need).$3)),
+                  ],
+                ),
+              ),
+              const SizedBox(height: Space.s),
+            ],
+          ],
+        ),
       ),
-      Need.permissionInSettings => (
-        Icons.devices_other_rounded,
-        'Nearby devices is off for Nearvolt. Turn it on under Permissions.',
-        'Settings',
-      ),
-      Need.nfc => (Icons.nfc_rounded, 'NFC is off. Turn it on to tap phones together.', 'Turn on'),
-      Need.wifi => (Icons.wifi_off_rounded, 'Wi-Fi is off. Transfers need it, except over a USB cable.', 'Turn on'),
-      Need.bluetooth => (
-        Icons.bluetooth_disabled_rounded,
-        "Bluetooth is off, so phones on another network won't show up.",
-        'Turn on',
-      ),
-      Need.location => (
-        Icons.location_off_rounded,
-        'This Android version needs Location on to find phones.',
-        'Turn on',
-      ),
-    };
-    return Panel(
-      padding: const EdgeInsets.fromLTRB(Space.l, Space.s, Space.s, Space.s),
-      child: Row(
-        children: [
-          Icon(icon, color: AppColors.warning),
-          const SizedBox(width: Space.m),
-          Expanded(child: Text(message, style: Theme.of(context).textTheme.bodyMedium)),
-          TextButton(onPressed: onFix, child: Text(action)),
+    );
+  }
+}
+
+/// Before a screen that opens the camera or another radio: asks for whatever is
+/// still off and keeps asking until it is on. Returns false if the user backs out.
+Future<bool> ensureReady(BuildContext context, TransferEngine engine, Purpose purpose) async {
+  while (true) {
+    final missing = await engine.needs(purpose);
+    if (missing.isEmpty) return true;
+    if (!context.mounted) return false;
+    final need = missing.first;
+    final (_, message, action) = needDetails(need);
+    final turnOn = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        content: Text(message),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Not now')),
+          TextButton(onPressed: () => Navigator.of(context).pop(true), child: Text(action)),
         ],
       ),
     );
+    if (turnOn != true) return false;
+    await engine.fix(need);
   }
 }
 

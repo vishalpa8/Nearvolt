@@ -68,11 +68,12 @@ Golden screenshots of each one are in [app/test/goldens](../app/test/goldens).
 3. **Tap phones, USB cable.** One picture and one instruction; the connection
    opens by itself when the phones touch or the cable answers.
 4. **Nearby phones.** Phones with Receive open, as round avatars with names.
-   Anything a method still needs (a permission, NFC, Wi-Fi, Bluetooth,
-   Location) shows as one notice at the top with the button that fixes it;
-   Receive shows the same. NFC off, on Tap phones and on Receive, is also asked
-   about when the page opens ("Turn on NFC?"), since Android only lets the user
-   switch it on, in its settings.
+   Anything a method needs (a permission, NFC, Wi-Fi, Bluetooth, Location)
+   must be on first: until it is, the page doesn't open. A "Turn these on to
+   continue" screen lists what's off, each with its own button, and nothing
+   (Bluetooth, the network, NFC) is started behind it. The page opens by itself
+   when the last one is on, and closes again if one is turned off later. Receive
+   works the same, and Scan code asks before the camera opens.
 5. **Receive.** A large QR code, the name others see, and the ways to connect.
 6. **Receive prompt.** One sheet, "Rahul's Pixel 9 wants to connect and send you
    files", with the 4-digit code when there is one, and Accept and Decline.

@@ -61,47 +61,32 @@ class PageScaffold extends StatelessWidget {
 }
 
 /// For pages that reach other phones. When the page opens, asks Android for what
-/// [purpose] uses, then calls [restart]; keeps what's still missing in [needs],
-/// and calls [restart] again whenever that changes, including after the user
-/// flips a switch outside the app.
+/// [purpose] uses; while anything is still off, the page stays closed behind a
+/// [NeedsGate] and nothing it would start is started. Once everything is on,
+/// calls [restart]; it checks again whenever the app comes back to the front, so
+/// switches flipped outside the app count, and a switch turned off later closes
+/// the page again.
 mixin NeedsMixin<T extends StatefulWidget> on State<T> {
   List<Need> needs = const [];
   late final AppLifecycleListener _lifecycle;
   var _busy = false;
+  var _checked = false;
 
   TransferEngine get engine;
 
   Purpose get purpose;
 
-  /// Starts, or starts again, with whatever is available now.
+  /// Starts, or starts again, now that everything it needs is on.
   void restart();
+
+  /// Stops what the page started, because something it needs went off.
+  void pause() {}
 
   @override
   void initState() {
     super.initState();
     _lifecycle = AppLifecycleListener(onResume: _recheck);
-    _update(engine.prepare(purpose), always: true).then((_) => _offerNfc());
-  }
-
-  /// Android can't turn NFC on for an app, so the page asks, then opens the
-  /// settings page where it's one switch. Asked once per page; the notice stays
-  /// if the user says no.
-  Future<void> _offerNfc() async {
-    if (!mounted || !needs.contains(Need.nfc)) return;
-    final turnOn = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Turn on NFC?'),
-        content: Text(
-          purpose == Purpose.tap ? 'Tapping phones together needs NFC on, on both phones.' : 'So the other phone can tap yours to connect. You can still scan the code or pick this phone from a list.',
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Not now')),
-          TextButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Turn on')),
-        ],
-      ),
-    );
-    if (turnOn == true && mounted) await _update(_fix(Need.nfc));
+    _update(engine.prepare(purpose), always: true);
   }
 
   @override
@@ -110,9 +95,17 @@ mixin NeedsMixin<T extends StatefulWidget> on State<T> {
     super.dispose();
   }
 
-  /// The notice for the most important missing thing, if any.
-  Widget? get needNotice =>
-      needs.isEmpty ? null : NeedNotice(need: needs.first, onFix: () => _update(_fix(needs.first)));
+  /// The page to show instead of the real one while it can't be used yet, or null
+  /// when it can. Until the first check is done it is just empty, so a page never
+  /// flashes open and then closes.
+  Widget? blockedPage(String title) {
+    if (_checked && needs.isEmpty) return null;
+    return PageScaffold(
+      title: title,
+      onBack: () => Navigator.of(context).maybePop(),
+      body: _checked ? NeedsGate(needs: needs, onFix: (need) => _update(_fix(need))) : const SizedBox.shrink(),
+    );
+  }
 
   Future<List<Need>> _fix(Need need) async {
     await engine.fix(need);
@@ -128,8 +121,15 @@ mixin NeedsMixin<T extends StatefulWidget> on State<T> {
     _busy = true;
     final now = await next;
     _busy = false;
-    if (!mounted || (!always && listEquals(now, needs))) return;
-    setState(() => needs = now);
-    restart();
+    if (!mounted || (_checked && !always && listEquals(now, needs))) return;
+    setState(() {
+      needs = now;
+      _checked = true;
+    });
+    if (now.isEmpty) {
+      restart();
+    } else {
+      pause();
+    }
   }
 }

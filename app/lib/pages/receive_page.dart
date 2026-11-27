@@ -44,6 +44,14 @@ class _ReceivePageState extends State<ReceivePage> with NeedsMixin {
   Timer? _idle;
   var _idleStopped = false;
 
+  /// Something Receive needs went off: stop advertising and listening until it is back.
+  @override
+  void pause() {
+    _idle?.cancel();
+    _session?.cancel();
+    _session = null;
+  }
+
   /// A new session, so the code and what's advertised match what's on now.
   @override
   Future<void> restart() async {
@@ -110,18 +118,14 @@ class _ReceivePageState extends State<ReceivePage> with NeedsMixin {
 
   @override
   Widget build(BuildContext context) {
+    if (blockedPage('Receive') case final page?) return page;
     final text = Theme.of(context).textTheme;
     final ticket = _c.ticket;
     return PageScaffold(
       title: 'Receive',
       onBack: () => Navigator.of(context).maybePop(),
       body: SingleChildScrollView(
-        child: Column(
-          children: [
-            if (needNotice case final notice?) ...[const SizedBox(height: Space.l), notice],
-            if (_idleStopped) ..._stopped(text) else ..._open(text, ticket),
-          ],
-        ),
+        child: Column(children: [if (_idleStopped) ..._stopped(text) else ..._open(text, ticket)]),
       ),
     );
   }

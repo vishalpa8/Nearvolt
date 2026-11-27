@@ -67,7 +67,8 @@ class _SendPageState extends State<SendPage> {
       if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
     }
 
-    if ((await engine.needs(Purpose.scan)).contains(Need.wifi)) await engine.fix(Need.wifi);
+    // The camera stays closed until what a transfer needs is on.
+    if (!await ensureReady(context, engine, Purpose.scan)) return;
     final String? ticket;
     try {
       ticket = await engine.scanCode();
@@ -206,6 +207,12 @@ mixin _MethodMixin<T extends StatefulWidget, F> on State<T>, NeedsMixin<T> {
   }
 
   @override
+  void pause() {
+    _sub?.cancel();
+    _sub = null;
+  }
+
+  @override
   void dispose() {
     _sub?.cancel();
     super.dispose();
@@ -266,13 +273,14 @@ class _TapPageState extends State<_TapPage> with NeedsMixin, _MethodMixin<_TapPa
   }
 
   @override
-  Widget build(BuildContext context) => _Waiting(
-    title: 'Tap phones',
-    notice: needNotice,
-    icon: Icons.nfc_rounded,
-    headline: 'Hold the backs of the phones together',
-    detail: 'Keep them still for a moment. The other phone needs Receive open.',
-  );
+  Widget build(BuildContext context) =>
+      blockedPage('Tap phones') ??
+      _Waiting(
+        title: 'Tap phones',
+        icon: Icons.nfc_rounded,
+        headline: 'Hold the backs of the phones together',
+        detail: 'Keep them still for a moment. The other phone needs Receive open.',
+      );
 }
 
 class _UsbPage extends StatefulWidget {
@@ -304,13 +312,14 @@ class _UsbPageState extends State<_UsbPage> with NeedsMixin, _MethodMixin<_UsbPa
   }
 
   @override
-  Widget build(BuildContext context) => _Waiting(
-    title: 'USB cable',
-    notice: needNotice,
-    icon: Icons.usb_rounded,
-    headline: 'Connect the phones with a USB cable',
-    detail: 'A USB-C to USB-C cable, or an adapter. The other phone needs Receive open and asks once to allow it.',
-  );
+  Widget build(BuildContext context) =>
+      blockedPage('USB cable') ??
+      _Waiting(
+        title: 'USB cable',
+        icon: Icons.usb_rounded,
+        headline: 'Connect the phones with a USB cable',
+        detail: 'A USB-C to USB-C cable, or an adapter. The other phone needs Receive open and asks once to allow it.',
+      );
 }
 
 class _NearbyPage extends StatefulWidget {
@@ -343,6 +352,7 @@ class _NearbyPageState extends State<_NearbyPage> with NeedsMixin, _MethodMixin<
 
   @override
   Widget build(BuildContext context) {
+    if (blockedPage('Nearby phones') case final page?) return page;
     final text = Theme.of(context).textTheme;
     return PageScaffold(
       title: 'Nearby phones',
@@ -350,7 +360,6 @@ class _NearbyPageState extends State<_NearbyPage> with NeedsMixin, _MethodMixin<
       body: ListView(
         padding: const EdgeInsets.only(bottom: Space.xl),
         children: [
-          if (needNotice case final notice?) ...[const SizedBox(height: Space.l), notice],
           const SizedBox(height: Space.xl),
           Text('Nearby', style: text.titleMedium),
           const SizedBox(height: Space.xs),
@@ -387,16 +396,9 @@ class _NearbyPageState extends State<_NearbyPage> with NeedsMixin, _MethodMixin<
 
 /// A method page with nothing to choose: one picture and what to do.
 class _Waiting extends StatelessWidget {
-  const _Waiting({
-    required this.title,
-    required this.notice,
-    required this.icon,
-    required this.headline,
-    required this.detail,
-  });
+  const _Waiting({required this.title, required this.icon, required this.headline, required this.detail});
 
   final String title;
-  final Widget? notice;
   final IconData icon;
   final String headline;
   final String detail;
@@ -409,7 +411,6 @@ class _Waiting extends StatelessWidget {
       onBack: () => Navigator.of(context).maybePop(),
       body: Column(
         children: [
-          if (notice case final notice?) ...[const SizedBox(height: Space.l), notice],
           Expanded(
             child: Center(
               child: Column(

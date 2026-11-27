@@ -39,6 +39,7 @@ class FakeEngine implements TransferEngine {
   int disconnects = 0;
   int discoveries = 0;
   int receiveSessions = 0;
+  int scans = 0;
   int updateChecks = 0;
   String? update;
   final installing = StreamController<double>();
@@ -91,7 +92,10 @@ class FakeEngine implements TransferEngine {
   Future<Selection?> pickFolder() async => album;
 
   @override
-  Future<String?> scanCode() async => null;
+  Future<String?> scanCode() async {
+    scans++;
+    return null;
+  }
 
   @override
   Stream<Connection> connect(NearbyDevice to) {
