@@ -10,6 +10,9 @@ use crate::transfer::FailureKind;
 
 pub const ALPN: &[u8] = b"nearvolt/1";
 pub const PROTOCOL_VERSION: u32 = 5;
+/// The oldest version this one still talks to. Raise it only when a change truly can't
+/// work with the version before; see "Versions" in docs/protocol.md.
+pub const MIN_PROTOCOL_VERSION: u32 = 5;
 
 /// Both sides send a control message at least this often.
 pub const HEARTBEAT_INTERVAL: Duration = Duration::from_millis(500);

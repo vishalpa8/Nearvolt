@@ -1,5 +1,15 @@
 # Nearvolt wire protocol, version 5
 
+## Versions
+
+The version number is in the first message on every stream. A phone accepts any
+version from `MIN_PROTOCOL_VERSION` to its own and turns away the rest with "update
+Nearvolt". Rule: a protocol change must keep working with the version before it
+(new fields are optional, new messages are ignored by an older peer), so a phone
+that has not updated yet still connects. `MIN_PROTOCOL_VERSION` is raised only when
+a change truly can't, and the release notes say so. Version 5 broke version 4
+before this rule existed, because the chunk transfer replaced how files are cut.
+
 ## Transport
 
 - TLS 1.3 only. ALPN: `nearvolt/1`.

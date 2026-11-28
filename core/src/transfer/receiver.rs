@@ -21,7 +21,7 @@ use crate::identity::{Fingerprint, Identity};
 use crate::pairing::{self, constant_time_eq, Secret, Ticket};
 use crate::protocol::{
     read_header, read_msg, write_msg, Control, FileHeader, Offer, SessionId, FILE_HEADER_LEN, HASH_LEN,
-    HEARTBEAT_INTERVAL, HEARTBEAT_TIMEOUT, PROTOCOL_VERSION,
+    HEARTBEAT_INTERVAL, HEARTBEAT_TIMEOUT, MIN_PROTOCOL_VERSION, PROTOCOL_VERSION,
 };
 use crate::transport::{listen_tcp, Acceptor, Arrival, RawStream, TlsStream};
 use crate::util::AbortOnDrop;
@@ -362,7 +362,7 @@ async fn authenticate(
     let Control::Hello { version, secret: offered, device_name, session, commitment } = hello else {
         bail!("expected hello");
     };
-    if version != PROTOCOL_VERSION {
+    if !(MIN_PROTOCOL_VERSION..=PROTOCOL_VERSION).contains(&version) {
         let _ = write_msg(&mut stream, &reject(FailureKind::OldVersion, "Update Nearvolt on both devices.")).await;
         bail!("unsupported protocol version {version}");
     }
