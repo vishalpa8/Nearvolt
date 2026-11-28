@@ -555,11 +555,22 @@ class _UpdateCardState extends State<UpdateCard> {
   String? _version;
   double _progress = 0;
   String? _error;
+  Timer? _dismiss;
+
+  /// How long "you're up to date" stays before it goes by itself. Anything the user
+  /// has to act on or read (a failure, an install in progress) stays until closed.
+  static const _latestFor = Duration(seconds: 4);
 
   @override
   void initState() {
     super.initState();
     _run();
+  }
+
+  @override
+  void dispose() {
+    _dismiss?.cancel();
+    super.dispose();
   }
 
   Future<void> _run() async {
@@ -574,7 +585,11 @@ class _UpdateCardState extends State<UpdateCard> {
     try {
       final version = await widget.check();
       if (!mounted) return;
-      if (version == null) return setState(() => _step = _UpdateStep.latest);
+      if (version == null) {
+        setState(() => _step = _UpdateStep.latest);
+        _dismiss = Timer(_latestFor, widget.onClose);
+        return;
+      }
       setState(() {
         _version = version;
         _step = _UpdateStep.downloading;
@@ -604,7 +619,8 @@ class _UpdateCardState extends State<UpdateCard> {
       _UpdateStep.checking => 'Checking for updates…',
       _UpdateStep.latest => 'Nearvolt ${widget.current} is the latest version.',
       _UpdateStep.downloading => 'Downloading version $_version…',
-      _UpdateStep.installing => 'Installing version $_version. Nearvolt closes for a moment; open it again afterwards.',
+      _UpdateStep.installing =>
+        'Installing version $_version. Nearvolt closes for a moment and opens again; if it doesn\'t, tap the notification.',
       _UpdateStep.failed => _error ?? "The update didn't finish. Try again.",
     };
     final busy = _step == _UpdateStep.checking || _step == _UpdateStep.installing;

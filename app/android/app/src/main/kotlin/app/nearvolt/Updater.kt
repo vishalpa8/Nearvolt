@@ -304,7 +304,7 @@ class UpdatedReceiver : BroadcastReceiver() {
         runCatching { context.startActivity(open) }.onFailure { AppLog.error("update", it) }
         runCatching {
             val manager = context.getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(NotificationChannel(CHANNEL, "App updates", NotificationManager.IMPORTANCE_DEFAULT))
+            manager.createNotificationChannel(NotificationChannel(CHANNEL, "App updates", NotificationManager.IMPORTANCE_HIGH))
             val tap = PendingIntent.getActivity(context, 0, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
             manager.notify(
                 NOTIFICATION_ID,
@@ -313,6 +313,9 @@ class UpdatedReceiver : BroadcastReceiver() {
                     .setContentTitle("Nearvolt updated to $version")
                     .setContentText("Tap to open")
                     .setAutoCancel(true)
+                    // Some phones (iQOO, Xiaomi, ...) don't let an app open itself from the
+                    // background; the notice then pops up on screen so one tap reopens it.
+                    .setTimeoutAfter(NOTICE_FOR_MS)
                     .setContentIntent(tap)
                     .build(),
             )
@@ -321,8 +324,12 @@ class UpdatedReceiver : BroadcastReceiver() {
 
     companion object {
         private const val UPDATING = "updating_since"
-        private const val CHANNEL = "updates"
+        // A new id: a channel's importance can't be raised once it exists.
+        private const val CHANNEL = "updates_now"
         private const val NOTIFICATION_ID = 2
+
+        /** The "tap to open" notice goes away by itself after this. */
+        private const val NOTICE_FOR_MS = 2 * 60_000L
 
         /** An update takes seconds; anything much later wasn't ours. */
         private const val EXPECT_FOR_MS = 15 * 60_000L

@@ -78,6 +78,33 @@ void main() {
     expect(find.text('Nearvolt 0.1.0 is the latest version.'), findsNothing);
   });
 
+  testWidgets('the "latest version" notice goes away by itself after a few seconds', (tester) async {
+    await open(tester);
+    await tester.tap(find.text('Check for updates'));
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Nearvolt 0.1.0 is the latest version.'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 3));
+    expect(find.text('Nearvolt 0.1.0 is the latest version.'), findsOneWidget, reason: 'long enough to read');
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('Nearvolt 0.1.0 is the latest version.'), findsNothing);
+  });
+
+  testWidgets('a failed update stays until the user closes it', (tester) async {
+    engine.update = '0.1.9';
+    await open(tester);
+    await tester.tap(find.text('Check for updates'));
+    await tester.pump();
+    await tester.pump();
+    engine.installing.addError(PlatformException(code: 'install', message: 'Android refused the update.'));
+    await tester.pump();
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 30));
+    expect(find.text('Android refused the update.'), findsOneWidget);
+  });
+
   testWidgets('a new version downloads and installs without another tap', (tester) async {
     engine.update = '0.1.9';
     await open(tester);
