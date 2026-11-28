@@ -32,6 +32,7 @@ class FakeEngine implements TransferEngine {
   int scans = 0;
   int updateChecks = 0;
   String? update;
+  bool updateFails = false;
   final installing = StreamController<double>();
 
   /// Which methods asked for setup, in order.
@@ -130,6 +131,7 @@ class FakeEngine implements TransferEngine {
   @override
   Future<String?> checkForUpdate() async {
     updateChecks++;
+    if (updateFails) throw StateError('offline');
     return update;
   }
 

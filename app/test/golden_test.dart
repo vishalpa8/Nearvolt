@@ -76,10 +76,13 @@ void main() {
     engine.update = '0.1.9';
     await phone(tester, NearvoltApp(engine: engine, profile: profile));
     await tester.tap(find.text('Check for updates'));
+    await tester.pumpAndSettle();
+    await shoot('update');
+    await tester.tap(find.text('Update'));
     await tester.pump();
     engine.installing.add(0.4);
     await tester.pumpAndSettle();
-    await shoot('update');
+    await shoot('updating');
   });
 
   testWidgets('send', (tester) async {

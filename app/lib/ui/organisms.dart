@@ -523,10 +523,56 @@ class _BatchIcon extends StatelessWidget {
   }
 }
 
-enum _UpdateStep { checking, latest, downloading, installing, failed }
+/// "A new version is available": asks first, since an update closes the app for a moment.
+class UpdateOffer extends StatelessWidget {
+  const UpdateOffer({super.key, required this.version, required this.onLater, required this.onUpdate});
 
-/// Checks for a new version when shown, then downloads and installs it
-/// straight away.
+  final String version;
+  final VoidCallback onLater;
+  final VoidCallback onUpdate;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return Panel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.system_update_rounded, color: AppColors.accent),
+              const SizedBox(width: Space.m),
+              Expanded(child: Text('Nearvolt $version is available', style: text.titleMedium)),
+            ],
+          ),
+          const SizedBox(height: Space.xs),
+          Text(
+            'Download and install it now? Nearvolt closes for a moment and opens again.',
+            style: text.bodyMedium?.copyWith(color: AppColors.textSecondary),
+          ),
+          const SizedBox(height: Space.m),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(onPressed: onLater, child: const Text('Later')),
+              const SizedBox(width: Space.s),
+              FilledButton(
+                onPressed: onUpdate,
+                style: FilledButton.styleFrom(minimumSize: const Size(0, 44)),
+                child: const Text('Update'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+enum _UpdateStep { checking, latest, available, downloading, installing, failed }
+
+/// Checks for a new version when shown. When there is one it says so and asks; only
+/// on Update does it download and install.
 class UpdateCard extends StatefulWidget {
   const UpdateCard({
     super.key,
@@ -535,6 +581,7 @@ class UpdateCard extends StatefulWidget {
     required this.install,
     required this.onClose,
     this.onDone,
+    this.ask = true,
   });
 
   /// The installed version.
@@ -542,6 +589,10 @@ class UpdateCard extends StatefulWidget {
   final Future<String?> Function() check;
   final Stream<double> Function() install;
   final VoidCallback onClose;
+
+  /// Whether to ask before downloading. False when the user already said yes, for example
+  /// to a background offer.
+  final bool ask;
 
   /// Called once the check, and any install it started, has ended one way or another.
   final VoidCallback? onDone;
@@ -556,6 +607,7 @@ class _UpdateCardState extends State<UpdateCard> {
   double _progress = 0;
   String? _error;
   Timer? _dismiss;
+  final _answer = Completer<bool>();
 
   /// How long "you're up to date" stays before it goes by itself. Anything the user
   /// has to act on or read (a failure, an install in progress) stays until closed.
@@ -570,6 +622,7 @@ class _UpdateCardState extends State<UpdateCard> {
   @override
   void dispose() {
     _dismiss?.cancel();
+    if (!_answer.isCompleted) _answer.complete(false);
     super.dispose();
   }
 
@@ -590,10 +643,13 @@ class _UpdateCardState extends State<UpdateCard> {
         _dismiss = Timer(_latestFor, widget.onClose);
         return;
       }
-      setState(() {
-        _version = version;
-        _step = _UpdateStep.downloading;
-      });
+      _version = version;
+      if (widget.ask) {
+        // Never starts by itself: the user may be in the middle of something.
+        setState(() => _step = _UpdateStep.available);
+        if (!await _answer.future || !mounted) return;
+      }
+      setState(() => _step = _UpdateStep.downloading);
       // Reaching 1 means the APK is ready and Android is installing it; the stream
       // ends with an error if Android refuses.
       await for (final progress in widget.install()) {
@@ -618,11 +674,47 @@ class _UpdateCardState extends State<UpdateCard> {
     final message = switch (_step) {
       _UpdateStep.checking => 'Checking for updates…',
       _UpdateStep.latest => 'Nearvolt ${widget.current} is the latest version.',
+      _UpdateStep.available => 'Nearvolt $_version is available. Download and install it now?',
       _UpdateStep.downloading => 'Downloading version $_version…',
       _UpdateStep.installing =>
         'Installing version $_version. Nearvolt closes for a moment and opens again; if it doesn\'t, tap the notification.',
       _UpdateStep.failed => _error ?? "The update didn't finish. Try again.",
     };
+    if (_step == _UpdateStep.available) {
+      return Panel(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.system_update_rounded, color: AppColors.accent),
+                const SizedBox(width: Space.m),
+                Expanded(child: Text(message, style: text.bodyMedium)),
+              ],
+            ),
+            const SizedBox(height: Space.m),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: () {
+                    _answer.complete(false);
+                    widget.onClose();
+                  },
+                  child: const Text('Later'),
+                ),
+                const SizedBox(width: Space.s),
+                FilledButton(
+                  onPressed: () => _answer.complete(true),
+                  style: FilledButton.styleFrom(minimumSize: const Size(0, 44)),
+                  child: const Text('Update'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
     final busy = _step == _UpdateStep.checking || _step == _UpdateStep.installing;
     return Panel(
       padding: const EdgeInsets.fromLTRB(Space.l, Space.m, Space.s, Space.m),

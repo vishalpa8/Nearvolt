@@ -153,9 +153,10 @@ Send at least 5 GB for each of these.
 
 | # | Steps | Expected |
 |---|---|---|
-| 20 | Install the latest release, open the app and tap Check for updates. | "Nearvolt N is the latest version." Nothing is checked until the button is tapped. |
-| 21 | Push a change to `main` and wait for its release. Tap Check for updates. | It downloads version N+1. The first time, Android opens "Install unknown apps"; turn it on and go back, and the update continues by itself. Nearvolt closes for a moment; reopened, it runs N+1. |
+| 20 | Install the latest release, open the app and tap Check for updates. | "Nearvolt N is the latest version." It goes away by itself after a few seconds. |
+| 21 | Push a change to `main` and wait for its release. Tap Check for updates. | "Nearvolt N+1 is available. Download and install it now?" with Later and Update; nothing downloads until Update. After Update it downloads. The first time, Android opens "Install unknown apps"; turn it on and go back, and the update continues by itself. Nearvolt closes for a moment; reopened, it runs N+1. |
 | 22 | Repeat 21 on Android 12 or later. | No prompt at all this time. |
+| 22a | Leave the app open on the home screen for a few seconds after a new release is out (no tap). | An update card appears by itself: "Nearvolt N+1 is available" with Later and Update. Later hides it, and the same version isn't offered again until the app is reopened; the app looks again every 6 hours. No internet shows nothing. |
 | 23 | On B, tap Check for updates and, while it downloads, open Receive and accept a connection from A. | Nothing is installed while connected; the update card says to disconnect first. |
 | 23a | Update from the app and wait. | Nearvolt closes for a moment and opens again by itself on the new version. If your phone blocks that, a "Nearvolt updated to N · Tap to open" notification appears and goes away once the app is open. |
 | 23b | Scan a code, then look at the recent apps list. | Only one Nearvolt window; no second one for the scanner, before or after scanning. |

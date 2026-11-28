@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:material_ui/material_ui.dart';
 
 import '../engine/engine.dart';
@@ -28,6 +30,55 @@ class _HomePageState extends State<HomePage> {
   /// downloads never run at once.
   var _updating = false;
 
+  /// A new version the background check found, waiting for the user's answer.
+  String? _offered;
+
+  /// The version the user said "Later" to; not offered again until a newer one comes out
+  /// or the app is opened afresh.
+  String? _later;
+
+  Timer? _timer;
+
+  /// How soon after opening the app, and then how often, it looks for a new version.
+  static const firstCheck = Duration(seconds: 6);
+  static const checkEvery = Duration(hours: 6);
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer(firstCheck, _backgroundCheck);
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  /// Looks quietly; a failure (no internet, GitHub busy) is not worth bothering anyone with.
+  Future<void> _backgroundCheck() async {
+    _timer = Timer(checkEvery, _backgroundCheck);
+    // A manual check or install is already on screen, and one offer at a time is enough.
+    if (_updating || _check != null || _offered != null) return;
+    try {
+      final version = await widget.engine.checkForUpdate();
+      if (!mounted || _updating || _check != null) return;
+      if (version != null && version != _later) setState(() => _offered = version);
+    } on Object {
+      // Try again at the next check.
+    }
+  }
+
+  /// Whether the card running now should ask first; false after an offer the user accepted.
+  var _ask = true;
+
+  void _update({bool ask = true}) => setState(() {
+    _offered = null;
+    _ask = ask;
+    _check = (_check ?? 0) + 1;
+    _updating = true;
+  });
+
   void _open(Widget page) => Navigator.of(context).push(
     MaterialPageRoute<void>(
       settings: RouteSettings(name: page.runtimeType.toString()),
@@ -41,15 +92,7 @@ class _HomePageState extends State<HomePage> {
     final (engine, profile) = (widget.engine, widget.profile);
     return PageScaffold(
       title: 'Nearvolt',
-      trailing: TextButton(
-        onPressed: _updating
-            ? null
-            : () => setState(() {
-                _check = (_check ?? 0) + 1;
-                _updating = true;
-              }),
-        child: const Text('Check for updates'),
-      ),
+      trailing: TextButton(onPressed: _updating ? null : _update, child: const Text('Check for updates')),
       // Scrolls when the phone is short or the text is large, and still spreads out when there is room.
       body: LayoutBuilder(
         builder: (context, box) => SingleChildScrollView(
@@ -91,10 +134,22 @@ class _HomePageState extends State<HomePage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        if (_offered case final version?) ...[
+          const SizedBox(height: Space.l),
+          UpdateOffer(
+            version: version,
+            onLater: () => setState(() {
+              _later = version;
+              _offered = null;
+            }),
+            onUpdate: () => _update(ask: false),
+          ),
+        ],
         if (_check case final check?) ...[
           const SizedBox(height: Space.l),
           UpdateCard(
             key: ValueKey(check),
+            ask: _ask,
             current: profile.version,
             check: engine.checkForUpdate,
             install: engine.installUpdate,

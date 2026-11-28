@@ -98,6 +98,8 @@ void main() {
     await tester.tap(find.text('Check for updates'));
     await tester.pump();
     await tester.pump();
+    await tester.tap(find.text('Update'));
+    await tester.pump();
     engine.installing.addError(PlatformException(code: 'install', message: 'Android refused the update.'));
     await tester.pump();
     await tester.pump();
@@ -105,11 +107,94 @@ void main() {
     expect(find.text('Android refused the update.'), findsOneWidget);
   });
 
-  testWidgets('a new version downloads and installs without another tap', (tester) async {
+  group('the background update check', () {
+    testWidgets('looks a few seconds after opening, and says nothing when up to date', (tester) async {
+      await open(tester);
+      expect(engine.updateChecks, 0);
+      await tester.pump(const Duration(seconds: 7));
+      expect(engine.updateChecks, 1);
+      expect(find.textContaining('is available'), findsNothing);
+      expect(find.text('Nearvolt 0.1.0 is the latest version.'), findsNothing, reason: 'a quiet check shows nothing');
+    });
+
+    testWidgets('a new version is offered, and nothing downloads until the user says Update', (tester) async {
+      engine.update = '0.1.9';
+      await open(tester);
+      await tester.pump(const Duration(seconds: 7));
+      await tester.pump();
+      expect(find.text('Nearvolt 0.1.9 is available'), findsOneWidget);
+      expect(find.text('Download and install it now? Nearvolt closes for a moment and opens again.'), findsOneWidget);
+      expect(find.text('Downloading version 0.1.9…'), findsNothing);
+
+      await tester.tap(find.text('Update'));
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Nearvolt 0.1.9 is available'), findsNothing);
+      expect(find.text('Downloading version 0.1.9…'), findsOneWidget);
+    });
+
+    testWidgets('Later hides the offer, and the same version is not offered again', (tester) async {
+      engine.update = '0.1.9';
+      await open(tester);
+      await tester.pump(const Duration(seconds: 7));
+      await tester.pump();
+      await tester.tap(find.text('Later'));
+      await tester.pump();
+      expect(find.text('Nearvolt 0.1.9 is available'), findsNothing);
+
+      await tester.pump(const Duration(hours: 7));
+      await tester.pump();
+      expect(engine.updateChecks, 2, reason: 'it keeps looking');
+      expect(find.text('Nearvolt 0.1.9 is available'), findsNothing, reason: 'but does not nag about the same one');
+
+      engine.update = '0.2.0';
+      await tester.pump(const Duration(hours: 7));
+      await tester.pump();
+      expect(find.text('Nearvolt 0.2.0 is available'), findsOneWidget, reason: 'a newer one is new news');
+    });
+
+    testWidgets('no internet is not worth an error: nothing shows, and it tries again later', (tester) async {
+      engine.updateFails = true;
+      await open(tester);
+      await tester.pump(const Duration(seconds: 7));
+      await tester.pump();
+      expect(find.textContaining('available'), findsNothing);
+      expect(find.byTooltip('Close'), findsNothing);
+
+      engine.updateFails = false;
+      engine.update = '0.1.9';
+      await tester.pump(const Duration(hours: 7));
+      await tester.pump();
+      expect(find.text('Nearvolt 0.1.9 is available'), findsOneWidget);
+    });
+
+    testWidgets('checking by hand asks too, and Later leaves everything as it was', (tester) async {
+      engine.update = '0.1.9';
+      await open(tester);
+      await tester.tap(find.text('Check for updates'));
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Nearvolt 0.1.9 is available. Download and install it now?'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      await tester.tap(find.text('Later'));
+      await tester.pump();
+      expect(find.textContaining('is available'), findsNothing);
+      expect(find.text('Downloading version 0.1.9…'), findsNothing);
+      expect(tester.widget<TextButton>(find.widgetWithText(TextButton, 'Check for updates')).onPressed, isNotNull);
+    });
+  });
+
+  testWidgets('a new version is offered first, and only Update downloads and installs it', (tester) async {
     engine.update = '0.1.9';
     await open(tester);
     await tester.tap(find.text('Check for updates'));
     await tester.pump();
+    await tester.pump();
+    expect(find.text('Nearvolt 0.1.9 is available. Download and install it now?'), findsOneWidget);
+    expect(find.text('Downloading version 0.1.9…'), findsNothing, reason: 'nothing starts by itself');
+
+    await tester.tap(find.text('Update'));
     await tester.pump();
     expect(find.text('Downloading version 0.1.9…'), findsOneWidget);
 
@@ -128,6 +213,8 @@ void main() {
     await open(tester);
     await tester.tap(find.text('Check for updates'));
     await tester.pump();
+    await tester.pump();
+    await tester.tap(find.text('Update'));
     await tester.pump();
     engine.installing.add(1);
     await tester.pump();
