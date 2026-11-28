@@ -532,36 +532,61 @@ class UpdateOffer extends StatelessWidget {
   final VoidCallback onUpdate;
 
   @override
+  Widget build(BuildContext context) =>
+      _UpdateAsk(message: updateAvailableText(version), onLater: onLater, onUpdate: onUpdate);
+}
+
+/// What the update question says, in the home card and after a manual check alike.
+String updateAvailableText(String version) => 'Nearvolt $version is available. Download and install it now?';
+
+/// The question itself, kept small: the words, then the two answers under them.
+class _UpdateAsk extends StatelessWidget {
+  const _UpdateAsk({required this.message, required this.onLater, required this.onUpdate});
+
+  final String message;
+  final VoidCallback onLater;
+  final VoidCallback onUpdate;
+
+  @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     return Panel(
+      padding: const EdgeInsets.fromLTRB(Space.m, Space.s, Space.s, Space.xs),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Icon(Icons.system_update_rounded, color: AppColors.accent),
-              const SizedBox(width: Space.m),
-              Expanded(child: Text('Nearvolt $version is available', style: text.titleMedium)),
-            ],
-          ),
-          const SizedBox(height: Space.xs),
-          Text(
-            'Download and install it now? Nearvolt closes for a moment and opens again.',
-            style: text.bodyMedium?.copyWith(color: AppColors.textSecondary),
-          ),
-          const SizedBox(height: Space.m),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              TextButton(onPressed: onLater, child: const Text('Later')),
-              const SizedBox(width: Space.s),
-              FilledButton(
-                onPressed: onUpdate,
-                style: FilledButton.styleFrom(minimumSize: const Size(0, 44)),
-                child: const Text('Update'),
+              const Padding(
+                padding: EdgeInsets.only(top: 2),
+                child: Icon(Icons.system_update_rounded, size: 20, color: AppColors.accent),
               ),
+              const SizedBox(width: Space.s),
+              Expanded(child: Text(message, style: text.bodyMedium)),
             ],
+          ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: Wrap(
+              spacing: Space.xs,
+              children: [
+                TextButton(
+                  onPressed: onLater,
+                  style: TextButton.styleFrom(visualDensity: VisualDensity.compact, minimumSize: const Size(0, 36)),
+                  child: const Text('Later'),
+                ),
+                FilledButton(
+                  onPressed: onUpdate,
+                  style: FilledButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    minimumSize: const Size(0, 36),
+                    padding: const EdgeInsets.symmetric(horizontal: Space.l),
+                  ),
+                  child: const Text('Update'),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -674,45 +699,20 @@ class _UpdateCardState extends State<UpdateCard> {
     final message = switch (_step) {
       _UpdateStep.checking => 'Checking for updates…',
       _UpdateStep.latest => 'Nearvolt ${widget.current} is the latest version.',
-      _UpdateStep.available => 'Nearvolt $_version is available. Download and install it now?',
+      _UpdateStep.available => updateAvailableText(_version ?? ''),
       _UpdateStep.downloading => 'Downloading version $_version…',
       _UpdateStep.installing =>
         'Installing version $_version. Nearvolt closes for a moment and opens again; if it doesn\'t, tap the notification.',
       _UpdateStep.failed => _error ?? "The update didn't finish. Try again.",
     };
     if (_step == _UpdateStep.available) {
-      return Panel(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Icon(Icons.system_update_rounded, color: AppColors.accent),
-                const SizedBox(width: Space.m),
-                Expanded(child: Text(message, style: text.bodyMedium)),
-              ],
-            ),
-            const SizedBox(height: Space.m),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                TextButton(
-                  onPressed: () {
-                    _answer.complete(false);
-                    widget.onClose();
-                  },
-                  child: const Text('Later'),
-                ),
-                const SizedBox(width: Space.s),
-                FilledButton(
-                  onPressed: () => _answer.complete(true),
-                  style: FilledButton.styleFrom(minimumSize: const Size(0, 44)),
-                  child: const Text('Update'),
-                ),
-              ],
-            ),
-          ],
-        ),
+      return _UpdateAsk(
+        message: message,
+        onLater: () {
+          _answer.complete(false);
+          widget.onClose();
+        },
+        onUpdate: () => _answer.complete(true),
       );
     }
     final busy = _step == _UpdateStep.checking || _step == _UpdateStep.installing;

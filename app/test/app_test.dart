@@ -122,14 +122,14 @@ void main() {
       await open(tester);
       await tester.pump(const Duration(seconds: 7));
       await tester.pump();
-      expect(find.text('Nearvolt 0.1.9 is available'), findsOneWidget);
-      expect(find.text('Download and install it now? Nearvolt closes for a moment and opens again.'), findsOneWidget);
+      expect(find.text('Nearvolt 0.1.9 is available. Download and install it now?'), findsOneWidget);
+      expect(find.text('Nearvolt 0.1.9 is available. Download and install it now?'), findsOneWidget);
       expect(find.text('Downloading version 0.1.9…'), findsNothing);
 
       await tester.tap(find.text('Update'));
       await tester.pump();
       await tester.pump();
-      expect(find.text('Nearvolt 0.1.9 is available'), findsNothing);
+      expect(find.text('Nearvolt 0.1.9 is available. Download and install it now?'), findsNothing);
       expect(find.text('Downloading version 0.1.9…'), findsOneWidget);
     });
 
@@ -140,17 +140,25 @@ void main() {
       await tester.pump();
       await tester.tap(find.text('Later'));
       await tester.pump();
-      expect(find.text('Nearvolt 0.1.9 is available'), findsNothing);
+      expect(find.text('Nearvolt 0.1.9 is available. Download and install it now?'), findsNothing);
 
       await tester.pump(const Duration(hours: 7));
       await tester.pump();
       expect(engine.updateChecks, 2, reason: 'it keeps looking');
-      expect(find.text('Nearvolt 0.1.9 is available'), findsNothing, reason: 'but does not nag about the same one');
+      expect(
+        find.text('Nearvolt 0.1.9 is available. Download and install it now?'),
+        findsNothing,
+        reason: 'but does not nag about the same one',
+      );
 
       engine.update = '0.2.0';
       await tester.pump(const Duration(hours: 7));
       await tester.pump();
-      expect(find.text('Nearvolt 0.2.0 is available'), findsOneWidget, reason: 'a newer one is new news');
+      expect(
+        find.text('Nearvolt 0.2.0 is available. Download and install it now?'),
+        findsOneWidget,
+        reason: 'a newer one is new news',
+      );
     });
 
     testWidgets('no internet is not worth an error: nothing shows, and it tries again later', (tester) async {
@@ -165,7 +173,7 @@ void main() {
       engine.update = '0.1.9';
       await tester.pump(const Duration(hours: 7));
       await tester.pump();
-      expect(find.text('Nearvolt 0.1.9 is available'), findsOneWidget);
+      expect(find.text('Nearvolt 0.1.9 is available. Download and install it now?'), findsOneWidget);
     });
 
     testWidgets('checking by hand asks too, and Later leaves everything as it was', (tester) async {
