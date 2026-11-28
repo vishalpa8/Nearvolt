@@ -553,6 +553,7 @@ class _Live {
         s.request?.id == e.requestId ? s.copyWith(phase: LinkPhase.connecting, peer: '', keepRequest: false) : s,
       rust.EventKind.note => s,
       rust.EventKind.code => s.copyWith(phase: LinkPhase.waiting, code: e.code),
+      rust.EventKind.waiting => s.copyWith(phase: LinkPhase.waiting),
       rust.EventKind.connected => _connected(s, e),
       rust.EventKind.started => _start(s, e),
       rust.EventKind.progress => s.moving == null ? s : s.copyWith(progress: _progress(e)),

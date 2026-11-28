@@ -117,12 +117,14 @@
         </receiver>
 
         <!-- Google's code scanner starts through this invisible screen, in a task of its
-             own. It must not stay in the recent apps list as a second Nearvolt window. -->
+             own. It must not stay in the recent apps list as a second Nearvolt window.
+             It must NOT be noHistory: the scanner opens on top of it and returns the scanned
+             code to it, and noHistory closes it the moment something opens on top, so the
+             code was lost and scanning never worked. -->
         <activity
             android:name="com.google.mlkit.vision.codescanner.internal.GmsBarcodeScanningDelegateActivity"
             android:excludeFromRecents="true"
             android:autoRemoveFromRecents="true"
-            android:noHistory="true"
             tools:node="merge" />
 
         <!-- Don't delete the meta-data below.

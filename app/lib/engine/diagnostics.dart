@@ -38,6 +38,8 @@ class Diagnostics {
         _log(_tag, 'a phone is asking to connect');
       case rust.EventKind.code:
         _log(_tag, 'showing a confirmation code');
+      case rust.EventKind.waiting:
+        _log(_tag, 'waiting for the other phone to accept');
       case rust.EventKind.connected:
         _connected(e);
       case rust.EventKind.started:

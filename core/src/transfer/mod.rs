@@ -171,6 +171,9 @@ pub enum Event {
     Code {
         code: String,
     },
+    /// Sender: the receiver has seen us and its user is deciding. No code to compare
+    /// (the code came from a scan), so the screen just says it is waiting.
+    Waiting,
     /// Sender: the receiver took a batch and it is being sent.
     Started {
         batch: u32,

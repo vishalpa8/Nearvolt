@@ -277,7 +277,8 @@ class _ConnectionPageState extends State<ConnectionPage> {
       );
     }
     final (icon, line) = switch (c.phase) {
-      LinkPhase.connecting || LinkPhase.waiting => (Icons.link_rounded, 'Setting up a direct, encrypted link.'),
+      LinkPhase.connecting => (Icons.link_rounded, 'Setting up a direct, encrypted link.'),
+      LinkPhase.waiting => (Icons.hourglass_top_rounded, 'Waiting for ${c.peer} to accept on their phone.'),
       LinkPhase.reconnecting => (Icons.sync_rounded, 'Nothing is lost: it picks up where it stopped.'),
       LinkPhase.ended => (Icons.link_off_rounded, 'Everything that finished was verified and saved.'),
       LinkPhase.failed => (Icons.error_outline_rounded, c.error ?? friendlyFailure(null)),

@@ -471,6 +471,8 @@ void main() {
     engine.sending!.add(const Connection(phase: LinkPhase.waiting, peer: 'Tapped phone'));
     await tester.pump();
     expect(engine.queued, isEmpty, reason: 'not accepted yet');
+    // With no code to compare, the screen still says what is being waited for.
+    expect(find.text('Waiting for Tapped phone to accept on their phone.'), findsOneWidget);
 
     engine.sending!.add(const Connection(phase: LinkPhase.connected, peer: 'Tapped phone'));
     await tester.pump();

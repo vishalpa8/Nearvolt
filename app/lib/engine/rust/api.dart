@@ -108,6 +108,9 @@ enum EventKind {
   /// Sender: show `code` while the receiver decides.
   code,
 
+  /// Sender: the receiver is deciding, with no code to compare.
+  waiting,
+
   /// Connected and accepted, also after every reconnect. `text` is the other
   /// phone; on the sender, `route` is the address or cable it reached.
   connected,

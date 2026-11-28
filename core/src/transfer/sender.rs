@@ -330,6 +330,8 @@ async fn session<L: Link>(
         write_msg(&mut wr, &Control::Reveal { nonce: ours }).await?;
         let code = pairing::pairing_code(&receiver, identity.fingerprint(), &ours, &theirs);
         emit(events, Event::Code { code });
+    } else {
+        emit(events, Event::Waiting);
     }
 
     let (out, out_rx) = mpsc::unbounded_channel();

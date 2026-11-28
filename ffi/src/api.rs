@@ -70,6 +70,8 @@ pub enum EventKind {
     Note,
     /// Sender: show `code` while the receiver decides.
     Code,
+    /// Sender: the receiver is deciding, with no code to compare.
+    Waiting,
     /// Connected and accepted, also after every reconnect. `text` is the other
     /// phone; on the sender, `route` is the address or cable it reached.
     Connected,
@@ -501,6 +503,7 @@ fn forward(sink: &StreamSink<TransferEvent>, event: Event) {
             ..TransferEvent::new(EventKind::Connected, Some(peer))
         },
         Event::Code { code } => TransferEvent { code: Some(code), ..TransferEvent::new(EventKind::Code, None) },
+        Event::Waiting => TransferEvent::new(EventKind::Waiting, None),
         Event::Started { batch, files, bytes } | Event::Incoming { batch, files, bytes } => {
             TransferEvent::batch(EventKind::Started, batch, files, bytes)
         }
