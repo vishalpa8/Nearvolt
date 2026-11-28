@@ -47,8 +47,15 @@ class _ConnectionPageState extends State<ConnectionPage> {
   @override
   void initState() {
     super.initState();
-    _sub = widget.updates.listen(_update);
+    _sub = widget.updates.listen(_update, onDone: _updatesEnded);
     _update(_c);
+  }
+
+  /// The connection's events stopped without saying it ended (the engine behind it is
+  /// gone). The screen must not keep claiming to be connected, with buttons that do nothing.
+  void _updatesEnded() {
+    if (!mounted || !_c.open) return;
+    setState(() => _c = _c.copyWith(phase: LinkPhase.ended));
   }
 
   void _update(Connection c) {

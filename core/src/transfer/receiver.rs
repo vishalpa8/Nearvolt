@@ -216,6 +216,13 @@ impl Receiver {
                             }
                         }
                         None => {
+                            // Told to stop a moment ago: a connection arriving now would be dropped
+                            // without a goodbye, so it is turned away with a reason instead.
+                            if *self.ending.borrow() {
+                                let closing = reject(FailureKind::Busy, "This phone has stopped receiving.");
+                                tokio::spawn(async move { write_msg(&mut authed.stream, &closing).await });
+                                continue;
+                            }
                             let trusted = *shared.trusted.lock().unwrap();
                             if trusted.is_some_and(|f| f != authed.sender) {
                                 let busy = reject(FailureKind::Busy, "This phone is connected to another device.");

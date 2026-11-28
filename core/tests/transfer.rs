@@ -677,3 +677,43 @@ impl AsyncWrite for Flaky {
         Pin::new(&mut self.inner).poll_shutdown(cx)
     }
 }
+
+/// The sender ending the connection on purpose must reach the receiver as a goodbye, not as
+/// a broken link: otherwise the receiver waits minutes for a phone that is not coming back.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_sender_disconnecting_ends_the_receiver_too() {
+    for _ in 0..5 {
+        let tmp = tempfile::tempdir().unwrap();
+        let rx = receiver(&tmp.path().join("dst"), false);
+        let peer = Peer::from_ticket(&rx.ticket());
+        let (receiver_events, mut seen) = mpsc::unbounded_channel();
+        let (commands, queue) = mpsc::unbounded_channel();
+        let leaving = commands.clone();
+        let (events_tx, mut sender_events) = mpsc::unbounded_channel();
+
+        let identity = Identity::generate().unwrap();
+        let options = SendOptions::default();
+        let sending = connect(&identity, &peer, &options, queue, Arc::new(Stats::default()), Some(events_tx));
+        let receiving = rx.run(approve_all(Arc::default()), Arc::new(Stats::default()), Some(receiver_events));
+        // Disconnect as soon as the sender is connected.
+        let waiting = async move {
+            while let Some(event) = sender_events.recv().await {
+                if matches!(event, Event::Connected { .. }) {
+                    leaving.send(Command::Disconnect).unwrap();
+                    break;
+                }
+            }
+            drop(sender_events);
+        };
+        let (received, sent, ()) = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            tokio::join!(receiving, sending, waiting)
+        })
+        .await
+        .expect("both sides should stop, not wait for a reconnect");
+        received.unwrap();
+        sent.unwrap();
+        let events = drain(&mut seen);
+        assert!(events.iter().any(|e| matches!(e, Event::PeerLeft)), "the receiver was told goodbye");
+        assert!(!events.iter().any(|e| matches!(e, Event::ConnectionLost { .. })), "it was not a broken link");
+    }
+}

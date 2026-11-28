@@ -215,6 +215,28 @@ void main() {
     expect(find.text('Add files'), findsOneWidget);
   });
 
+  testWidgets('a connection screen whose events stop does not keep saying Connected', (tester) async {
+    await connectByCode(tester);
+    expect(find.text('Disconnect'), findsWidgets);
+
+    // The engine behind the connection is gone: no more events, and none said it ended.
+    await engine.sending!.close();
+    await tester.pumpAndSettle();
+    expect(find.text('Disconnected'), findsOneWidget);
+    expect(find.text('Done'), findsOneWidget);
+  });
+
+  testWidgets('a phone connecting while Receive slides away does not open a connection screen', (tester) async {
+    await open(tester);
+    await go(tester, 'Receive');
+    await tester.pump();
+
+    tester.state<NavigatorState>(find.byType(Navigator).first).pop();
+    engine.receiving!.add(connected);
+    await tester.pump();
+    await tester.pumpAndSettle();
+    expect(find.text('Receiving from'), findsNothing);
+  });
   testWidgets('Cancel before the other phone accepts leaves the screen at once', (tester) async {
     await openMethod(tester, 'Nearby phones');
     engine.devices.add([rahul]);

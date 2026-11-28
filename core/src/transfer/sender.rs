@@ -357,7 +357,7 @@ async fn session<L: Link>(
             },
             command = commands.recv(), if !batches.closed => {
                 if batches.handle(command, events).await.is_break() {
-                    return say_bye(out, writer).await;
+                    return say_bye(out, writer, &mut control_rx).await;
                 }
             }
         }
@@ -390,7 +390,7 @@ async fn session<L: Link>(
                 let _ = out.send(Control::Offer { batch: *batch, files: manifest.offer.files.clone() });
                 offered = true;
             }
-            None if batches.closed => return say_bye(out, writer).await,
+            None if batches.closed => return say_bye(out, writer, &mut control_rx).await,
             _ => {}
         }
         tokio::select! {
@@ -463,7 +463,7 @@ async fn session<L: Link>(
             },
             command = commands.recv(), if !batches.closed => {
                 if batches.handle(command, events).await.is_break() {
-                    return say_bye(out, writer).await;
+                    return say_bye(out, writer, &mut control_rx).await;
                 }
             }
             Some(stream) = opening.next() => {
@@ -559,11 +559,20 @@ fn fail_current(
     true
 }
 
-/// Tells the receiver the connection is over, so it stops waiting for a reconnect.
-async fn say_bye(out: mpsc::UnboundedSender<Control>, mut writer: AbortOnDrop<Result<()>>) -> Result<()> {
+/// Tells the receiver the connection is over, so it stops waiting for a reconnect. The
+/// goodbye is flushed and the stream closed properly, and what the receiver still sends
+/// is read until it hangs up: closing a socket with unread data makes the system reset
+/// it, which can throw the goodbye away and leave the receiver waiting for us to return.
+async fn say_bye(
+    out: mpsc::UnboundedSender<Control>,
+    mut writer: AbortOnDrop<Result<()>>,
+    control: &mut mpsc::UnboundedReceiver<Result<Control>>,
+) -> Result<()> {
     let _ = out.send(Control::Bye);
     drop(out);
     let _ = tokio::time::timeout(Duration::from_secs(2), &mut writer.0).await;
+    let drain = async { while let Some(Ok(_)) = control.recv().await {} };
+    let _ = tokio::time::timeout(Duration::from_secs(1), drain).await;
     Ok(())
 }
 
@@ -575,7 +584,11 @@ async fn write_loop(mut wr: WriteHalf<TlsStream>, mut out: mpsc::UnboundedReceiv
         let msg = tokio::select! {
             msg = out.recv() => match msg {
                 Some(msg) => msg,
-                None => return Ok(()),
+                // Nothing more to say: close the stream properly (close_notify, then FIN).
+                None => {
+                    let _ = wr.shutdown().await;
+                    return Ok(());
+                }
             },
             _ = tick.tick() => Control::Ping,
         };

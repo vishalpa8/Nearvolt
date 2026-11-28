@@ -1,6 +1,8 @@
 @Tags(['golden'])
 library;
 
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:nearvolt/app.dart';
@@ -100,8 +102,9 @@ void main() {
     await shoot('needs');
   });
 
-  Widget connection(Connection c, {bool sending = true}) =>
-      screen(ConnectionPage(engine: engine, updates: const Stream.empty(), initial: c, sending: sending));
+  Widget connection(Connection c, {bool sending = true}) => screen(
+    ConnectionPage(engine: engine, updates: StreamController<Connection>().stream, initial: c, sending: sending),
+  );
 
   for (final (name, c, sending) in [
     (

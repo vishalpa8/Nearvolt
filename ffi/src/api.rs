@@ -330,7 +330,17 @@ pub fn disconnect_receiving() {
 #[frb(sync)]
 pub fn stop_receiving() {
     if let Ok(engine) = engine() {
-        engine.receiving.lock().unwrap().take();
+        let taken = engine.receiving.lock().unwrap().take();
+        if let Some(receiving) = taken {
+            // A phone that is connected is told goodbye; dropping everything at once would
+            // look like a broken link to it and leave it reconnecting for minutes. The state
+            // is kept alive a moment so the goodbye can go out.
+            receiving.receiver.disconnect();
+            engine.runtime.spawn(async move {
+                tokio::time::sleep(Duration::from_secs(3)).await;
+                drop(receiving);
+            });
+        }
     }
 }
 

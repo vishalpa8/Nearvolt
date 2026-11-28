@@ -32,6 +32,18 @@ class _ReceivePageState extends State<ReceivePage> with NeedsMixin {
   var _asking = false;
   var _showing = false;
 
+  /// Back was pressed. The page is on screen for a moment longer while it slides away,
+  /// and a phone connecting in that moment must not open a connection screen over a
+  /// Receive that is already closing.
+  var _leaving = false;
+
+  void _leave() {
+    _leaving = true;
+    _idle?.cancel();
+    _session?.cancel();
+    _session = null;
+  }
+
   @override
   TransferEngine get engine => widget.engine;
 
@@ -94,7 +106,7 @@ class _ReceivePageState extends State<ReceivePage> with NeedsMixin {
         showNote(context, '${request.from} cancelled.');
       }
     }
-    if (c.phase == LinkPhase.connected && !_showing && mounted) {
+    if (c.phase == LinkPhase.connected && !_showing && mounted && !_leaving) {
       _showing = true;
       _idle?.cancel();
       await Navigator.of(context).push(
@@ -122,11 +134,16 @@ class _ReceivePageState extends State<ReceivePage> with NeedsMixin {
     if (blockedPage('Receive') case final page?) return page;
     final text = Theme.of(context).textTheme;
     final ticket = _c.ticket;
-    return PageScaffold(
-      title: 'Receive',
-      onBack: () => Navigator.of(context).maybePop(),
-      body: SingleChildScrollView(
-        child: Column(children: [if (_idleStopped) ..._stopped(text) else ..._open(text, ticket)]),
+    return PopScope(
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) _leave();
+      },
+      child: PageScaffold(
+        title: 'Receive',
+        onBack: () => Navigator.of(context).maybePop(),
+        body: SingleChildScrollView(
+          child: Column(children: [if (_idleStopped) ..._stopped(text) else ..._open(text, ticket)]),
+        ),
       ),
     );
   }
