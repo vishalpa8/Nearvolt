@@ -125,6 +125,25 @@ void main() {
     });
   }
 
+  testWidgets('cancelled', (tester) async {
+    await phone(
+      tester,
+      connection(
+        const Connection(
+          phase: LinkPhase.ended,
+          peer: "Rahul's Pixel 9",
+          endedByPeer: true,
+          batches: [
+            Batch(id: 0, files: 12, bytes: 48200000, state: BatchState.done),
+            Batch(id: 1, files: 4, bytes: 821400000, state: BatchState.cancelled),
+          ],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await shoot('cancelled');
+  });
+
   testWidgets('problems', (tester) async {
     await phone(tester, screen(ReceivePage(engine: engine, profile: profile)));
     engine.receiving!.add(const Connection(ticket: _ticket, problems: [SetupProblem.otherNetworks]));

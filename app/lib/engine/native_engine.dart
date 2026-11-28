@@ -316,6 +316,12 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
     return out.stream;
   }
 
+  /// Picks already handed to a connection; their files are released when it ends.
+  final _taken = <int>{};
+
+  @override
+  bool taken(Selection what) => _taken.contains(what.token);
+
   @override
   void queue(Selection what) {
     final live = _sending;
@@ -326,6 +332,7 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
       files: [for (final f in what.files) rust.SourceFile(path: f.path, size: f.size, modifiedMs: f.modifiedMs)],
     );
     _platform.log('send', 'queued ${what.files.length} files, ${what.bytes} bytes in ${sizes.length} batch(es)');
+    _taken.add(what.token);
     var start = 0;
     final added = <Batch>[];
     for (final count in sizes) {
@@ -574,9 +581,14 @@ class _Live {
       // Only a connection that was set up has anything to reconnect.
       rust.EventKind.connectionLost => _everConnected ? s.copyWith(phase: LinkPhase.reconnecting) : s,
       rust.EventKind.peerLeft => s.copyWith(endedByPeer: true),
-      rust.EventKind.disconnected => s.copyWith(phase: LinkPhase.ended, keepProgress: false),
+      rust.EventKind.disconnected => s.copyWith(
+        phase: LinkPhase.ended,
+        batches: _cancelUnfinished(s.batches),
+        keepProgress: false,
+      ),
       rust.EventKind.failed => s.copyWith(
         phase: LinkPhase.failed,
+        batches: _cancelUnfinished(s.batches),
         error: friendlyFailure(e.failure, peer: s.peer, receiving: receiving),
         keepProgress: false,
       ),
@@ -585,8 +597,9 @@ class _Live {
 
   Connection _connected(Connection s, rust.TransferEvent e) {
     _everConnected = true;
-    // The sender keeps the code on screen: it has to be compared before anything is sent.
-    return s.copyWith(phase: LinkPhase.connected, peer: e.text, keepRequest: false);
+    // The route it really took, not the one the code promised: a scan can end up on the
+    // router, a Nearby pick on a Wi-Fi Direct group.
+    return s.copyWith(phase: LinkPhase.connected, peer: e.text, keepRequest: false, link: linkName(e.route) ?? s.link);
   }
 
   /// The sender already listed the batch when it was queued; the receiver lists
@@ -601,6 +614,13 @@ class _Live {
       progress: Progress(totalBytes: e.totalBytes, totalFiles: e.totalFiles),
     );
   }
+
+  /// The connection is over: anything still waiting or moving was not finished, and the
+  /// screen must say so instead of still showing "Sending".
+  List<Batch> _cancelUnfinished(List<Batch> batches) => [
+    for (final b in batches)
+      b.state == BatchState.queued || b.state == BatchState.moving ? b.copyWith(state: BatchState.cancelled) : b,
+  ];
 
   List<Batch> _mark(List<Batch> batches, int id, BatchState state, {String? error}) => [
     for (final b in batches) b.id == id ? b.copyWith(state: state, error: error) : b,

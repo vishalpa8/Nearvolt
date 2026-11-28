@@ -110,6 +110,9 @@ class FakeEngine implements TransferEngine {
   void queue(Selection what) => queued.add(what);
 
   @override
+  bool taken(Selection what) => queued.contains(what);
+
+  @override
   Stream<Connection> receive() {
     receiveSessions++;
     // Cancelling resolves in the test's zone, like the real engine's async* stream.

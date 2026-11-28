@@ -35,7 +35,9 @@ class Pill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final outlined = style == PillStyle.outlined;
-    final textColor = outlined ? AppColors.textPrimary : color;
+    // The words are darker than the dot and fill: pale green or amber text on its own tint is hard to read.
+    final fill = Color.alphaBlend(color.withValues(alpha: 0.1), AppColors.background);
+    final textColor = outlined ? AppColors.textPrimary : readableOn(color, fill);
     return Container(
       padding: EdgeInsets.symmetric(horizontal: Space.m, vertical: outlined ? Space.s : 6),
       decoration: BoxDecoration(

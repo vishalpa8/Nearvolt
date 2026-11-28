@@ -50,31 +50,14 @@ class _HomePageState extends State<HomePage> {
               }),
         child: const Text('Check for updates'),
       ),
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (_check case final check?) ...[
-            const SizedBox(height: Space.l),
-            UpdateCard(
-              key: ValueKey(check),
-              current: profile.version,
-              check: engine.checkForUpdate,
-              install: engine.installUpdate,
-              onClose: () => setState(() => _check = null),
-              onDone: () {
-                if (mounted) setState(() => _updating = false);
-              },
-            ),
-          ],
-          const Spacer(),
-          Text('Move files to anyone nearby', style: text.displaySmall),
-          const SizedBox(height: Space.s),
-          Text(
-            'No internet or account needed. Every file arrives exactly as it was sent.',
-            style: text.bodyLarge?.copyWith(color: AppColors.textSecondary),
+      // Scrolls when the phone is short or the text is large, and still spreads out when there is room.
+      body: LayoutBuilder(
+        builder: (context, box) => SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: box.maxHeight),
+            child: IntrinsicHeight(child: _intro(text, engine, profile)),
           ),
-          const Spacer(flex: 2),
-        ],
+        ),
       ),
       bottom: IntrinsicHeight(
         child: Row(
@@ -101,6 +84,35 @@ class _HomePageState extends State<HomePage> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _intro(TextTheme text, TransferEngine engine, DeviceProfile profile) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (_check case final check?) ...[
+          const SizedBox(height: Space.l),
+          UpdateCard(
+            key: ValueKey(check),
+            current: profile.version,
+            check: engine.checkForUpdate,
+            install: engine.installUpdate,
+            onClose: () => setState(() => _check = null),
+            onDone: () {
+              if (mounted) setState(() => _updating = false);
+            },
+          ),
+        ],
+        const Spacer(),
+        Text('Move files to anyone nearby', style: text.displaySmall),
+        const SizedBox(height: Space.s),
+        Text(
+          'No internet or account needed. Every file arrives exactly as it was sent.',
+          style: text.bodyLarge?.copyWith(color: AppColors.textSecondary),
+        ),
+        const Spacer(flex: 2),
+      ],
     );
   }
 }

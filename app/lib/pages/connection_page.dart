@@ -116,7 +116,11 @@ class _ConnectionPageState extends State<ConnectionPage> {
       context: context,
       builder: (context) => AlertDialog(
         title: Text('Disconnect from ${_c.peer}?'),
-        content: const Text('Files that have finished arriving stay. A file still arriving is removed.'),
+        content: Text(
+          widget.sending
+              ? 'Files already sent stay on ${_c.peer}. A file still being sent is cancelled.'
+              : 'Files that have finished arriving stay. A file still arriving is removed.',
+        ),
         actions: [
           TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Stay connected')),
           TextButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Disconnect')),
@@ -243,7 +247,7 @@ class _ConnectionPageState extends State<ConnectionPage> {
       LinkPhase.connecting => (Icons.link_rounded, 'Setting up a direct, encrypted link.'),
       LinkPhase.waiting => (Icons.hourglass_top_rounded, 'Waiting for ${c.peer} to accept on their phone.'),
       LinkPhase.reconnecting => (Icons.sync_rounded, 'Nothing is lost: it picks up where it stopped.'),
-      LinkPhase.ended => (Icons.link_off_rounded, 'Everything that finished was verified and saved.'),
+      LinkPhase.ended => (Icons.link_off_rounded, endedLine(sending: widget.sending, batches: c.batches)),
       LinkPhase.failed => (Icons.error_outline_rounded, c.error ?? friendlyFailure(null)),
       LinkPhase.connected when widget.sending => (
         Icons.add_circle_outline_rounded,

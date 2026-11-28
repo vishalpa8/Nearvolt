@@ -401,9 +401,12 @@ class BatchList extends StatelessWidget {
                           BatchState.moving => sending ? 'Sending' : 'Receiving',
                           BatchState.done => sending ? 'Sent and verified' : 'Received and verified',
                           BatchState.failed => batch.error ?? "Couldn't be sent",
+                          BatchState.cancelled => sending ? 'Cancelled · not sent' : 'Cancelled · not received',
                         },
                         style: text.bodySmall?.copyWith(
-                          color: batch.state == BatchState.failed ? AppColors.danger : null,
+                          color: batch.state == BatchState.failed
+                              ? readableOn(AppColors.danger, AppColors.background)
+                              : null,
                         ),
                       ),
                     ],
@@ -429,6 +432,7 @@ class _BatchIcon extends StatelessWidget {
       BatchState.moving => (Icons.swap_vert_rounded, AppColors.accent, AppColors.accentSoft),
       BatchState.done => (Icons.check_rounded, AppColors.success, AppColors.success.withValues(alpha: 0.1)),
       BatchState.failed => (Icons.close_rounded, AppColors.danger, AppColors.danger.withValues(alpha: 0.1)),
+      BatchState.cancelled => (Icons.block_rounded, AppColors.warning, AppColors.warning.withValues(alpha: 0.12)),
     };
     return Container(
       width: 44,

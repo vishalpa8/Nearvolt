@@ -49,6 +49,10 @@ abstract interface class TransferEngine {
   /// Adds files to the open connection; they go after anything queued before.
   void queue(Selection what);
 
+  /// Whether what was handed to a connection already. Once it was (sent, cancelled or
+  /// failed) its files are released and the pick is used up: it must not be offered again.
+  bool taken(Selection what);
+
   /// Opens Receive until the stream is cancelled: shows a code, then serves one
   /// phone's connection until either side disconnects.
   Stream<Connection> receive();

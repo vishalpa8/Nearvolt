@@ -104,7 +104,9 @@ class PickedItem {
   final bool isFolder;
 }
 
-enum BatchState { queued, moving, done, failed }
+/// `cancelled`: the connection ended before this batch finished, so it was not sent
+/// (or not received) in full.
+enum BatchState { queued, moving, done, failed, cancelled }
 
 /// Files added together, sent one batch after another over a connection.
 class Batch {

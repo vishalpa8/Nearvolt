@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:material_ui/material_ui.dart';
 
 /// Design tokens. Keep in sync with docs/design.md.
@@ -13,6 +15,25 @@ abstract final class AppColors {
   static const success = Color(0xFF1F9D55);
   static const warning = Color(0xFFC27C0E);
   static const danger = Color(0xFFD93636);
+}
+
+/// WCAG contrast ratio between two colours: 1 (none) to 21 (black on white).
+double contrastRatio(Color a, Color b) {
+  final la = a.computeLuminance(), lb = b.computeLuminance();
+  return (math.max(la, lb) + 0.05) / (math.min(la, lb) + 0.05);
+}
+
+/// [color], made darker only as far as needed to read clearly on [background]
+/// (4.5:1, the minimum for small text). The brand greens and ambers are too light to
+/// carry words on their own tinted fill.
+Color readableOn(Color color, Color background, {double ratio = 4.5}) {
+  var hsl = HSLColor.fromColor(color);
+  var result = color;
+  while (contrastRatio(result, background) < ratio && hsl.lightness > 0.05) {
+    hsl = hsl.withLightness(hsl.lightness - 0.02);
+    result = hsl.toColor();
+  }
+  return result;
 }
 
 abstract final class Space {

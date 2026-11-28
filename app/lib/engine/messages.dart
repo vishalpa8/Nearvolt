@@ -1,6 +1,7 @@
 import 'package:flutter/services.dart' show PlatformException;
 
-import 'models.dart' show SetupProblem;
+import '../ui/format.dart' show filesLabel;
+import 'models.dart' show Batch, BatchState, SetupProblem;
 import 'rust/api.dart' show FailureKind;
 
 /// Every failure the app shows is worded here, and only here. The engine reports
@@ -70,3 +71,28 @@ String leftOut(int count) =>
 
 /// Shown when the connection ended before files could be queued.
 const connectionEnded = 'The connection ended before the files could be sent.';
+
+/// What a connection is called on screen, from the address it really used; null when
+/// that isn't known yet.
+String? linkName(String? route) {
+  if (route == null || route.isEmpty) return null;
+  if (route == 'USB cable') return 'USB cable';
+  if (route.startsWith('192.168.49.')) return 'Wi-Fi Direct';
+  return 'Same Wi-Fi';
+}
+
+/// The line under a connection that has ended: what was finished and what was not.
+String endedLine({required bool sending, required List<Batch> batches}) {
+  final finished = batches.where((b) => b.state == BatchState.done).fold(0, (n, b) => n + b.files);
+  final left = batches
+      .where((b) => b.state == BatchState.cancelled || b.state == BatchState.failed)
+      .fold(0, (n, b) => n + b.files);
+  final verb = sending ? 'sent' : 'received';
+  if (left == 0) {
+    if (finished == 0) return 'Nothing was $verb.';
+    return sending ? 'Everything was sent and verified.' : 'Everything was received, verified and saved.';
+  }
+  final was = left == 1 ? "wasn't" : "weren't";
+  if (finished == 0) return 'Cancelled. ${filesLabel(left)} $was $verb.';
+  return "${filesLabel(left)} $was $verb. What finished was verified${sending ? '' : ' and saved'}.";
+}

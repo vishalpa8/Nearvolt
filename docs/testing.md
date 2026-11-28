@@ -101,6 +101,8 @@ Start with a fresh install, Bluetooth off.
 | 1 | Both on the same Wi-Fi. B opens Receive, A opens Send › Nearby phones. | B appears within 3 s, marked "Same Wi-Fi". |
 | 2 | On A, tap B. | Both screens show the same 4-digit code. B accepts; A shows "Connected". |
 | 3 | On A, tap Add files and pick some. Before they finish, add more. | The first batch shows "Sending", the second "Waiting its turn", then each "Sent and verified". B lists the same as "Received and verified". Hashes match. |
+| 3a | While a file is sending, disconnect on either phone. | Both screens say Disconnected and the file row says "Cancelled · not sent" (A) or "Cancelled · not received" (B), never "Sending" or "Receiving". The line below says how many files were not sent. |
+| 3b | On A, choose files on the Send screen, connect, send, disconnect, and go back to Send. | Nothing is selected any more: it says "Choose files" again. Connecting again does not resend the old files. |
 | 4 | Both with Wi-Fi on but not connected to the same network (or none). B opens Receive. | B appears on A marked "Bluetooth". Connecting joins B's Wi-Fi Direct group with no pop-up; then as in 2 and 3. |
 | 5 | B opens Receive. On A, Send › Scan code, scan B's QR code. | No code to compare, and B is not asked: scanning is the consent. A shows "Connected" at once. |
 | 6 | B opens Receive. On A, Send › Tap phones, then hold the backs together. | Connected at once, with no prompt on B. |

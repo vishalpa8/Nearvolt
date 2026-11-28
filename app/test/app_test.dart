@@ -237,6 +237,33 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Receiving from'), findsNothing);
   });
+  testWidgets('files that were sent are no longer selected, and are not offered again', (tester) async {
+    await connectByCode(tester);
+    expect(engine.queued, [album]);
+
+    // The connection ends, and the person connects again from the same list.
+    engine.sending!.add(connected.copyWith(phase: LinkPhase.ended));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+    engine.devices.add([rahul]);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(rahulName));
+    await tester.pumpAndSettle();
+    engine.sending!.add(connected);
+    await tester.pumpAndSettle();
+    expect(engine.queued, [album], reason: 'the used pick is not sent a second time');
+
+    // Back on the Send screen nothing is selected any more.
+    engine.sending!.add(connected.copyWith(phase: LinkPhase.ended));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+    tester.state<NavigatorState>(find.byType(Navigator)).pop();
+    await tester.pumpAndSettle();
+    expect(find.text('Choose files'), findsOneWidget);
+    expect(find.text('Change'), findsNothing);
+  });
   testWidgets('Cancel before the other phone accepts leaves the screen at once', (tester) async {
     await openMethod(tester, 'Nearby phones');
     engine.devices.add([rahul]);

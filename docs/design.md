@@ -30,6 +30,27 @@ instructions.
 
 Light theme only at launch.
 
+Text on a status colour must reach 4.5:1 (the minimum for small text). The success
+green and the warning amber are too light to carry words on their own tinted fill, so
+pills and labels darken them with `readableOn` in `lib/theme.dart`; the dot, icon and
+ring keep the brand colour. `test/contrast_test.dart` checks this.
+
+Every screen must also fit a small phone, landscape and a tablet at 100%, 150% and 200%
+text, with nothing cut off or overflowing: `test/layout_test.dart`.
+
+## Files and what happened to them
+
+A batch row says what became of it: **Waiting its turn**, **Sending** / **Receiving**,
+**Sent and verified** / **Received and verified**, **Couldn't be sent** with the
+reason, or **Cancelled · not sent** / **Cancelled · not received** when the connection
+ended first. When a connection ends, anything still waiting or moving becomes
+cancelled, so no row keeps saying "Sending" for a transfer that is over. The line under
+an ended connection says what was and was not finished.
+
+Files picked on the Send screen are used up as soon as a connection takes them, whether
+they are sent, cancelled or fail: the screen goes back to "Choose files", and they are
+never offered to the next connection.
+
 ## Type
 
 Inter, with system fallbacks.

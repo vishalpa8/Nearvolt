@@ -31,6 +31,14 @@ class SendPage extends StatefulWidget {
 class _SendPageState extends State<SendPage> {
   Selection? _files;
 
+  /// The picked files that no connection has taken yet. Once one took them (sent,
+  /// cancelled or failed) the pick is used up and its files are released, so it is not
+  /// shown or offered again: offering it again made the next transfer fail to read them.
+  Selection? get _unsent {
+    final picked = _files;
+    return picked == null || engine.taken(picked) ? null : picked;
+  }
+
   TransferEngine get engine => widget.engine;
 
   /// A second tap while a screen or the scanner is opening does nothing, so one tap
@@ -47,6 +55,8 @@ class _SendPageState extends State<SendPage> {
       await action();
     } finally {
       _busy = false;
+      // Back on this screen: files that were just sent (or cancelled) are no longer selected.
+      if (mounted && _files != null && engine.taken(_files!)) setState(() => _files = null);
     }
   }
 
@@ -93,13 +103,13 @@ class _SendPageState extends State<SendPage> {
     } on Object {
       return tell("That isn't a Nearvolt code.");
     }
-    if (context.mounted) await openConnection(context, engine, device, files: _files);
+    if (context.mounted) await openConnection(context, engine, device, files: _unsent);
   }
 
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
-    final files = _files;
+    final files = _unsent;
     return PageScaffold(
       title: 'Send',
       onBack: () => Navigator.of(context).maybePop(),
@@ -156,7 +166,7 @@ class _SendPageState extends State<SendPage> {
               icon: Icons.nfc_rounded,
               title: 'Tap phones',
               detail: 'Hold the backs together. Connects at once, nothing to approve.',
-              onTap: () => _open(context, _TapPage(engine: engine, files: _files)),
+              onTap: () => _open(context, _TapPage(engine: engine, files: _unsent)),
             ),
           ChoiceTile(
             icon: Icons.qr_code_scanner_rounded,
@@ -168,13 +178,13 @@ class _SendPageState extends State<SendPage> {
             icon: Icons.radar_rounded,
             title: 'Nearby phones',
             detail: 'Pick it from a list when you are on the same Wi-Fi. The other phone approves with a code.',
-            onTap: () => _open(context, _NearbyPage(engine: engine, files: _files)),
+            onTap: () => _open(context, _NearbyPage(engine: engine, files: _unsent)),
           ),
           ChoiceTile(
             icon: Icons.usb_rounded,
             title: 'USB cable',
             detail: 'Plug the phones into each other. No Wi-Fi needed.',
-            onTap: () => _open(context, _UsbPage(engine: engine, files: _files)),
+            onTap: () => _open(context, _UsbPage(engine: engine, files: _unsent)),
           ),
         ],
       ),
@@ -240,7 +250,9 @@ mixin _MethodMixin<T extends StatefulWidget, F> on State<T>, NeedsMixin<T> {
     _sub?.cancel();
     _sub = null;
     try {
-      await openConnection(context, engine, device, files: files);
+      // Files picked before and already sent (or cancelled) are not sent again.
+      final picked = files;
+      await openConnection(context, engine, device, files: picked == null || engine.taken(picked) ? null : picked);
     } finally {
       _connecting = false;
     }

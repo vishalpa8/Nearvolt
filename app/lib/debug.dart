@@ -68,7 +68,9 @@ class _DebugLayerState extends State<DebugLayer> {
     super.dispose();
   }
 
-  void _tapped(PointerUpEvent event) {
+  // On press, before the button acts: afterwards the screen has already changed and the label
+  // would be read from whatever replaced it.
+  void _tapped(PointerDownEvent event) {
     try {
       final label = labelAt(event.position, View.of(context).devicePixelRatio);
       DebugLog.log('tap', label == null ? 'on nothing tappable at ${_point(event.position)}' : '"$label"');
@@ -82,7 +84,7 @@ class _DebugLayerState extends State<DebugLayer> {
   @override
   Widget build(BuildContext context) {
     if (!detailedLogging) return widget.child;
-    return Listener(behavior: HitTestBehavior.translucent, onPointerUp: _tapped, child: widget.child);
+    return Listener(behavior: HitTestBehavior.translucent, onPointerDown: _tapped, child: widget.child);
   }
 }
 
