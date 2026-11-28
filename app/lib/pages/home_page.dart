@@ -150,7 +150,7 @@ class _HomePageState extends State<HomePage> {
         IconButton(
           onPressed: () => widget.engine.shareApp(shareText),
           tooltip: 'Share Nearvolt',
-          icon: const Icon(Icons.send_rounded, color: AppColors.accent),
+          icon: const Icon(Icons.north_east_rounded, color: AppColors.accent),
         ),
       ],
     );
