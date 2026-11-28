@@ -14,7 +14,7 @@ two devices.
 | Brute-forcing the pairing secret | 128-bit secret, constant-time comparison, failed handshakes are ignored and limited to 32 at once, so they can't end Receive |
 | A malicious sender writes outside the download folder | Every path is cleaned: `..`, absolute paths, drive letters, `\`, reserved names and control characters are rejected or replaced |
 | A malicious sender fills the storage | The offer's total size is checked against free space before anything is written |
-| A malicious sender sends malformed data | Batch, file index, offset and length are checked against the offer; messages have size limits; a file is saved only after the bytes on disk match the hash |
+| A malicious sender sends malformed data | Batch, file index, offset and length are checked against the offer; messages have size limits; a range counts only after its bytes match the sender's hash; the file is saved when every range is in |
 | Two offered names map to the same file (`A.txt` and `a.txt`) | Case-insensitive collision detection renames duplicates |
 | Received files executing automatically | Files are never opened automatically |
 | A fake update | See [Updates](#updates) |

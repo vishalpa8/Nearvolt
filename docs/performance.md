@@ -174,7 +174,7 @@ needed to go beyond that.
 |---|---|---|---|
 | 0 | Measure on the devices: CPU per thread, link rate and width, time per stage in the log | both phones on adb | whether either phone is CPU-bound |
 | 1 | Tap and scan: choose the channel and width, then measure each | phase 0 | speed per channel, repeated runs |
-| 2 | Chunk protocol (engine v2): stripe a big file, per-chunk check and resume, hash-based skip; per-batch sync | phase 1 | same file with 1, 4 and 8 streams; a break loses one chunk |
+| 2 | **Done (v5 protocol):** chunk protocol: a big file is striped over all streams in 8 MiB chunks, each chunk checked as it arrives, resume sends only the gaps. Still to do: hash-based skip, per-batch sync | phase 1 | on this PC's loopback one 1.6 GB file: 1 stream about 500 MB/s, 8 streams about 900 MB/s; a break loses only the chunks in flight |
 | 3 | Nearby: upgrade to Wi-Fi Direct after approval | phase 1 | same file over the router against Wi-Fi Direct |
 | 4 | USB: measure, then decide how to use it | a cable | speed at USB 2.0 and 3.x ports |
 | 5 | Many small files: bundle stream | phase 2 | files per second for 2,000 files |

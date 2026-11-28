@@ -16,12 +16,12 @@ use tokio::task::JoinSet;
 
 use super::disk;
 use super::manifest::{plan_batches, FileSet, Manifest, MAX_FILES_PER_BATCH};
-use super::state::hash_range;
+use super::ranges::Ranges;
 use super::{classify, emit, is_fatal, Event, EventSender, FailureKind, Fatal, Stats, Summary};
 use crate::identity::{Fingerprint, Identity};
 use crate::pairing::{self, Secret, Ticket};
 use crate::protocol::{
-    read_msg, write_msg, Control, FileHave, FileHeader, SessionId, HEARTBEAT_INTERVAL, HEARTBEAT_TIMEOUT,
+    read_msg, write_msg, Control, FileHave, FileHeader, SessionId, CHUNK, HEARTBEAT_INTERVAL, HEARTBEAT_TIMEOUT,
     PROTOCOL_VERSION,
 };
 use crate::transport::{peer_fingerprint, Connector, Link, TcpLink, TlsStream};
@@ -293,7 +293,21 @@ struct Job {
     batch: u32,
     file: u32,
     offset: u64,
+    len: u64,
     manifest: Arc<Manifest>,
+}
+
+/// Cuts start..end into chunks, as (offset, length).
+fn chunks(start: u64, end: u64) -> impl Iterator<Item = (u64, u64)> {
+    let mut pos = start;
+    std::iter::from_fn(move || {
+        if pos >= end {
+            return None;
+        }
+        let len = (end - pos).min(CHUNK);
+        pos += len;
+        Some((pos - len, len))
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -401,19 +415,28 @@ async fn session<L: Link>(
                     ensure!(have.len() == offer.files.len(), "the receiver answered for a different file list");
                     let (mut done_files, mut done_bytes) = (0u64, 0u64);
                     for (i, state) in have.iter().enumerate() {
-                        let offset = match state {
+                        let size = offer.files[i].size;
+                        let have = match state {
                             FileHave::Complete => {
                                 done_files += 1;
-                                done_bytes += offer.files[i].size;
+                                done_bytes += size;
                                 continue;
                             }
-                            FileHave::None => 0,
-                            FileHave::Partial { offset } => *offset,
+                            FileHave::None => Ranges::default(),
+                            FileHave::Partial { ranges } => Ranges::from_pairs(ranges.iter().copied()),
                         };
-                        done_bytes += offset;
-                        let _ = jobs.try_send(Job { batch, file: i as u32, offset, manifest: manifest.clone() });
+                        done_bytes += have.total().min(size);
+                        // An empty file still has to be made, so it gets a chunk with nothing in it.
+                        let pieces: Vec<(u64, u64)> = if size == 0 {
+                            vec![(0, 0)]
+                        } else {
+                            have.gaps(size).into_iter().flat_map(|(start, end)| chunks(start, end)).collect()
+                        };
+                        for (offset, len) in pieces {
+                            let _ = jobs.try_send(Job { batch, file: i as u32, offset, len, manifest: manifest.clone() });
+                        }
                     }
-                    let (files, bytes) = (offer.files.len() as u64, offer.total_bytes());
+                                        let (files, bytes) = (offer.files.len() as u64, offer.total_bytes());
                     stats.set_totals(files, bytes);
                     stats.set_done(done_files, done_bytes);
                     (accepted, batch_started, last_progress.1) = (true, Instant::now(), Instant::now());
@@ -423,10 +446,11 @@ async fn session<L: Link>(
                     stats.set_done(files, bytes);
                     remote = bytes.wrapping_add(checked);
                 }
-                Some(Ok(Control::Resend { files })) => {
+                Some(Ok(Control::Redo { file, offset, len })) => {
                     if let Some((batch, manifest)) = &batches.current {
-                        for file in files.into_iter().filter(|&f| (f as usize) < manifest.offer.files.len()) {
-                            let _ = jobs.try_send(Job { batch: *batch, file, offset: 0, manifest: manifest.clone() });
+                        let size = manifest.offer.files.get(file as usize).map(|f| f.size);
+                        if size.is_some_and(|size| offset.checked_add(len).is_some_and(|end| end <= size)) {
+                            let _ = jobs.try_send(Job { batch: *batch, file, offset, len, manifest: manifest.clone() });
                         }
                     }
                 }
@@ -467,7 +491,7 @@ async fn session<L: Link>(
                 }
             }
             Some(stream) = opening.next() => {
-                workers.spawn(worker(stream?, session_id, peer.secret, jobs_rx.clone(), stats.clone()));
+                workers.spawn(worker(stream?, session_id, peer.secret, jobs_rx.clone()));
             }
             Some(joined) = workers.join_next() => {
                 let error = match joined {
@@ -623,7 +647,6 @@ async fn worker(
     session: SessionId,
     secret: Option<Secret>,
     jobs: async_channel::Receiver<Job>,
-    stats: Arc<Stats>,
 ) -> Result<()> {
     let hello = Control::Hello {
         version: PROTOCOL_VERSION,
@@ -634,34 +657,27 @@ async fn worker(
     };
     write_msg(&mut stream, &hello).await?;
     while let Ok(job) = jobs.recv().await {
-        send_file(&mut stream, job, &stats).await?;
+        send_file(&mut stream, job).await?;
     }
     Ok(())
 }
 
-/// One file: its header, the bytes from `offset` to the end, then the hash of the
-/// whole file. The part the receiver already has is read only to hash it.
-async fn send_file(stream: &mut TlsStream, job: Job, stats: &Arc<Stats>) -> Result<()> {
-    let Job { batch, file, offset, manifest } = job;
+/// One chunk: its header, the bytes, then the hash of those bytes.
+async fn send_file(stream: &mut TlsStream, job: Job) -> Result<()> {
+    let Job { batch, file, offset, len, manifest } = job;
     let entry = &manifest.offer.files[file as usize];
-    let size = entry.size;
     let unreadable =
         |e: std::io::Error| Fatal::new(FailureKind::CannotReadFile, format!("can't read {}: {e}", entry.path));
-    let (m, path, stats) = (manifest.clone(), entry.path.clone(), stats.clone());
-    let (mut source, mut hasher) = tokio::task::spawn_blocking(move || -> Result<_> {
-        let source = m.open(file)?;
-        let mut hasher = blake3::Hasher::new();
-        hash_range(&source, 0, offset, &mut hasher, &stats)
-            .map_err(|e| Fatal::new(FailureKind::CannotReadFile, format!("can't read {path}: {e}")))?;
-        Ok((source, hasher))
-    })
-    .await??;
+    let m = manifest.clone();
+    let mut source = tokio::task::spawn_blocking(move || m.open(file)).await??;
 
-    stream.write_all(&FileHeader { batch, file, offset, len: size - offset }.encode()).await?;
-    let mut buf = vec![0u8; BLOCK.min((size - offset) as usize)];
+    stream.write_all(&FileHeader { batch, file, offset, len }.encode()).await?;
+    let mut hasher = blake3::Hasher::new();
+    let end = offset + len;
+    let mut buf = vec![0u8; BLOCK.min(len as usize)];
     let mut pos = offset;
-    while pos < size {
-        let n = (size - pos).min(BLOCK as u64) as usize;
+    while pos < end {
+        let n = (end - pos).min(BLOCK as u64) as usize;
         (source, hasher, buf) = tokio::task::spawn_blocking(move || -> std::io::Result<_> {
             disk::read_exact_at(&source, &mut buf[..n], pos)?;
             hasher.update(&buf[..n]);
@@ -674,11 +690,10 @@ async fn send_file(stream: &mut TlsStream, job: Job, stats: &Arc<Stats>) -> Resu
     }
     stream.write_all(hasher.finalize().as_bytes()).await?;
     // TLS keeps the tail of each write buffered until flushed; without this the
-    // end of a file before an idle period would never leave the device.
+    // end of a chunk before an idle period would never leave the device.
     stream.flush().await?;
     Ok(())
 }
-
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};

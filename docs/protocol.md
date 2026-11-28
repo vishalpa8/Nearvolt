@@ -1,4 +1,4 @@
-# Nearvolt wire protocol, version 4
+# Nearvolt wire protocol, version 5
 
 ## Transport
 
@@ -73,13 +73,13 @@ sender                                               receiver
   | <-- ready | reject ------------------------------- |   asks the user, unless tapped or
   |                                                    |   reconnecting from the same sender
   | -- offer {batch, files[]} -----------------------> |   paths cleaned, space checked
-  | <-- accept {batch, have[]} | reject -------------- |   have[] = none | complete | partial {offset}
+  | <-- accept {batch, have[]} | reject -------------- |   have[] = none | complete | partial {ranges}
   |                                                    |
   | == data streams: hello {secret?, session}, then files ==> |
   |                                                    |
   | -- ping (every 500 ms) --------------------------> |
   | <-- progress {files, bytes, checked} (500 ms) ---- |   progress of the batch, doubles as heartbeat
-  | <-- resend {files[]} (rare) ---------------------- |   a file failed verification on disk
+  | <-- redo {file, offset, len} (rare) -------------- |   a chunk failed its check; send it again
   | <-- complete {batch, files, bytes} --------------- |
   | -- offer {batch: 1, ...} ------------------------> |   the next batch, if any
   |                       ...                          |
@@ -116,9 +116,7 @@ sender                                               receiver
   deleted: a transfer nobody came back for in a week can't be resumed, and they
   would otherwise stay for good. Only files Nearvolt itself named are touched.
 - If nothing moves for 30 seconds while a batch is open, the sender restarts the
-  connection so the receiver can report what's missing. Reading a file back to
-  check it counts as moving (`checked` is the bytes read so far), on both sides,
-  so a long check of a very large file is never mistaken for a stall.
+  connection so the receiver can report what's missing.
 
 The receiver derives each batch's transfer ID as the BLAKE3 hash of the
 sender's certificate fingerprint and the canonical offer. Re-offering the same
@@ -144,9 +142,10 @@ attempt, and the receiver's user has to accept each one.
 
 ## Files on a data stream
 
-Each file is sent whole, by one stream, never split into pieces. The sender
-hands the files of a batch to its streams in offer order, each stream taking the
-next file as soon as it's free, so several files move at once.
+A file is cut into chunks of up to 8 MiB. The sender hands the chunks of a batch to
+its streams in offer order, each stream taking the next chunk as soon as it's free,
+so one big file travels over every stream at once, and small files still move
+back to back. The chunks of a file may arrive in any order.
 
 | Field | Size |
 |---|---|
@@ -155,19 +154,18 @@ next file as soon as it's free, so several files move at once.
 | offset | u64 LE |
 | length | u64 LE |
 | bytes `offset .. offset + length` of the file | length bytes |
-| BLAKE3 hash of the whole file | 32 bytes |
+| BLAKE3 hash of those bytes | 32 bytes |
 
-- `offset` is where the receiver said it stopped (`partial {offset}`), or 0.
-  The sender hashes the first `offset` bytes from its own copy, then hashes the
-  rest as it streams, so the trailing hash always covers the whole file.
-- The receiver rejects a header whose batch, file or length doesn't match the
-  offer, or that skips past what it has.
-- At the end of a file the receiver flushes it to disk, reads it back, hashes
-  it and compares with the sender's hash. Only a match renames the part file to
-  its final name. A mismatch sends `resend`, and the file is written again from
-  its first byte, so a file is never saved unless every byte on disk is right.
-- If a reconnect starts a file again on a new stream while an old stream is
-  still writing it, the old stream's writes no longer count toward progress.
+- A chunk is at most 8 MiB, and an empty file is one chunk of length 0. After a
+  reconnect the receiver reports the ranges it has (`partial {ranges}`) and the
+  sender sends only the gaps.
+- The receiver rejects a header whose batch or file isn't in the offer, or whose
+  range runs past the end of the file or is longer than 64 MiB.
+- Each chunk is hashed as it arrives and compared with the sender's hash. Only a
+  match counts the range as received. A mismatch sends `redo` for that chunk
+  alone; a chunk that keeps arriving damaged (3 times) fails the batch.
+- When every range of a file is in, the receiver flushes the part file and renames
+  it to its final name. A chunk cut off by a broken stream counts for nothing.
 
 ## Receiver journal
 
@@ -177,13 +175,13 @@ receivers can never write the same batch at once.
 
 | Record | Layout |
 |---|---|
-| on disk | `1`, file u32, bytes u64: this many bytes from the file's start are flushed |
+| on disk | `1`, file u32, start u64, end u64: these bytes of the file are flushed and checked |
 | file done | `3`, file u32, name length u16, final relative path |
 
-- Every 2 seconds the receiver notes how much of each file it has written,
-  flushes the part files written since the last checkpoint, then appends an
-  "on disk" record for each. Writers keep going during the flush; the recorded
-  length was taken before it, so it never claims bytes that weren't flushed.
+- Every 2 seconds the receiver flushes the part files written since the last
+  checkpoint, then appends an "on disk" record for each range finished since.
+  Writers keep going during the flush; the ranges were taken before it, so it
+  never claims bytes that weren't flushed.
 - On resume, a file restarts from its last "on disk" length, so at most the
   last 2 seconds are sent again. A file whose done record survived but whose
   rename didn't is renamed then. A truncated final record from a crash is

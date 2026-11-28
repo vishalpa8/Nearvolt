@@ -9,7 +9,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use crate::transfer::FailureKind;
 
 pub const ALPN: &[u8] = b"nearvolt/1";
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 
 /// Both sides send a control message at least this often.
 pub const HEARTBEAT_INTERVAL: Duration = Duration::from_millis(500);
@@ -51,9 +51,9 @@ impl Offer {
 pub enum FileHave {
     None,
     Complete,
-    /// The first `offset` bytes are on disk; send the rest.
+    /// These byte ranges (start, end) are on disk and checked; send the rest.
     Partial {
-        offset: u64,
+        ranges: Vec<(u64, u64)>,
     },
 }
 
@@ -111,9 +111,11 @@ pub enum Control {
         #[serde(default)]
         checked: u64,
     },
-    /// These files failed verification on disk; send them again from the start.
-    Resend {
-        files: Vec<u32>,
+    /// This chunk arrived damaged; send it again.
+    Redo {
+        file: u32,
+        offset: u64,
+        len: u64,
     },
     Complete {
         batch: u32,
@@ -171,10 +173,15 @@ pub async fn read_header<R: AsyncRead + Unpin>(stream: &mut R, buf: &mut [u8; FI
     Ok(true)
 }
 
-/// On a data stream, every file is this header, then `len` bytes of the file
-/// starting at `offset`, then the BLAKE3 hash of the whole file.
+/// On a data stream, every chunk is this header, then `len` bytes of the file
+/// starting at `offset`, then the BLAKE3 hash of those bytes. A big file is sent
+/// as many chunks, over all the streams at once.
 pub const FILE_HEADER_LEN: usize = 24;
 pub const HASH_LEN: usize = 32;
+/// How much of a file one chunk carries.
+pub const CHUNK: u64 = 8 << 20;
+/// The most the receiver accepts in one chunk.
+pub const MAX_CHUNK: u64 = 64 << 20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FileHeader {
@@ -216,8 +223,11 @@ mod tests {
 
     #[test]
     fn control_messages_are_tagged() {
-        let json =
-            serde_json::to_string(&Control::Accept { batch: 1, have: vec![FileHave::Partial { offset: 7 }] }).unwrap();
-        assert_eq!(json, r#"{"type":"accept","batch":1,"have":[{"state":"partial","offset":7}]}"#);
+        let json = serde_json::to_string(&Control::Accept {
+            batch: 1,
+            have: vec![FileHave::Partial { ranges: vec![(0, 7)] }],
+        })
+        .unwrap();
+        assert_eq!(json, r#"{"type":"accept","batch":1,"have":[{"state":"partial","ranges":[[0,7]]}]}"#);
     }
 }

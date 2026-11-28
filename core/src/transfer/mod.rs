@@ -1,6 +1,7 @@
 mod disk;
 mod journal;
 pub mod manifest;
+mod ranges;
 pub mod receiver;
 pub mod sender;
 mod state;
@@ -140,10 +141,6 @@ impl Stats {
 
     pub(crate) fn add_file(&self) {
         self.done_files.fetch_add(1, Ordering::Relaxed);
-    }
-
-    pub(crate) fn add_checked(&self, n: u64) {
-        self.checked.fetch_add(n, Ordering::Relaxed);
     }
 
     pub(crate) fn checked(&self) -> u64 {

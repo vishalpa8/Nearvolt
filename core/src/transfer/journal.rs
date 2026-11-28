@@ -7,12 +7,14 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use super::ranges::Ranges;
+
 /// How long to wait for another receiver that still holds this transfer.
 const LOCK_WAIT: Duration = Duration::from_secs(30);
 
-const DURABLE: u8 = 1;
+const RANGE: u8 = 1;
 const FILE_DONE: u8 = 3;
-const DURABLE_LEN: usize = 13;
+const RANGE_LEN: usize = 21;
 
 pub struct Journal {
     file: Option<File>,
@@ -20,8 +22,8 @@ pub struct Journal {
 
 #[derive(Default)]
 pub struct Replay {
-    /// For each file, how many bytes from its start are on disk.
-    pub durable: HashMap<u32, u64>,
+    /// For each file, the byte ranges that are on disk and checked.
+    pub ranges: HashMap<u32, Ranges>,
     /// Finished files and the name each was saved under.
     pub done: Vec<(u32, String)>,
 }
@@ -52,13 +54,14 @@ impl Journal {
         Ok((Self { file: Some(file) }, replay))
     }
 
-    /// Records that the first `bytes` of `file` are on disk. Call only after the
-    /// part file was flushed, then [`Journal::sync`].
-    pub fn durable(&mut self, file: u32, bytes: u64) -> io::Result<()> {
-        let mut rec = [0u8; DURABLE_LEN];
-        rec[0] = DURABLE;
+    /// Records that bytes `start..end` of `file` are on disk and checked. Call only
+    /// after the part file was flushed, then [`Journal::sync`].
+    pub fn range(&mut self, file: u32, start: u64, end: u64) -> io::Result<()> {
+        let mut rec = [0u8; RANGE_LEN];
+        rec[0] = RANGE;
         rec[1..5].copy_from_slice(&file.to_le_bytes());
-        rec[5..13].copy_from_slice(&bytes.to_le_bytes());
+        rec[5..13].copy_from_slice(&start.to_le_bytes());
+        rec[13..21].copy_from_slice(&end.to_le_bytes());
         self.file()?.write_all(&rec)
     }
 
@@ -96,12 +99,13 @@ fn parse(bytes: &[u8]) -> (Replay, usize) {
     let mut pos = 0;
     loop {
         match bytes.get(pos) {
-            Some(&DURABLE) if bytes.len() >= pos + DURABLE_LEN => {
-                let r = &bytes[pos..pos + DURABLE_LEN];
+            Some(&RANGE) if bytes.len() >= pos + RANGE_LEN => {
+                let r = &bytes[pos..pos + RANGE_LEN];
                 let file = u32::from_le_bytes(r[1..5].try_into().unwrap());
-                let durable = u64::from_le_bytes(r[5..13].try_into().unwrap());
-                replay.durable.insert(file, durable);
-                pos += DURABLE_LEN;
+                let start = u64::from_le_bytes(r[5..13].try_into().unwrap());
+                let end = u64::from_le_bytes(r[13..21].try_into().unwrap());
+                replay.ranges.entry(file).or_default().insert(start, end);
+                pos += RANGE_LEN;
             }
             Some(&FILE_DONE) if bytes.len() >= pos + 7 => {
                 let file = u32::from_le_bytes(bytes[pos + 1..pos + 5].try_into().unwrap());
@@ -124,25 +128,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn replay_keeps_the_latest_offset_and_drops_a_torn_tail() {
+    fn replay_merges_the_ranges_and_drops_a_torn_tail() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("journal");
         {
             let (mut j, replay) = Journal::open(&path).unwrap();
-            assert!(replay.durable.is_empty());
-            j.durable(0, 4096).unwrap();
-            j.durable(0, 9000).unwrap();
-            j.durable(2, 10).unwrap();
+            assert!(replay.ranges.is_empty());
+            j.range(0, 0, 4096).unwrap();
+            j.range(0, 8000, 9000).unwrap();
+            j.range(0, 4096, 5000).unwrap();
+            j.range(2, 0, 10).unwrap();
             j.sync().unwrap();
             j.file_done(1, "dir/a.txt").unwrap();
         }
         let mut bytes = fs::read(&path).unwrap();
-        bytes.extend_from_slice(&[DURABLE, 9, 9]);
+        bytes.extend_from_slice(&[RANGE, 9, 9]);
         fs::write(&path, &bytes).unwrap();
 
         let (_, replay) = Journal::open(&path).unwrap();
-        assert_eq!(replay.durable[&0], 9000);
-        assert_eq!(replay.durable[&2], 10);
+        assert_eq!(replay.ranges[&0].to_pairs(), vec![(0, 5000), (8000, 9000)]);
+        assert_eq!(replay.ranges[&2].to_pairs(), vec![(0, 10)]);
         assert_eq!(replay.done, vec![(1, "dir/a.txt".to_string())]);
         assert_eq!(fs::metadata(&path).unwrap().len() as usize, bytes.len() - 3);
     }

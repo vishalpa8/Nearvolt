@@ -482,7 +482,7 @@ async fn serve(
         Event::Connected { peer: sender_name, route: from.map(|ip| ip.to_string()).unwrap_or_default() },
     );
 
-    let (resend_tx, mut resend_rx) = mpsc::unbounded_channel();
+    let (redo_tx, mut redo_rx) = mpsc::unbounded_channel();
     let mut readers = JoinSet::new();
     let mut heartbeat = tokio::time::interval(HEARTBEAT_INTERVAL);
     let mut complete: Option<watch::Receiver<bool>> = None;
@@ -523,10 +523,10 @@ async fn serve(
                 None => bail!("the control connection closed"),
             },
             Some(stream) = data_rx.recv() => {
-                readers.spawn(read_data(stream, shared.clone(), resend_tx.clone()));
+                readers.spawn(read_data(stream, shared.clone(), redo_tx.clone()));
             }
-            Some(files) = resend_rx.recv() => {
-                tokio::time::timeout(HEARTBEAT_TIMEOUT, write_msg(&mut send, &Control::Resend { files })).await??;
+            Some((file, offset, len)) = redo_rx.recv() => {
+                tokio::time::timeout(HEARTBEAT_TIMEOUT, write_msg(&mut send, &Control::Redo { file, offset, len })).await??;
             }
             () = finished(&mut complete) => {
                 complete = None;
@@ -628,9 +628,9 @@ async fn read_loop(mut recv: ReadHalf<TlsStream>, tx: mpsc::UnboundedSender<Resu
 
 /// Receives whole files from one data stream: each one is written as it
 /// arrives, then verified on disk against the sender's hash.
-async fn read_data(stream: TlsStream, shared: Arc<Shared>, resend: mpsc::UnboundedSender<Vec<u32>>) -> Result<()> {
+async fn read_data(stream: TlsStream, shared: Arc<Shared>, redo: mpsc::UnboundedSender<(u32, u64, u64)>) -> Result<()> {
     let mut batch = None;
-    read_data_for(stream, shared, resend, &mut batch).await.map_err(|e| match batch {
+    read_data_for(stream, shared, redo, &mut batch).await.map_err(|e| match batch {
         // Which batch it was working on, so a late error from an old batch can't end the next one.
         Some(b) => e.context(InBatch(b)),
         None => e,
@@ -665,7 +665,7 @@ impl std::fmt::Display for InBatch {
 async fn read_data_for(
     mut stream: TlsStream,
     shared: Arc<Shared>,
-    resend: mpsc::UnboundedSender<Vec<u32>>,
+    redo: mpsc::UnboundedSender<(u32, u64, u64)>,
     working_on: &mut Option<u32>,
 ) -> Result<()> {
     let mut header = [0u8; FILE_HEADER_LEN];
@@ -676,39 +676,38 @@ async fn read_data_for(
         let end = h.offset.checked_add(h.len).context("file data has an impossible length")?;
         // Data from an earlier batch, or for a file already saved, is read and dropped.
         let state = shared.active.lock().await.as_ref().filter(|a| a.batch == h.batch).map(|a| a.state.clone());
-        let target = match state {
-            Some(state) => {
-                let st = state.clone();
-                let writing = tokio::task::spawn_blocking(move || st.begin(h.file, h.offset, h.len))
-                    .await?
-                    .map_err(on_this_phone)?;
-                writing.map(|w| (state, Arc::new(w)))
-            }
+        let mut chunk = match state {
+            Some(state) => tokio::task::spawn_blocking(move || state.begin(h.file, h.offset, h.len))
+                .await?
+                .map_err(on_this_phone)?,
             None => None,
         };
         let mut pos = h.offset;
         while pos < end {
             let n = (end - pos).min(BLOCK as u64) as usize;
             stream.read_exact(&mut buf[..n]).await?;
-            if let Some((state, writing)) = &target {
-                let (st, w, data) = (state.clone(), writing.clone(), buf);
-                buf = tokio::task::spawn_blocking(move || st.write(h.file, &w, pos, &data[..n]).map(|()| data))
-                    .await?
-                    .map_err(on_this_phone)?;
+            if let Some(mut c) = chunk.take() {
+                let data = buf;
+                (chunk, buf) = tokio::task::spawn_blocking(move || {
+                    let written = c.write(pos, &data[..n]);
+                    written.map(|()| (Some(c), data))
+                })
+                .await?
+                .map_err(on_this_phone)?;
             }
             pos += n as u64;
         }
         let mut hash = [0u8; HASH_LEN];
         stream.read_exact(&mut hash).await?;
-        if let Some((state, _)) = target {
-            if !tokio::task::spawn_blocking(move || state.finish(h.file, hash)).await?.map_err(on_this_phone)? {
-                let _ = resend.send(vec![h.file]);
+        if let Some(c) = chunk {
+            let (file, offset, len) = (c.index(), c.offset(), c.len());
+            if !tokio::task::spawn_blocking(move || c.finish(hash)).await?.map_err(on_this_phone)? {
+                let _ = redo.send((file, offset, len));
             }
         }
     }
     Ok(())
 }
-
 /// A failure on this phone, as opposed to the network: reconnecting can't fix it,
 /// so it's marked as one that retrying won't help, with what went wrong.
 fn on_this_phone(error: anyhow::Error) -> anyhow::Error {

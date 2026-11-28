@@ -232,6 +232,39 @@ async fn a_cut_in_the_middle_of_a_file_resumes_instead_of_restarting() {
     assert_same(&src.join("album"), &dst.join("album"));
 }
 
+/// A file of many chunks goes over several streams at once, so a cut leaves holes in
+/// the middle, and the resume sends only what is missing.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_big_file_is_sent_in_chunks_and_a_cut_leaves_only_the_holes_to_resend() {
+    const HUGE: usize = 80 * 1024 * 1024 + 7;
+    let tmp = tempfile::tempdir().unwrap();
+    let (src, dst) = (tmp.path().join("src"), tmp.path().join("dst"));
+    fs::create_dir_all(src.join("album")).unwrap();
+    let data: Vec<u8> = (0..HUGE).map(|i| (i.wrapping_mul(2654435761) >> 7) as u8).collect();
+    fs::write(src.join("album/big.bin"), &data).unwrap();
+    let rx = receiver(&dst, true);
+    let ticket = rx.ticket().public();
+    let link = FlakyLink {
+        inner: TcpLink::new(ticket.addrs.clone()),
+        budget: Arc::new(AtomicI64::new(30 * 1024 * 1024)),
+        cut: Arc::new(AtomicBool::new(false)),
+        written: Arc::new(AtomicI64::new(0)),
+    };
+    let (cut, written) = (link.cut.clone(), link.written.clone());
+    let peer = Peer { link, name: ticket.name.clone(), fingerprint: Some(ticket.fingerprint), secret: ticket.secret };
+    let asked = Arc::new(AtomicU32::new(0));
+    let (received, sent) = tokio::join!(
+        rx.run(approve_all(asked.clone()), Arc::new(Stats::default()), None),
+        send_album(&peer, &src, None)
+    );
+    received.unwrap();
+    sent.unwrap();
+
+    assert!(cut.load(Ordering::SeqCst), "the link should have been cut");
+    let on_the_wire = written.load(Ordering::SeqCst) as usize;
+    assert!(on_the_wire < HUGE + HUGE / 2, "sent {on_the_wire} bytes for a {HUGE}-byte file: it restarted");
+    assert!(fs::read(dst.join("album/big.bin")).unwrap() == data, "the file arrived different");
+}
 /// Opens the first file for real and fails every other, as when a picked file
 /// is deleted or its permission is withdrawn in the middle of sending.
 struct HalfGone(std::path::PathBuf);

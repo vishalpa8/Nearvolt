@@ -21,7 +21,7 @@ flowchart TB
         UI["Flutter UI (app/lib): Send, Receive, the connection"]
         subgraph Core["Rust engine (core/, through ffi/)"]
             Session["Connection: batches, heartbeat, reconnect, resume"]
-            Engine["Transfer: manifest, whole files on parallel streams, journal"]
+            Engine["Transfer: manifest, 8 MiB chunks on parallel streams, journal"]
             Transport["Transport: TLS 1.3 over TCP or USB streams"]
         end
         Platform["Kotlin (app/android): radios, file picker, foreground service, updates"]
@@ -110,26 +110,26 @@ stateDiagram-v2
 flowchart LR
     subgraph Sender
         M["Batch: every file, size, time"] --> Q["File queue minus what the receiver has"]
-        Q --> W["8 workers: read, hash, send each file whole"]
+        Q --> W["8 workers: read, hash, send chunks"]
     end
     W -->|"parallel TLS streams"| R
     subgraph Receiver
         R["Stream readers"] --> D["Sequential write into a .nvpart file"]
-        D --> J["Journal: bytes on disk, every 2 seconds"]
-        J --> F["File complete: flush, re-read, check the sender's hash, rename, keep timestamp"]
+        D --> J["Journal: ranges on disk, every 2 seconds"]
+        J --> F["All chunks in: flush, rename, keep timestamp"]
     end
 ```
 
 - One connection carries every batch. There's no handshake per file, so
   thousands of small files flow back to back on the same streams.
-- Each file goes whole on one stream, never split. Eight streams carry eight
-  files at once; a single file uses one stream.
+- A file is cut into 8 MiB chunks, so even one big file uses all eight streams.
+  Each chunk carries its own BLAKE3 hash and is checked as it arrives.
 - Picked files are opened one at a time, through file descriptors from Android's
   file picker, so the app needs no storage permission.
-- A file is saved under its real name only after it has been flushed, read back
-  from disk and matched against the sender's BLAKE3 hash of the whole file.
-- On resume, the receiver reports how many bytes of each file are safely on
-  disk, and the sender continues from there.
+- A file is saved under its real name only after every chunk of it matched its
+  BLAKE3 hash and the part file was flushed.
+- On resume, the receiver reports which ranges of each file are safely on disk,
+  and the sender sends only the gaps.
 
 ## Code layout
 
