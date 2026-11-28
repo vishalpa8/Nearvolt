@@ -26,9 +26,15 @@ two devices.
   app's private storage, which other apps can't read.
 - A private ticket carries the receiver's fingerprint and a fresh 128-bit secret.
   The QR code and the NFC tap each get their own secret. The QR secret proves the
-  sender saw the screen, and the receiver's user still accepts. The tap secret
-  is served only over NFC, at a few centimetres, so holding the phones together
-  is the consent and there's no prompt.
+    sender saw the screen, and the tap secret is served only over NFC, at a few
+    centimetres. Scanning or tapping is the consent, so neither asks the
+    receiver's user again. The trade-off: anyone who can photograph the QR code
+    while it is on screen can connect, so keep it from view of strangers.
+  - A phone found in a Nearby list (or over USB) has no secret, so both screens show a
+    4-digit code and the receiver's user compares it while accepting. The sender has
+    no second confirmation. The trade-off, chosen to keep pairing to one tap: if
+    another phone advertises under the receiver's name, the sender is told only by the
+    code on its screen, and nothing stops it unless the user notices.
 - The public ticket advertised over the local network and Bluetooth has no
   secret, so connections started from it always go through the code. It also
   leaves out the Wi-Fi Direct group's name and password: everyone on the network

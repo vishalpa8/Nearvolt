@@ -226,7 +226,7 @@ impl Receiver {
                             // phone, a different one waits its turn. The same phone asking
                             // again, or a tap, takes over.
                             let deciding = *shared.deciding.lock().unwrap();
-                            if deciding.is_some_and(|f| f != authed.sender) && !authed.tapped {
+                            if deciding.is_some_and(|f| f != authed.sender) && !authed.consented {
                                 let busy = reject(FailureKind::Busy, "Another phone is asking to connect.");
                                 tokio::spawn(async move { write_msg(&mut authed.stream, &busy).await });
                                 continue;
@@ -321,8 +321,8 @@ struct Authed {
     session: Option<SessionId>,
     /// Present when the sender pairs by code instead of the ticket secret.
     commitment: Option<[u8; 32]>,
-    /// The sender got the ticket by tapping phones.
-    tapped: bool,
+    /// The sender scanned this phone's QR code or tapped it, which is consent enough.
+    consented: bool,
     /// Where the sender connected from, when it came over a network.
     from: Option<std::net::IpAddr>,
 }
@@ -359,9 +359,11 @@ async fn authenticate(
         let _ = write_msg(&mut stream, &reject(FailureKind::OldVersion, "Update Nearvolt on both devices.")).await;
         bail!("unsupported protocol version {version}");
     }
-    let tapped = offered.is_some_and(|s| constant_time_eq(&s, &secrets[1]));
+    // Scanning the QR code or tapping the phones together is the consent: the sender had to
+    // see this phone's screen or touch it, so nobody is asked again.
+    let consented = offered.is_some_and(|s| constant_time_eq(&s, &secrets[0]) || constant_time_eq(&s, &secrets[1]));
     let allowed = match (offered, session) {
-        (Some(offered), _) => tapped || constant_time_eq(&offered, &secrets[0]),
+        (Some(_), _) => consented,
         // A data stream; the caller checks its session ID and certificate.
         (None, Some(_)) => true,
         (None, None) => allow_code && commitment.is_some(),
@@ -373,7 +375,7 @@ async fn authenticate(
     }
     let sender_name = pairing::clean_name(&device_name);
     let commitment = if offered.is_none() { commitment } else { None };
-    Ok(Authed { stream, sender, sender_name, session, commitment, tapped, from })
+    Ok(Authed { stream, sender, sender_name, session, commitment, consented, from })
 }
 
 fn reject(kind: FailureKind, reason: &str) -> Control {
@@ -404,7 +406,7 @@ async fn serve(
     mut data_rx: mpsc::Receiver<TlsStream>,
     mut ending: watch::Receiver<bool>,
 ) -> Result<Outcome> {
-    let Authed { stream, sender, sender_name, commitment, tapped, from, .. } = authed;
+    let Authed { stream, sender, sender_name, commitment, consented, from, .. } = authed;
     let (mut recv, mut send) = tokio::io::split(stream);
     let nonce = commitment.map(|_| pairing::new_secret());
     let welcome = Control::Welcome { device_name: shared.options.device_name.clone(), session, nonce };
@@ -430,7 +432,7 @@ async fn serve(
     let (control_tx, mut control_rx) = mpsc::unbounded_channel();
     let _reader = AbortOnDrop(tokio::spawn(read_loop(recv, control_tx)));
 
-    let accepted = tapped || *shared.trusted.lock().unwrap() == Some(sender);
+    let accepted = consented || *shared.trusted.lock().unwrap() == Some(sender);
     if !accepted {
         let id = shared.next_request.fetch_add(1, Ordering::Relaxed);
         *shared.deciding.lock().unwrap() = Some(sender);

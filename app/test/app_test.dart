@@ -206,28 +206,13 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('a code the sender must compare holds back files and Add files until it matches', (tester) async {
+  testWidgets('a code is shown while the receiver decides, then files go with no second check', (tester) async {
     await connectByCode(tester);
-    expect(find.text("Does $rahulName show this same code?"), findsOneWidget);
-    expect(find.text('Connected · check the code'), findsOneWidget);
-    expect(engine.queued, isEmpty);
-    expect(find.text('Add files'), findsNothing);
-
-    await tester.tap(find.text('It matches'));
-    await tester.pumpAndSettle();
+    // The receiver accepted: the sender goes straight on, with nothing more to tap.
+    expect(find.text('It matches'), findsNothing);
+    expect(find.text("It doesn't match"), findsNothing);
     expect(engine.queued, [album]);
     expect(find.text('Add files'), findsOneWidget);
-    expect(find.text('It matches'), findsNothing);
-  });
-
-  testWidgets('a code that does not match disconnects and sends nothing', (tester) async {
-    await connectByCode(tester);
-    await tester.tap(find.text("It doesn't match"));
-    await tester.pump();
-
-    expect(engine.disconnects, 1);
-    expect(engine.queued, isEmpty);
-    expect(find.textContaining('this may not be $rahulName'), findsOneWidget);
   });
 
   testWidgets('Cancel before the other phone accepts leaves the screen at once', (tester) async {

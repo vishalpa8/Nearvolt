@@ -77,11 +77,13 @@ Golden screenshots of each one are in [app/test/goldens](../app/test/goldens).
 5. **Receive.** A large QR code, the name others see, and the ways to connect.
 6. **Receive prompt.** One sheet, "Rahul's Pixel 9 wants to connect and send you
    files", with the 4-digit code when there is one, and Accept and Decline.
-   Asked once per connection, and never after a tap.
+   Asked once per connection, and never after a scan or a tap.
 7. **Connection.** Both phones: who they're connected to and how, the batch on
    the move as a large progress ring with percent, speed, time left and file
    count, and every batch so far, newest first. While the receiver decides it
-   shows the 4-digit code to compare. "Connected" appears only once the other
+   shows the 4-digit code to compare (after a scan it says it is waiting for the other
+   phone to accept). The sender has no code to confirm: comparing it on the receiver,
+   when accepting, is the one check. "Connected" appears only once the other
    phone has accepted. Until then, and while reconnecting, the screen offers
    Cancel (or Stop reconnecting) and no Add files. Once connected, the sender's
    "Add files" asks Files or Folder and queues them; "Disconnect" on either

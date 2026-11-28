@@ -65,7 +65,7 @@ fn drain(events: &mut mpsc::UnboundedReceiver<Event>) -> Vec<Event> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn qr_ticket_connects_after_the_user_accepts() {
+async fn a_scanned_qr_code_connects_without_asking() {
     let tmp = tempfile::tempdir().unwrap();
     let (src, dst) = (tmp.path().join("src"), tmp.path().join("dst"));
     sample_files(&src);
@@ -79,7 +79,7 @@ async fn qr_ticket_connects_after_the_user_accepts() {
     );
     assert_eq!(received.unwrap().files, 3);
     assert_eq!(sent.unwrap().bytes, BIG as u64 + 14);
-    assert_eq!(asked.load(Ordering::SeqCst), 1);
+    assert_eq!(asked.load(Ordering::SeqCst), 0, "scanning the code is the consent");
     assert_same(&src.join("album"), &dst.join("album"));
     assert!(!dst.join(".nearvolt").exists(), "journal should be cleaned up");
 }
@@ -91,8 +91,9 @@ async fn a_user_who_takes_a_few_seconds_to_accept_is_asked_once() {
     let tmp = tempfile::tempdir().unwrap();
     let (src, dst) = (tmp.path().join("src"), tmp.path().join("dst"));
     sample_files(&src);
-    let rx = receiver(&dst, false);
-    let peer = Peer::from_ticket(&rx.ticket());
+    // A phone found in a list (no secret) is the one the user is asked about.
+    let rx = receiver(&dst, true);
+    let peer = Peer::from_ticket(&rx.ticket().public());
     let asked = Arc::new(AtomicU32::new(0));
     let count = asked.clone();
     let approve: Approver = Arc::new(move |_| {
@@ -169,8 +170,8 @@ async fn several_batches_share_one_connection_and_one_approval() {
     let (src, dst) = (tmp.path().join("src"), tmp.path().join("dst"));
     sample_files(&src);
     fs::write(src.join("second.txt"), b"queued after the album").unwrap();
-    let rx = receiver(&dst, false);
-    let peer = Peer::from_ticket(&rx.ticket());
+    let rx = receiver(&dst, true);
+    let peer = Peer::from_ticket(&rx.ticket().public());
     let asked = Arc::new(AtomicU32::new(0));
 
     let (commands, queue) = mpsc::unbounded_channel();
@@ -203,8 +204,8 @@ async fn a_cut_in_the_middle_of_a_file_resumes_instead_of_restarting() {
     let tmp = tempfile::tempdir().unwrap();
     let (src, dst) = (tmp.path().join("src"), tmp.path().join("dst"));
     sample_files(&src);
-    let rx = receiver(&dst, false);
-    let ticket = rx.ticket();
+    let rx = receiver(&dst, true);
+    let ticket = rx.ticket().public();
     let link = FlakyLink {
         inner: TcpLink::new(ticket.addrs.clone()),
         budget: Arc::new(AtomicI64::new(5 * 1024 * 1024)),

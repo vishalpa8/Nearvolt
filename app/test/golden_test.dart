@@ -122,12 +122,6 @@ void main() {
     });
   }
 
-  testWidgets('codecheck', (tester) async {
-    await phone(tester, connection(_connected.copyWith(code: '4821')));
-    await tester.pumpAndSettle();
-    await shoot('codecheck');
-  });
-
   testWidgets('problems', (tester) async {
     await phone(tester, screen(ReceivePage(engine: engine, profile: profile)));
     engine.receiving!.add(const Connection(ticket: _ticket, problems: [SetupProblem.otherNetworks]));

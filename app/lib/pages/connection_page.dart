@@ -44,13 +44,6 @@ class _ConnectionPageState extends State<ConnectionPage> {
   var _disconnected = false;
   late var _pending = widget.files;
 
-  /// Phones paired by a code (Nearby list, USB) must have it compared on this screen
-  /// too, since nothing else proves the phone that answered is the one picked.
-  var _codeChecked = false;
-
-  bool _needsCodeCheck(Connection c) =>
-      widget.sending && c.phase == LinkPhase.connected && c.code != null && !_codeChecked;
-
   @override
   void initState() {
     super.initState();
@@ -59,9 +52,9 @@ class _ConnectionPageState extends State<ConnectionPage> {
   }
 
   void _update(Connection c) {
-    // Files chosen first wait for the connection to be fully set up, and for the code to
-    // be checked if there is one.
-    if (c.phase == LinkPhase.connected && !_needsCodeCheck(c)) _sendPending();
+    // Files chosen first wait for the connection to be fully set up. A code, if there was
+    // one, was compared on the receiver's screen when it accepted.
+    if (c.phase == LinkPhase.connected) _sendPending();
     if (mounted) setState(() => _c = c);
   }
 
@@ -78,17 +71,6 @@ class _ConnectionPageState extends State<ConnectionPage> {
 
   void _tell(String message) {
     if (mounted) showNote(context, message);
-  }
-
-  void _codeMatches() {
-    setState(() => _codeChecked = true);
-    _sendPending();
-  }
-
-  void _codeDiffers() {
-    setState(() => _leaving = true);
-    widget.engine.disconnect();
-    _tell("The codes differ, so this may not be ${_c.peer}. Nothing was sent.");
   }
 
   @override
@@ -150,7 +132,6 @@ class _ConnectionPageState extends State<ConnectionPage> {
       LinkPhase.connecting => ('Connecting…', AppColors.accent),
       LinkPhase.waiting => ('Waiting for ${c.peer} to accept', AppColors.accent),
       LinkPhase.connected when _leaving => ('Disconnecting…', AppColors.warning),
-      LinkPhase.connected when _needsCodeCheck(c) => ('Connected · check the code', AppColors.accent),
       LinkPhase.connected => (['Connected', if (c.link.isNotEmpty) c.link, 'Encrypted'].join(' · '), AppColors.success),
       LinkPhase.reconnecting => ('Link dropped · Reconnecting…', AppColors.warning),
       LinkPhase.ended => (c.endedByPeer ? '${c.peer} disconnected' : 'Disconnected', AppColors.textSecondary),
@@ -197,7 +178,7 @@ class _ConnectionPageState extends State<ConnectionPage> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   // Files can be added once the connection is set up, not before.
-                  if (widget.sending && c.phase == LinkPhase.connected && !_needsCodeCheck(c))
+                  if (widget.sending && c.phase == LinkPhase.connected)
                     FilledButton.icon(
                       onPressed: _leaving ? null : _add,
                       icon: const Icon(Icons.add_rounded),
@@ -223,31 +204,6 @@ class _ConnectionPageState extends State<ConnectionPage> {
     final p = c.progress;
     if (c.phase == LinkPhase.waiting && c.code != null) {
       return CodeBadge(code: c.code!, caption: 'Check that ${c.peer} shows the same code, then accept there');
-    }
-    if (_needsCodeCheck(c) && !_leaving) {
-      return Column(
-        children: [
-          CodeBadge(code: c.code!, caption: 'Does ${c.peer} show this same code?'),
-          const SizedBox(height: Space.l),
-          Text(
-            'If the codes differ, another phone may be pretending to be ${c.peer}.',
-            style: text.bodySmall,
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: Space.l),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(onPressed: _codeDiffers, child: const Text("It doesn't match")),
-              ),
-              const SizedBox(width: Space.m),
-              Expanded(
-                child: FilledButton(onPressed: _codeMatches, child: const Text('It matches')),
-              ),
-            ],
-          ),
-        ],
-      );
     }
     if (p != null && c.open) {
       return Column(

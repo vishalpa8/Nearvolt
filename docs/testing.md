@@ -102,7 +102,7 @@ Start with a fresh install, Bluetooth off.
 | 2 | On A, tap B. | Both screens show the same 4-digit code. B accepts; A shows "Connected". |
 | 3 | On A, tap Add files and pick some. Before they finish, add more. | The first batch shows "Sending", the second "Waiting its turn", then each "Sent and verified". B lists the same as "Received and verified". Hashes match. |
 | 4 | Both with Wi-Fi on but not connected to the same network (or none). B opens Receive. | B appears on A marked "Bluetooth". Connecting joins B's Wi-Fi Direct group with no pop-up; then as in 2 and 3. |
-| 5 | B opens Receive. On A, Send › Scan code, scan B's QR code. | No code to compare; B is asked once to accept. |
+| 5 | B opens Receive. On A, Send › Scan code, scan B's QR code. | No code to compare, and B is not asked: scanning is the consent. A shows "Connected" at once. |
 | 6 | B opens Receive. On A, Send › Tap phones, then hold the backs together. | Connected at once, with no prompt on B. |
 | 6a | As 6, but first choose files on A's Send page. | The files start sending as soon as A says Connected, with no "Add files" tap. |
 | 6b | On A, choose a way to connect, then keep B's screen on its accept prompt for 10 seconds before accepting. | A shows "Connecting…" or "Waiting for B to accept" with Cancel and no Add files. B is asked once. After accepting, A says Connected and shows Add files and Disconnect. |
