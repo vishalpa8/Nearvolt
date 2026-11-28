@@ -1,19 +1,11 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show ValueNotifier;
 import 'package:nearvolt/engine/engine.dart';
 import 'package:nearvolt/engine/models.dart';
 
 const profile = DeviceProfile(name: 'Pixel 8', kind: DeviceKind.phone, hasNfc: true, version: '0.1.0');
 
-const rahul = NearbyDevice(
-  id: 'a',
-  name: "Rahul's Pixel 9",
-  kind: DeviceKind.phone,
-  link: 'Same Wi-Fi',
-  ticket: 'NV1A',
-);
-const tablet = NearbyDevice(id: 'b', name: 'Studio tablet', kind: DeviceKind.tablet, link: 'Bluetooth');
+const rahul = Peer(id: 'a', name: "Rahul's Pixel 9", kind: DeviceKind.phone, link: 'Same Wi-Fi', ticket: 'NV1A');
 
 const album = Selection(
   token: 7,
@@ -27,17 +19,15 @@ const album = Selection(
 
 /// A scripted engine: tests push what the platform and Rust would report.
 class FakeEngine implements TransferEngine {
-  final devices = StreamController<List<NearbyDevice>>.broadcast();
   final tapped = StreamController<String>.broadcast();
-  final usb = StreamController<NearbyDevice?>.broadcast();
+  final usb = StreamController<Peer?>.broadcast();
   StreamController<Connection>? sending;
   StreamController<Connection>? receiving;
-  NearbyDevice? connectedTo;
+  Peer? connectedTo;
   final queued = <Selection>[];
   bool? answered;
   int? answeredId;
   int disconnects = 0;
-  int discoveries = 0;
   int receiveSessions = 0;
   int scans = 0;
   int updateChecks = 0;
@@ -70,23 +60,15 @@ class FakeEngine implements TransferEngine {
   Future<void> fix(Need need) async => fixed.add(need);
 
   @override
-  final ValueNotifier<bool> searchFailed = ValueNotifier<bool>(false);
-
-  @override
-  Stream<List<NearbyDevice>> nearby() {
-    discoveries++;
-    return devices.stream;
-  }
-
-  @override
   Stream<String> taps() => tapped.stream;
 
   @override
-  Stream<NearbyDevice?> usbPeer() => usb.stream;
+  Stream<Peer?> usbPeer() => usb.stream;
 
   @override
-  NearbyDevice deviceFor(String ticket) =>
-      NearbyDevice(id: ticket, name: 'Tapped phone', kind: DeviceKind.phone, link: 'NFC', ticket: ticket);
+  Peer deviceFor(String ticket) => ticket == rahul.ticket
+      ? rahul
+      : Peer(id: ticket, name: 'Tapped phone', kind: DeviceKind.phone, link: 'NFC', ticket: ticket);
 
   @override
   Future<Selection?> pickFiles() async => album;
@@ -101,7 +83,7 @@ class FakeEngine implements TransferEngine {
   }
 
   @override
-  Stream<Connection> connect(NearbyDevice to) {
+  Stream<Connection> connect(Peer to) {
     connectedTo = to;
     return (sending = StreamController()).stream;
   }

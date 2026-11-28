@@ -113,17 +113,12 @@ enum Requirement {
   permissions,
   /// The app's settings page, for permissions refused for good.
   appSettings,
-  bluetooth,
   wifi,
   location,
   nfc;
 }
 
 enum PlatformEventKind {
-  /// A device with Receive open was found (`id`, `name`, `deviceKind`, `link`,
-  /// and `ticket` when it was found on the local network).
-  receiverFound,
-  receiverLost,
   /// The phones were tapped together; `ticket` carries the receiver's code.
   ticketTapped,
   /// A USB link to another phone is ready: `fd` is a socket the engine owns,
@@ -132,9 +127,7 @@ enum PlatformEventKind {
   usbConnected,
   usbDisconnected,
   /// Update download progress, 0 to 1.
-  updateProgress,
-  /// Searching the local network for receivers couldn't start, even after retries.
-  searchFailed;
+  updateProgress;
 }
 
 class DeviceInfo {
@@ -142,7 +135,6 @@ class DeviceInfo {
     required this.name,
     required this.kind,
     required this.hasNfc,
-    required this.hasBluetooth,
     required this.dataDir,
     required this.downloadDir,
     required this.journalDir,
@@ -155,8 +147,6 @@ class DeviceInfo {
   String kind;
 
   bool hasNfc;
-
-  bool hasBluetooth;
 
   String dataDir;
 
@@ -171,7 +161,6 @@ class DeviceInfo {
       name,
       kind,
       hasNfc,
-      hasBluetooth,
       dataDir,
       downloadDir,
       journalDir,
@@ -188,11 +177,10 @@ class DeviceInfo {
       name: result[0]! as String,
       kind: result[1]! as String,
       hasNfc: result[2]! as bool,
-      hasBluetooth: result[3]! as bool,
-      dataDir: result[4]! as String,
-      downloadDir: result[5]! as String,
-      journalDir: result[6]! as String,
-      versionName: result[7]! as String,
+      dataDir: result[3]! as String,
+      downloadDir: result[4]! as String,
+      journalDir: result[5]! as String,
+      versionName: result[6]! as String,
     );
   }
 
@@ -205,7 +193,7 @@ class DeviceInfo {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(name, other.name) && _deepEquals(kind, other.kind) && _deepEquals(hasNfc, other.hasNfc) && _deepEquals(hasBluetooth, other.hasBluetooth) && _deepEquals(dataDir, other.dataDir) && _deepEquals(downloadDir, other.downloadDir) && _deepEquals(journalDir, other.journalDir) && _deepEquals(versionName, other.versionName);
+    return _deepEquals(name, other.name) && _deepEquals(kind, other.kind) && _deepEquals(hasNfc, other.hasNfc) && _deepEquals(dataDir, other.dataDir) && _deepEquals(downloadDir, other.downloadDir) && _deepEquals(journalDir, other.journalDir) && _deepEquals(versionName, other.versionName);
   }
 
   @override
@@ -214,7 +202,7 @@ class DeviceInfo {
 
   @override
   String toString() {
-    return 'DeviceInfo(name: $name, kind: $kind, hasNfc: $hasNfc, hasBluetooth: $hasBluetooth, dataDir: $dataDir, downloadDir: $downloadDir, journalDir: $journalDir, versionName: $versionName)';
+    return 'DeviceInfo(name: $name, kind: $kind, hasNfc: $hasNfc, dataDir: $dataDir, downloadDir: $downloadDir, journalDir: $journalDir, versionName: $versionName)';
   }
 }
 
@@ -331,22 +319,17 @@ class PickResult {
   }
 }
 
-/// What came of opening Receive: the Wi-Fi Direct group, if one could be made, and
-/// whether this phone could be listed for others on the local network.
+/// What came of opening Receive: the Wi-Fi Direct group, if one could be made.
 class ReceiveSetup {
   ReceiveSetup({
     this.group,
-    required this.listed,
   });
 
   WifiGroup? group;
 
-  bool listed;
-
   List<Object?> _toList() {
     return <Object?>[
       group,
-      listed,
     ];
   }
 
@@ -357,7 +340,6 @@ class ReceiveSetup {
     result as List<Object?>;
     return ReceiveSetup(
       group: result[0] as WifiGroup?,
-      listed: result[1]! as bool,
     );
   }
 
@@ -370,7 +352,7 @@ class ReceiveSetup {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(group, other.group) && _deepEquals(listed, other.listed);
+    return _deepEquals(group, other.group);
   }
 
   @override
@@ -379,7 +361,7 @@ class ReceiveSetup {
 
   @override
   String toString() {
-    return 'ReceiveSetup(group: $group, listed: $listed)';
+    return 'ReceiveSetup(group: $group)';
   }
 }
 
@@ -443,7 +425,6 @@ class Readiness {
   Readiness({
     required this.permission,
     required this.permissionInSettings,
-    required this.bluetooth,
     required this.wifi,
     required this.location,
     required this.nfc,
@@ -454,9 +435,6 @@ class Readiness {
 
   /// They were refused for good, so only the app's settings can grant them.
   bool permissionInSettings;
-
-  /// On, or the device has no Bluetooth.
-  bool bluetooth;
 
   bool wifi;
 
@@ -470,7 +448,6 @@ class Readiness {
     return <Object?>[
       permission,
       permissionInSettings,
-      bluetooth,
       wifi,
       location,
       nfc,
@@ -485,10 +462,9 @@ class Readiness {
     return Readiness(
       permission: result[0]! as bool,
       permissionInSettings: result[1]! as bool,
-      bluetooth: result[2]! as bool,
-      wifi: result[3]! as bool,
-      location: result[4]! as bool,
-      nfc: result[5]! as bool,
+      wifi: result[2]! as bool,
+      location: result[3]! as bool,
+      nfc: result[4]! as bool,
     );
   }
 
@@ -501,7 +477,7 @@ class Readiness {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(permission, other.permission) && _deepEquals(permissionInSettings, other.permissionInSettings) && _deepEquals(bluetooth, other.bluetooth) && _deepEquals(wifi, other.wifi) && _deepEquals(location, other.location) && _deepEquals(nfc, other.nfc);
+    return _deepEquals(permission, other.permission) && _deepEquals(permissionInSettings, other.permissionInSettings) && _deepEquals(wifi, other.wifi) && _deepEquals(location, other.location) && _deepEquals(nfc, other.nfc);
   }
 
   @override
@@ -510,7 +486,7 @@ class Readiness {
 
   @override
   String toString() {
-    return 'Readiness(permission: $permission, permissionInSettings: $permissionInSettings, bluetooth: $bluetooth, wifi: $wifi, location: $location, nfc: $nfc)';
+    return 'Readiness(permission: $permission, permissionInSettings: $permissionInSettings, wifi: $wifi, location: $location, nfc: $nfc)';
   }
 }
 
@@ -577,10 +553,7 @@ class UpdateInfo {
 class PlatformEvent {
   PlatformEvent({
     required this.kind,
-    this.id,
     this.name,
-    this.deviceKind,
-    this.link,
     this.ticket,
     this.fd,
     this.host,
@@ -589,13 +562,7 @@ class PlatformEvent {
 
   PlatformEventKind kind;
 
-  String? id;
-
   String? name;
-
-  String? deviceKind;
-
-  String? link;
 
   String? ticket;
 
@@ -608,10 +575,7 @@ class PlatformEvent {
   List<Object?> _toList() {
     return <Object?>[
       kind,
-      id,
       name,
-      deviceKind,
-      link,
       ticket,
       fd,
       host,
@@ -626,14 +590,11 @@ class PlatformEvent {
     result as List<Object?>;
     return PlatformEvent(
       kind: result[0]! as PlatformEventKind,
-      id: result[1] as String?,
-      name: result[2] as String?,
-      deviceKind: result[3] as String?,
-      link: result[4] as String?,
-      ticket: result[5] as String?,
-      fd: result[6] as int?,
-      host: result[7] as bool?,
-      progress: result[8] as double?,
+      name: result[1] as String?,
+      ticket: result[2] as String?,
+      fd: result[3] as int?,
+      host: result[4] as bool?,
+      progress: result[5] as double?,
     );
   }
 
@@ -646,7 +607,7 @@ class PlatformEvent {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(kind, other.kind) && _deepEquals(id, other.id) && _deepEquals(name, other.name) && _deepEquals(deviceKind, other.deviceKind) && _deepEquals(link, other.link) && _deepEquals(ticket, other.ticket) && _deepEquals(fd, other.fd) && _deepEquals(host, other.host) && _deepEquals(progress, other.progress);
+    return _deepEquals(kind, other.kind) && _deepEquals(name, other.name) && _deepEquals(ticket, other.ticket) && _deepEquals(fd, other.fd) && _deepEquals(host, other.host) && _deepEquals(progress, other.progress);
   }
 
   @override
@@ -655,7 +616,7 @@ class PlatformEvent {
 
   @override
   String toString() {
-    return 'PlatformEvent(kind: $kind, id: $id, name: $name, deviceKind: $deviceKind, link: $link, ticket: $ticket, fd: $fd, host: $host, progress: $progress)';
+    return 'PlatformEvent(kind: $kind, name: $name, ticket: $ticket, fd: $fd, host: $host, progress: $progress)';
   }
 }
 
@@ -918,16 +879,15 @@ class NearvoltPlatform {
     return pigeonVar_replyValue as String?;
   }
 
-  /// Opens Receive: serves the tap ticket over NFC and advertises the public one
-  /// on the local network and Bluetooth, then creates the Wi-Fi Direct group.
-  Future<ReceiveSetup> startReceiving(String tapTicket, String publicTicket, int port) async {
+  /// Opens Receive: serves the tap ticket over NFC, then creates the Wi-Fi Direct group.
+  Future<ReceiveSetup> startReceiving(String tapTicket, int port) async {
     final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.startReceiving$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
       binaryMessenger: pigeonVar_binaryMessenger,
     );
-    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[tapTicket, publicTicket, port]);
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[tapTicket, port]);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
     final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
         pigeonVar_replyList,
@@ -938,14 +898,14 @@ class NearvoltPlatform {
     return pigeonVar_replyValue! as ReceiveSetup;
   }
 
-  Future<void> updateTickets(String tapTicket, String publicTicket, int port) async {
+  Future<void> updateTickets(String tapTicket, int port) async {
     final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.updateTickets$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
       binaryMessenger: pigeonVar_binaryMessenger,
     );
-    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[tapTicket, publicTicket, port]);
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[tapTicket, port]);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
     _extractReplyValueOrThrow(
         pigeonVar_replyList,
@@ -955,8 +915,7 @@ class NearvoltPlatform {
     ;
   }
 
-  /// A transfer started: stops advertising this phone over Bluetooth, the local
-  /// network and NFC, and closes the Wi-Fi Direct group unless the sender
+  /// A transfer started: stops serving the tap ticket over NFC and closes the Wi-Fi Direct group unless the sender
   /// joined it. The receiver keeps listening, so the sender can still reconnect.
   ///
   /// `senderAddress` is where the sender connected from, when known: an address of
@@ -980,41 +939,6 @@ class NearvoltPlatform {
 
   Future<void> stopReceiving() async {
     final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.stopReceiving$pigeonVar_messageChannelSuffix';
-    final pigeonVar_channel = BasicMessageChannel<Object?>(
-      pigeonVar_channelName,
-      pigeonChannelCodec,
-      binaryMessenger: pigeonVar_binaryMessenger,
-    );
-    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(null);
-    final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
-    _extractReplyValueOrThrow(
-        pigeonVar_replyList,
-        pigeonVar_channelName,
-        isNullValid: true,
-    )
-    ;
-  }
-
-  /// Looks for receivers on the local network and over Bluetooth.
-  Future<void> startNearby() async {
-    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.startNearby$pigeonVar_messageChannelSuffix';
-    final pigeonVar_channel = BasicMessageChannel<Object?>(
-      pigeonVar_channelName,
-      pigeonChannelCodec,
-      binaryMessenger: pigeonVar_binaryMessenger,
-    );
-    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(null);
-    final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
-    _extractReplyValueOrThrow(
-        pigeonVar_replyList,
-        pigeonVar_channelName,
-        isNullValid: true,
-    )
-    ;
-  }
-
-  Future<void> stopNearby() async {
-    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.stopNearby$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
@@ -1082,25 +1006,6 @@ class NearvoltPlatform {
         isNullValid: true,
     )
     ;
-  }
-
-  /// Reads the public ticket of a receiver found over Bluetooth.
-  Future<String> readTicket(String receiverId) async {
-    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.readTicket$pigeonVar_messageChannelSuffix';
-    final pigeonVar_channel = BasicMessageChannel<Object?>(
-      pigeonVar_channelName,
-      pigeonChannelCodec,
-      binaryMessenger: pigeonVar_binaryMessenger,
-    );
-    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[receiverId]);
-    final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
-    final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
-        pigeonVar_replyList,
-        pigeonVar_channelName,
-        isNullValid: false,
-    )
-    ;
-    return pigeonVar_replyValue! as String;
   }
 
   Future<String?> joinWifi(WifiGroup group) async {

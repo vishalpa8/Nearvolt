@@ -55,12 +55,9 @@ String friendlyPlatform(Object error) {
 
 /// What stops this phone being found while Receive is open, and what still works.
 String setupProblemText(SetupProblem problem) => switch (problem) {
-  SetupProblem.otherNetworks => "Phones on other Wi-Fi networks can't connect right now. Scan code and Tap still work.",
-  SetupProblem.notListed => "This phone can't be found in the Nearby list right now. Scan code and Tap still work.",
+  SetupProblem.otherNetworks =>
+    "This phone couldn't open its fast Wi-Fi link. Phones on the same Wi-Fi can still connect, but slower.",
 };
-
-/// Shown on the Nearby page when searching the network couldn't start.
-const searchFailedText = "Couldn't search this Wi-Fi network. Try Scan code or Tap instead.";
 
 /// Shown when Receive closed itself after a while with nobody connecting.
 const receiveIdleText = "Receive stopped to save battery. Open it again when you're ready.";

@@ -82,17 +82,16 @@ Golden screenshots of each one are in [app/test/goldens](../app/test/goldens).
    that downloads and installs a new version in place. Nothing looks for other
    phones, or for updates, until asked.
 2. **Send.** An optional "Choose files" step, then "How do you want to connect?"
-   with four choices: Tap phones (only on phones with NFC), Scan code, Nearby
-   phones and USB cable. Only the chosen one runs. Files chosen first are sent
+   with three choices: Tap phones (only on phones with NFC), Scan code and
+   USB cable. Only the chosen one runs. Files chosen first are sent
    the moment the connection is set up, so choosing files and then tapping is
    enough; with none chosen, files are added after connecting.
 3. **Tap phones, USB cable.** One picture and one instruction; the connection
    opens by itself when the phones touch or the cable answers.
-4. **Nearby phones.** Phones with Receive open, as round avatars with names.
-   Anything a method needs (a permission, NFC, Wi-Fi, Bluetooth, Location)
+4. **What a method needs.** Anything it uses (a permission, NFC, Wi-Fi, Location)
    must be on first: until it is, the page doesn't open. A "Turn these on to
    continue" screen lists what's off, each with its own button, and nothing
-   (Bluetooth, the network, NFC) is started behind it. The page opens by itself
+   (the network, NFC) is started behind it. The page opens by itself
    when the last one is on, and closes again if one is turned off later. Receive
    works the same, and Scan code asks before the camera opens.
 5. **Receive.** A large QR code, the name others see, and the ways to connect.

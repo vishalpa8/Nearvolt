@@ -11,8 +11,8 @@ import '../ui/organisms.dart';
 import '../ui/templates.dart';
 import 'connection_page.dart';
 
-/// While this page is open, a sender can scan its code, tap phones with it,
-/// pick it from their Nearby list or plug in a cable. Once one connects, it
+/// While this page is open, a sender can scan its code, tap phones with it
+/// or plug in a cable. Once one connects, it
 /// stays connected until either phone disconnects.
 class ReceivePage extends StatefulWidget {
   const ReceivePage({super.key, required this.engine, required this.profile});
@@ -50,13 +50,13 @@ class _ReceivePageState extends State<ReceivePage> with NeedsMixin {
   @override
   Purpose get purpose => Purpose.receive;
 
-  /// How long Receive stays open with nobody connecting. Advertising over
-  /// Bluetooth and the network, a Wi-Fi Direct group and NFC all cost battery.
+  /// How long Receive stays open with nobody connecting. A Wi-Fi Direct
+  /// group and NFC cost battery.
   static const _idleLimit = Duration(minutes: 10);
   Timer? _idle;
   var _idleStopped = false;
 
-  /// Something Receive needs went off: stop advertising and listening until it is back.
+  /// Something Receive needs went off: stop the Wi-Fi Direct group and listening until it is back.
   @override
   void pause() {
     _idle?.cancel();
@@ -64,7 +64,7 @@ class _ReceivePageState extends State<ReceivePage> with NeedsMixin {
     _session = null;
   }
 
-  /// A new session, so the code and what's advertised match what's on now.
+  /// A new session, so the code matches what's on now.
   @override
   Future<void> restart() async {
     await _session?.cancel();
@@ -188,7 +188,6 @@ class _ReceivePageState extends State<ReceivePage> with NeedsMixin {
     const SizedBox(height: Space.xxl),
     const _Hint(icon: Icons.qr_code_scanner_rounded, text: 'Scan this code on the other phone'),
     if (widget.profile.hasNfc) const _Hint(icon: Icons.nfc_rounded, text: 'Or tap the phones together'),
-    _Hint(icon: Icons.radar_rounded, text: 'Or pick ${widget.profile.name} in their Nearby list'),
     const _Hint(icon: Icons.usb_rounded, text: 'Or connect the phones with a USB cable'),
   ];
 }

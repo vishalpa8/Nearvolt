@@ -605,13 +605,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ReceiveTickets dco_decode_receive_tickets(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 4)
-      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
     return ReceiveTickets(
       privateTicket: dco_decode_String(arr[0]),
       tapTicket: dco_decode_String(arr[1]),
-      publicTicket: dco_decode_String(arr[2]),
-      port: dco_decode_u_16(arr[3]),
+      port: dco_decode_u_16(arr[2]),
     );
   }
 
@@ -850,12 +849,10 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_privateTicket = sse_decode_String(deserializer);
     var var_tapTicket = sse_decode_String(deserializer);
-    var var_publicTicket = sse_decode_String(deserializer);
     var var_port = sse_decode_u_16(deserializer);
     return ReceiveTickets(
       privateTicket: var_privateTicket,
       tapTicket: var_tapTicket,
-      publicTicket: var_publicTicket,
       port: var_port,
     );
   }
@@ -1125,7 +1122,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.privateTicket, serializer);
     sse_encode_String(self.tapTicket, serializer);
-    sse_encode_String(self.publicTicket, serializer);
     sse_encode_u_16(self.port, serializer);
   }
 

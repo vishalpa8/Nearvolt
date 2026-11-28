@@ -11,62 +11,6 @@ import 'atoms.dart';
 import 'format.dart';
 import 'molecules.dart';
 
-/// Nearby devices, or a quiet searching state while none are found.
-class DeviceList extends StatelessWidget {
-  const DeviceList({super.key, required this.devices, required this.onTap, this.selectedId});
-
-  final List<NearbyDevice> devices;
-  final ValueChanged<NearbyDevice> onTap;
-  final String? selectedId;
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 250),
-      layoutBuilder: (current, previous) =>
-          Stack(alignment: AlignmentDirectional.topStart, children: [...previous, ?current]),
-      child: devices.isEmpty
-          ? const _Searching()
-          : Wrap(
-              key: const ValueKey('devices'),
-              spacing: Space.s,
-              runSpacing: Space.l,
-              children: [
-                for (final device in devices)
-                  DeviceTile(device: device, selected: device.id == selectedId, onTap: () => onTap(device)),
-              ],
-            ),
-    );
-  }
-}
-
-class _Searching extends StatelessWidget {
-  const _Searching();
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      key: const ValueKey('searching'),
-      padding: const EdgeInsets.symmetric(vertical: Space.l),
-      child: Row(
-        children: [
-          const SizedBox.square(
-            dimension: 18,
-            child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.accent),
-          ),
-          const SizedBox(width: Space.m),
-          Expanded(
-            child: Text(
-              'Looking for devices with Receive open…',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: AppColors.textSecondary),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 /// Speed, time left and file count for the batch on the move.
 class StatsCard extends StatelessWidget {
   const StatsCard({super.key, required this.progress});
@@ -210,7 +154,7 @@ class _ReceivePromptState extends State<_ReceivePrompt> {
 (IconData, String, String) needDetails(Need need) => switch (need) {
   Need.permission => (
     Icons.devices_other_rounded,
-    'Allow Nearby devices so Nearvolt can find phones and be found.',
+    'Allow Nearby devices so Nearvolt can open its fast Wi-Fi link between phones.',
     'Allow',
   ),
   Need.permissionInSettings => (
@@ -220,16 +164,11 @@ class _ReceivePromptState extends State<_ReceivePrompt> {
   ),
   Need.nfc => (Icons.nfc_rounded, 'NFC is off. Turn it on so phones can connect by tapping.', 'Turn on'),
   Need.wifi => (Icons.wifi_off_rounded, 'Wi-Fi is off. Nearvolt needs it to send and receive.', 'Turn on'),
-  Need.bluetooth => (
-    Icons.bluetooth_disabled_rounded,
-    'Bluetooth is off. Nearvolt needs it so phones can find each other.',
-    'Turn on',
-  ),
-  Need.location => (Icons.location_off_rounded, 'This Android version needs Location on to find phones.', 'Turn on'),
+  Need.location => (Icons.location_off_rounded, 'This Android version needs Location on to connect phones.', 'Turn on'),
 };
 
 /// Shown instead of a page while something it needs is off. The page, and what it
-/// would start (Bluetooth, the network, NFC, the camera), stays closed until every
+/// would start (the network, NFC, the camera), stays closed until every
 /// need is met; the page opens by itself as soon as the last one is turned on.
 class NeedsGate extends StatelessWidget {
   const NeedsGate({super.key, required this.needs, required this.onFix});

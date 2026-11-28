@@ -159,24 +159,17 @@ class ReceiveTickets {
 
   /// For NFC: its own secret, so a tap connects without asking.
   final String tapTicket;
-
-  /// For the local network and Bluetooth: no secret, so both phones confirm a code.
-  final String publicTicket;
   final int port;
 
   const ReceiveTickets({
     required this.privateTicket,
     required this.tapTicket,
-    required this.publicTicket,
     required this.port,
   });
 
   @override
   int get hashCode =>
-      privateTicket.hashCode ^
-      tapTicket.hashCode ^
-      publicTicket.hashCode ^
-      port.hashCode;
+      privateTicket.hashCode ^ tapTicket.hashCode ^ port.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -185,7 +178,6 @@ class ReceiveTickets {
           runtimeType == other.runtimeType &&
           privateTicket == other.privateTicket &&
           tapTicket == other.tapTicket &&
-          publicTicket == other.publicTicket &&
           port == other.port;
 }
 

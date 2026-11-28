@@ -84,20 +84,11 @@ void main() {
     await shoot('tap');
   });
 
-  testWidgets('nearby', (tester) async {
-    await phone(tester, NearvoltApp(engine: engine, profile: profile));
-    await go(tester, 'Send');
-    await go(tester, 'Nearby phones');
-    engine.devices.add([rahul, tablet]);
-    await tester.pumpAndSettle();
-    await shoot('nearby');
-  });
-
   testWidgets('needs', (tester) async {
     engine.missing = const [Need.permission];
     await phone(tester, NearvoltApp(engine: engine, profile: profile));
     await go(tester, 'Send');
-    await go(tester, 'Nearby phones');
+    await go(tester, 'Tap phones');
     await tester.pump(const Duration(milliseconds: 400));
     await shoot('needs');
   });

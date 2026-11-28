@@ -1,7 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show ValueListenable, ValueNotifier;
-
 import '../debug.dart';
 import '../ui/format.dart';
 import 'diagnostics.dart';
@@ -14,13 +12,11 @@ import 'rust/api.dart' as rust;
 /// The real engine: transfers run in Rust, radios and system services in Kotlin.
 class NativeEngine implements TransferEngine, NearvoltEvents {
   final _platform = NearvoltPlatform();
-  final _found = <String, NearbyDevice>{};
-  final _nearby = StreamController<List<NearbyDevice>>.broadcast();
   final _taps = StreamController<String>.broadcast();
-  final _usb = StreamController<NearbyDevice?>.broadcast();
+  final _usb = StreamController<Peer?>.broadcast();
   final _updateProgress = StreamController<double>.broadcast();
   late DeviceInfo _device;
-  NearbyDevice? _usbPeer;
+  Peer? _usbPeer;
   UpdateInfo? _update;
   _Live? _sending;
 
@@ -45,10 +41,7 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
   @override
   Future<List<Need>> prepare(Purpose purpose) async {
     var readiness = await _platform.readiness();
-    if (purpose.findsPhones) {
-      readiness = await _platform.fix(Requirement.permissions);
-      if (readiness.permission && !readiness.bluetooth) readiness = await _platform.fix(Requirement.bluetooth);
-    }
+    if (purpose.usesWifiDirect) readiness = await _platform.fix(Requirement.permissions);
     return _logged(purpose, _needs(readiness, purpose));
   }
 
@@ -74,34 +67,20 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
     Need.permissionInSettings => Requirement.appSettings,
     Need.nfc => Requirement.nfc,
     Need.wifi => Requirement.wifi,
-    Need.bluetooth => Requirement.bluetooth,
     Need.location => Requirement.location,
   });
 
   List<Need> _needs(Readiness r, Purpose purpose) => [
-    if (purpose.findsPhones && !r.permission) r.permissionInSettings ? Need.permissionInSettings : Need.permission,
+    if (purpose.usesWifiDirect && !r.permission) r.permissionInSettings ? Need.permissionInSettings : Need.permission,
     // Receive offers tapping too, so its phone needs NFC on to be tapped.
     if ((purpose == Purpose.tap || purpose == Purpose.receive) && !r.nfc) Need.nfc,
     if (purpose != Purpose.usb && !r.wifi) Need.wifi,
-    if (purpose.findsPhones && !r.bluetooth) Need.bluetooth,
-    if (purpose.findsPhones && !r.location) Need.location,
+    if (purpose.usesWifiDirect && !r.location) Need.location,
   ];
 
   @override
   void onEvent(PlatformEvent event) {
     switch (event.kind) {
-      case PlatformEventKind.receiverFound:
-        _found[event.id!] = NearbyDevice(
-          id: event.id!,
-          name: event.name ?? 'Nearby device',
-          kind: DeviceKind.parse(event.deviceKind),
-          link: event.link ?? '',
-          ticket: event.ticket,
-        );
-        _publishNearby();
-      case PlatformEventKind.receiverLost:
-        _found.remove(event.id);
-        _publishNearby();
       case PlatformEventKind.ticketTapped:
         if (event.ticket case final ticket?) {
           _platform.log('nfc', 'read a code by tapping phones');
@@ -117,56 +96,19 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
           return;
         }
         _usb.add(
-          _usbPeer = NearbyDevice(
-            id: 'usb',
-            name: event.name ?? 'Phone on USB',
-            kind: DeviceKind.phone,
-            link: 'USB cable',
-          ),
+          _usbPeer = Peer(id: 'usb', name: event.name ?? 'Phone on USB', kind: DeviceKind.phone, link: 'USB cable'),
         );
       case PlatformEventKind.usbDisconnected:
         _usb.add(_usbPeer = null);
-      case PlatformEventKind.searchFailed:
-        _platform.log('nearby', 'the search of the local network could not start');
-        _searchFailed.value = true;
     }
   }
-
-  final _searchFailed = ValueNotifier<bool>(false);
-
-  @override
-  ValueListenable<bool> get searchFailed => _searchFailed;
-
-  /// One entry per device; the local network wins over Bluetooth because it
-  /// already carries the ticket.
-  void _publishNearby() {
-    final byName = <String, NearbyDevice>{};
-    for (final device in _found.values) {
-      final existing = byName[device.name];
-      if (existing == null || (existing.ticket == null && device.ticket != null)) byName[device.name] = device;
-    }
-    _nearby.add(byName.values.toList());
-  }
-
-  @override
-  Stream<List<NearbyDevice>> nearby() => _whileListened(
-    _nearby.stream,
-    name: 'nearby',
-    start: () {
-      _found.clear();
-      _searchFailed.value = false;
-      return _platform.startNearby();
-    },
-    stop: _platform.stopNearby,
-    initial: [const []],
-  );
 
   @override
   Stream<String> taps() =>
       _whileListened(_taps.stream, name: 'tap', start: _platform.startTapReading, stop: _platform.stopTapReading);
 
   @override
-  Stream<NearbyDevice?> usbPeer() =>
+  Stream<Peer?> usbPeer() =>
       _whileListened(_usb.stream, name: 'usb', start: _platform.watchUsb, stop: () async {}, initial: [_usbPeer]);
 
   /// Runs `start` while someone listens, and `stop` once they stop. `initial`
@@ -212,15 +154,9 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
   }
 
   @override
-  NearbyDevice deviceFor(String ticket) {
+  Peer deviceFor(String ticket) {
     final info = rust.readTicket(text: ticket);
-    return NearbyDevice(
-      id: 'code:${info.name}',
-      name: info.name,
-      kind: DeviceKind.phone,
-      link: 'Wi-Fi',
-      ticket: ticket,
-    );
+    return Peer(id: 'code:${info.name}', name: info.name, kind: DeviceKind.phone, link: 'Wi-Fi', ticket: ticket);
   }
 
   @override
@@ -246,7 +182,7 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
   }
 
   @override
-  Stream<Connection> connect(NearbyDevice to) {
+  Stream<Connection> connect(Peer to) {
     final out = StreamController<Connection>();
     final live = _sending = _Live(
       Connection(peer: to.name, link: to.link),
@@ -265,7 +201,7 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
       final diagnostics = Diagnostics(_platform, 'send', sending: true);
       try {
         await previous;
-        final ticket = to.id == 'usb' ? null : to.ticket ?? await _platform.readTicket(to.id);
+        final ticket = to.id == 'usb' ? null : to.ticket;
         final wifi = ticket == null ? null : rust.readTicket(text: ticket).wifi;
         await _platform.startTransferService('Connected to ${to.name}');
         _platform.log('send', 'connecting to the other phone (${to.link})');
@@ -367,18 +303,14 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
           if (event.kind == rust.EventKind.ready) {
             var tickets = rust.receiveTickets();
             live.emit(live.state.copyWith(ticket: tickets.privateTicket));
-            final setup = await _platform.startReceiving(tickets.tapTicket, tickets.publicTicket, tickets.port);
+            final setup = await _platform.startReceiving(tickets.tapTicket, tickets.port);
             final group = setup.group;
             // What won't work is said on the page, with what still does.
-            live.emit(
-              live.state.copyWith(
-                problems: [if (group == null) SetupProblem.otherNetworks, if (!setup.listed) SetupProblem.notListed],
-              ),
-            );
+            live.emit(live.state.copyWith(problems: [if (group == null) SetupProblem.otherNetworks]));
             if (group != null && !cancelled) {
               final wifi = rust.WifiInfo(ssid: group.ssid, passphrase: group.passphrase, frequency: group.frequency);
               tickets = rust.receiveTickets(wifi: wifi);
-              await _platform.updateTickets(tickets.tapTicket, tickets.publicTicket, tickets.port);
+              await _platform.updateTickets(tickets.tapTicket, tickets.port);
               live.emit(live.state.copyWith(ticket: tickets.privateTicket));
             }
             unawaited(diagnostics.network());

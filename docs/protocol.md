@@ -10,7 +10,7 @@
   No certificate authorities are used.
 - With a **private ticket** (QR code or NFC tap) the sender pins the receiver's
   certificate: the BLAKE3 hash of its DER encoding must equal the fingerprint in
-  the ticket. Without one (Nearby list or USB), both devices confirm a 4-digit
+  the ticket. Without one (USB), both devices confirm a 4-digit
   code instead.
 - A connection uses one **control stream** and several **data streams** (8 by
   default). Parallel streams spread encryption over CPU cores and let the
@@ -30,9 +30,9 @@ followed by unpadded RFC 4648 base32, so it fits the QR alphanumeric mode.
 - The **tap ticket** carries a different secret, also new for each receive session. It's only served over
   NFC, which works at a few centimetres. Holding the phones together is the
   consent, so a sender with this secret connects without a prompt.
-- The **public ticket** is the same without any secret. It's advertised over
-  the local network (mDNS TXT records) and Bluetooth LE (a GATT characteristic),
-  so senders can list the receiver.
+- The **public ticket** is the same without any secret. Nothing advertises it
+  any more (phones are no longer listed over the network or Bluetooth), so only
+  tests use it.
 
 Binary layout, all integers big-endian:
 
@@ -125,8 +125,7 @@ journal.
 
 ## Code pairing
 
-Used when the sender has no secret: a device picked from the Nearby list, or the
-USB cable.
+Used when the sender has no secret: the USB cable.
 
 1. The sender picks a random 16-byte nonce `Ns` and sends
    `commitment = BLAKE3("nearvolt commitment" ‖ Ns)` in its hello.

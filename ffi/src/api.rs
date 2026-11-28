@@ -44,8 +44,6 @@ pub struct ReceiveTickets {
     pub private_ticket: String,
     /// For NFC: its own secret, so a tap connects without asking.
     pub tap_ticket: String,
-    /// For the local network and Bluetooth: no secret, so both phones confirm a code.
-    pub public_ticket: String,
     pub port: u16,
 }
 
@@ -299,7 +297,6 @@ pub fn receive_tickets(wifi: Option<WifiInfo>) -> Result<ReceiveTickets> {
     Ok(ReceiveTickets {
         private_ticket: ticket.encode(),
         tap_ticket: Ticket { wifi, ..receiver.tap_ticket() }.encode(),
-        public_ticket: ticket.public().encode(),
         port: receiver.local_addr().port(),
     })
 }

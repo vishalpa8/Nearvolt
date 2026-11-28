@@ -65,7 +65,7 @@ flowchart LR
 |---|---|---|---|---|---|---|
 | NFC tap | 197-byte code read in 78 ms, data over Wi-Fi Direct | none | 1.1 s (measured) | 39 to 43 MB/s | Wi-Fi Direct channel and width | choose the group channel and width, stripe one big file over several streams |
 | Scan code | camera reads the same code | none | 0.6 to 1.5 s join + 0.1 s | 39 to 43 MB/s | same as NFC | same as NFC |
-| Nearby | name service + Bluetooth find the phone in 0.2 s, data over the router | receiver accepts with a code | 2.5 s | 32.7 MB/s on 5 GHz; about 5 to 8 on 2.4 GHz (estimated) | the router | after approval, move data to Wi-Fi Direct over the encrypted link |
+| Nearby | **Removed on 28 Nov 2026**: phones are no longer listed over the network or Bluetooth. Tap, scan and USB remain | n/a | n/a | n/a | n/a | n/a |
 | USB | accessory link, no radio | receiver accepts once | not measured | not measured | cable, port, accessory driver | measure; accessory mode may run at USB 2.0 speed (about 38 MB/s) |
 
 ### NFC, in detail
@@ -89,9 +89,9 @@ failed tap say why.
 
 | Id | Technique | Helps | Expected gain | Effort |
 |---|---|---|---|---|
-| L1 | Choose the Wi-Fi Direct channel: a non-radar 80 MHz block, or the router's own channel when allowed | tap, scan, Nearby after L3 | up to 1.3 to 2x if the group shares airtime with the router today | low |
-| L2 | Ask for the widest group: 160 MHz, and 6 GHz where both phones support it | tap, scan, Nearby after L3 | 2 to 4x (estimated) | medium |
-| L3 | Move Nearby to Wi-Fi Direct after approval, sending the group details over the encrypted link | Nearby | 1.3x on a good router, 5x or more on 2.4 GHz | medium |
+| L1 | Choose the Wi-Fi Direct channel: a non-radar 80 MHz block, or the router's own channel when allowed | tap, scan | up to 1.3 to 2x if the group shares airtime with the router today | low |
+| L2 | Ask for the widest group: 160 MHz, and 6 GHz where both phones support it | tap, scan | 2 to 4x (estimated) | medium |
+| L3 | ~~Move Nearby to Wi-Fi Direct~~ not needed: Nearby was removed | none | none | none |
 | T1 | Stripe one big file over several streams | all | 1.1 to 1.5x if one stream cannot fill the link | medium |
 | T2 | Larger socket buffers, adaptive stream count | all | small | low |
 | C1 | Run engine threads on the big cores with performance hints | all | unknown; only if a phone is CPU-bound | low |
@@ -150,7 +150,6 @@ The common core (engine v2):
 | Connection | Link and channel | Streams and chunks | Compression | Also |
 |---|---|---|---|---|
 | NFC tap, scan code | Wi-Fi Direct, with a chosen non-radar 80 MHz channel, 160 MHz or 6 GHz when both phones support it | striped over 4 to 16 streams, adaptive | off (fast link) | group made ahead when Receive opens; high-performance Wi-Fi lock |
-| Nearby | LAN and Bluetooth to find; after approval, move the data to Wi-Fi Direct with the group details sent over the encrypted link | as above; if it must stay on the router, adaptive streams | on for compressible files if the router is slow | falls back to the router when the phones cannot form a group |
 | USB cable | accessory link; measure the speed first. If it runs at USB 2.0 speed, say so and prefer Wi-Fi Direct | streams share one pipe, so fewer, bigger chunks; raise the multiplexer window | on for compressible files while the pipe is USB 2.0 | decide what to offer only after measuring |
 | Copy old phone | the best of the above | chunk-hash skip on re-runs; bundle small files into one stream | off | one sync per batch, not per file |
 
@@ -175,7 +174,7 @@ needed to go beyond that.
 | 0 | Measure on the devices: CPU per thread, link rate and width, time per stage in the log | both phones on adb | whether either phone is CPU-bound |
 | 1 | Tap and scan: choose the channel and width, then measure each | phase 0 | speed per channel, repeated runs |
 | 2 | **Done (v5 protocol):** chunk protocol: a big file is striped over all streams in 8 MiB chunks, each chunk checked as it arrives, resume sends only the gaps. Still to do: hash-based skip, per-batch sync | phase 1 | on this PC's loopback one 1.6 GB file: 1 stream about 500 MB/s, 8 streams about 900 MB/s; a break loses only the chunks in flight |
-| 3 | Nearby: upgrade to Wi-Fi Direct after approval | phase 1 | same file over the router against Wi-Fi Direct |
+| 3 | Both phones join the receiver's own Wi-Fi Direct network as a normal Wi-Fi client, so Android drops the router while the transfer runs | phase 1 | same file with and without the router connection |
 | 4 | USB: measure, then decide how to use it | a cable | speed at USB 2.0 and 3.x ports |
 | 5 | Many small files: bundle stream | phase 2 | files per second for 2,000 files |
 | 6 | Adaptive tuning and a built-in speed test screen | all above | the same numbers without a laptop |

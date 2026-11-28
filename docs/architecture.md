@@ -50,8 +50,6 @@ ticket (or a USB stream) and the engine takes over.
 
 | How | What happens | Pairing |
 |---|---|---|
-| Nearby list, same Wi-Fi | The receiver advertises its public ticket over mDNS (`_nearvolt._tcp`) | 4-digit code |
-| Nearby list, Bluetooth | The receiver advertises over Bluetooth LE; the sender reads the public ticket from a GATT characteristic. The ticket has no Wi-Fi Direct details, so this works when the phones can already reach each other | 4-digit code |
 | QR code | The sender scans the receiver's private ticket with Google's code scanner | Secret in the ticket; the receiver accepts once |
 | NFC tap | The receiver's phone acts as an NFC card (host card emulation) serving its tap ticket | Its own secret; the tap is the consent, no prompt |
 | USB cable | Android Open Accessory, with streams multiplexed by yamux | 4-digit code |
@@ -66,16 +64,15 @@ a Wi-Fi network: phone to phone, the files cross the air once instead of twice
 every address in the ticket, the router's included, and the first that answers
 is used from then on, including for reconnects.
 
-Finding a phone and moving files are separate jobs. Bluetooth, NFC, the local
-network's service records and QR codes only exchange the ticket; files always
-travel over Wi-Fi (the shared network or Wi-Fi Direct) or the USB cable. The
+Finding a phone and moving files are separate jobs. NFC and QR codes only
+exchange the ticket; files always travel over Wi-Fi Direct (or the shared
+network if a group can't be made) or the USB cable. The
 sender picks one way to connect, and only that one runs, asking only for what it
-needs: every way but the cable needs Wi-Fi on, tapping also needs NFC, and the
-Nearby list also needs the Nearby devices permission and Bluetooth. Receive
+needs: every way but the cable needs Wi-Fi on, tapping also needs NFC, and
+tapping, scanning and Receive need the Nearby devices permission. Receive
 offers every way at once, since it can't know
-which the sender picks. Once connected, all of it stops: the sender stops
-searching, and the receiver stops advertising and closes its Wi-Fi Direct group
-unless the sender joined it.
+which the sender picks. Once connected, all of it stops: the receiver stops serving
+its tap ticket and closes its Wi-Fi Direct group unless the sender joined it.
 
 ## Staying connected
 

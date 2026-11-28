@@ -207,10 +207,9 @@ enum class Requirement(val raw: Int) {
   PERMISSIONS(0),
   /** The app's settings page, for permissions refused for good. */
   APP_SETTINGS(1),
-  BLUETOOTH(2),
-  WIFI(3),
-  LOCATION(4),
-  NFC(5);
+  WIFI(2),
+  LOCATION(3),
+  NFC(4);
 
   companion object {
     private val pigeonValues = values()
@@ -222,25 +221,17 @@ enum class Requirement(val raw: Int) {
 }
 
 enum class PlatformEventKind(val raw: Int) {
-  /**
-   * A device with Receive open was found (`id`, `name`, `deviceKind`, `link`,
-   * and `ticket` when it was found on the local network).
-   */
-  RECEIVER_FOUND(0),
-  RECEIVER_LOST(1),
   /** The phones were tapped together; `ticket` carries the receiver's code. */
-  TICKET_TAPPED(2),
+  TICKET_TAPPED(0),
   /**
    * A USB link to another phone is ready: `fd` is a socket the engine owns,
    * `host` is true on the phone powering the cable, and `name` is the other
    * phone's name when the host knows it.
    */
-  USB_CONNECTED(3),
-  USB_DISCONNECTED(4),
+  USB_CONNECTED(1),
+  USB_DISCONNECTED(2),
   /** Update download progress, 0 to 1. */
-  UPDATE_PROGRESS(5),
-  /** Searching the local network for receivers couldn't start, even after retries. */
-  SEARCH_FAILED(6);
+  UPDATE_PROGRESS(3);
 
   companion object {
     private val pigeonValues = values()
@@ -257,7 +248,6 @@ data class DeviceInfo (
   /** "phone" or "tablet". */
   val kind: String,
   val hasNfc: Boolean,
-  val hasBluetooth: Boolean,
   val dataDir: String,
   val downloadDir: String,
   val journalDir: String,
@@ -269,12 +259,11 @@ data class DeviceInfo (
       val name = pigeonVar_list[0] as String
       val kind = pigeonVar_list[1] as String
       val hasNfc = pigeonVar_list[2] as Boolean
-      val hasBluetooth = pigeonVar_list[3] as Boolean
-      val dataDir = pigeonVar_list[4] as String
-      val downloadDir = pigeonVar_list[5] as String
-      val journalDir = pigeonVar_list[6] as String
-      val versionName = pigeonVar_list[7] as String
-      return DeviceInfo(name, kind, hasNfc, hasBluetooth, dataDir, downloadDir, journalDir, versionName)
+      val dataDir = pigeonVar_list[3] as String
+      val downloadDir = pigeonVar_list[4] as String
+      val journalDir = pigeonVar_list[5] as String
+      val versionName = pigeonVar_list[6] as String
+      return DeviceInfo(name, kind, hasNfc, dataDir, downloadDir, journalDir, versionName)
     }
   }
   fun toList(): List<Any?> {
@@ -282,7 +271,6 @@ data class DeviceInfo (
       name,
       kind,
       hasNfc,
-      hasBluetooth,
       dataDir,
       downloadDir,
       journalDir,
@@ -297,7 +285,7 @@ data class DeviceInfo (
       return true
     }
     val other = other as DeviceInfo
-    return PlatformPigeonUtils.deepEquals(this.name, other.name) && PlatformPigeonUtils.deepEquals(this.kind, other.kind) && PlatformPigeonUtils.deepEquals(this.hasNfc, other.hasNfc) && PlatformPigeonUtils.deepEquals(this.hasBluetooth, other.hasBluetooth) && PlatformPigeonUtils.deepEquals(this.dataDir, other.dataDir) && PlatformPigeonUtils.deepEquals(this.downloadDir, other.downloadDir) && PlatformPigeonUtils.deepEquals(this.journalDir, other.journalDir) && PlatformPigeonUtils.deepEquals(this.versionName, other.versionName)
+    return PlatformPigeonUtils.deepEquals(this.name, other.name) && PlatformPigeonUtils.deepEquals(this.kind, other.kind) && PlatformPigeonUtils.deepEquals(this.hasNfc, other.hasNfc) && PlatformPigeonUtils.deepEquals(this.dataDir, other.dataDir) && PlatformPigeonUtils.deepEquals(this.downloadDir, other.downloadDir) && PlatformPigeonUtils.deepEquals(this.journalDir, other.journalDir) && PlatformPigeonUtils.deepEquals(this.versionName, other.versionName)
   }
 
   override fun hashCode(): Int {
@@ -305,7 +293,6 @@ data class DeviceInfo (
     result = 31 * result + PlatformPigeonUtils.deepHash(this.name)
     result = 31 * result + PlatformPigeonUtils.deepHash(this.kind)
     result = 31 * result + PlatformPigeonUtils.deepHash(this.hasNfc)
-    result = 31 * result + PlatformPigeonUtils.deepHash(this.hasBluetooth)
     result = 31 * result + PlatformPigeonUtils.deepHash(this.dataDir)
     result = 31 * result + PlatformPigeonUtils.deepHash(this.downloadDir)
     result = 31 * result + PlatformPigeonUtils.deepHash(this.journalDir)
@@ -313,7 +300,7 @@ data class DeviceInfo (
     return result
   }
   override fun toString(): String {
-    return "DeviceInfo(name=$name, kind=$kind, hasNfc=$hasNfc, hasBluetooth=$hasBluetooth, dataDir=$dataDir, downloadDir=$downloadDir, journalDir=$journalDir, versionName=$versionName)"
+    return "DeviceInfo(name=$name, kind=$kind, hasNfc=$hasNfc, dataDir=$dataDir, downloadDir=$downloadDir, journalDir=$journalDir, versionName=$versionName)"
   }
 }
 
@@ -414,27 +401,23 @@ data class PickResult (
 }
 
 /**
- * What came of opening Receive: the Wi-Fi Direct group, if one could be made, and
- * whether this phone could be listed for others on the local network.
+ * What came of opening Receive: the Wi-Fi Direct group, if one could be made.
  *
  * Generated class from Pigeon that represents data sent in messages.
  */
 data class ReceiveSetup (
-  val group: WifiGroup? = null,
-  val listed: Boolean
+  val group: WifiGroup? = null
 )
  {
   companion object {
     fun fromList(pigeonVar_list: List<Any?>): ReceiveSetup {
       val group = pigeonVar_list[0] as WifiGroup?
-      val listed = pigeonVar_list[1] as Boolean
-      return ReceiveSetup(group, listed)
+      return ReceiveSetup(group)
     }
   }
   fun toList(): List<Any?> {
     return listOf(
       group,
-      listed,
     )
   }
   override fun equals(other: Any?): Boolean {
@@ -445,17 +428,16 @@ data class ReceiveSetup (
       return true
     }
     val other = other as ReceiveSetup
-    return PlatformPigeonUtils.deepEquals(this.group, other.group) && PlatformPigeonUtils.deepEquals(this.listed, other.listed)
+    return PlatformPigeonUtils.deepEquals(this.group, other.group)
   }
 
   override fun hashCode(): Int {
     var result = javaClass.hashCode()
     result = 31 * result + PlatformPigeonUtils.deepHash(this.group)
-    result = 31 * result + PlatformPigeonUtils.deepHash(this.listed)
     return result
   }
   override fun toString(): String {
-    return "ReceiveSetup(group=$group, listed=$listed)"
+    return "ReceiveSetup(group=$group)"
   }
 }
 
@@ -514,8 +496,6 @@ data class Readiness (
   val permission: Boolean,
   /** They were refused for good, so only the app's settings can grant them. */
   val permissionInSettings: Boolean,
-  /** On, or the device has no Bluetooth. */
-  val bluetooth: Boolean,
   val wifi: Boolean,
   /** Location is on, or not needed (Android 13 and later). */
   val location: Boolean,
@@ -527,18 +507,16 @@ data class Readiness (
     fun fromList(pigeonVar_list: List<Any?>): Readiness {
       val permission = pigeonVar_list[0] as Boolean
       val permissionInSettings = pigeonVar_list[1] as Boolean
-      val bluetooth = pigeonVar_list[2] as Boolean
-      val wifi = pigeonVar_list[3] as Boolean
-      val location = pigeonVar_list[4] as Boolean
-      val nfc = pigeonVar_list[5] as Boolean
-      return Readiness(permission, permissionInSettings, bluetooth, wifi, location, nfc)
+      val wifi = pigeonVar_list[2] as Boolean
+      val location = pigeonVar_list[3] as Boolean
+      val nfc = pigeonVar_list[4] as Boolean
+      return Readiness(permission, permissionInSettings, wifi, location, nfc)
     }
   }
   fun toList(): List<Any?> {
     return listOf(
       permission,
       permissionInSettings,
-      bluetooth,
       wifi,
       location,
       nfc,
@@ -552,21 +530,20 @@ data class Readiness (
       return true
     }
     val other = other as Readiness
-    return PlatformPigeonUtils.deepEquals(this.permission, other.permission) && PlatformPigeonUtils.deepEquals(this.permissionInSettings, other.permissionInSettings) && PlatformPigeonUtils.deepEquals(this.bluetooth, other.bluetooth) && PlatformPigeonUtils.deepEquals(this.wifi, other.wifi) && PlatformPigeonUtils.deepEquals(this.location, other.location) && PlatformPigeonUtils.deepEquals(this.nfc, other.nfc)
+    return PlatformPigeonUtils.deepEquals(this.permission, other.permission) && PlatformPigeonUtils.deepEquals(this.permissionInSettings, other.permissionInSettings) && PlatformPigeonUtils.deepEquals(this.wifi, other.wifi) && PlatformPigeonUtils.deepEquals(this.location, other.location) && PlatformPigeonUtils.deepEquals(this.nfc, other.nfc)
   }
 
   override fun hashCode(): Int {
     var result = javaClass.hashCode()
     result = 31 * result + PlatformPigeonUtils.deepHash(this.permission)
     result = 31 * result + PlatformPigeonUtils.deepHash(this.permissionInSettings)
-    result = 31 * result + PlatformPigeonUtils.deepHash(this.bluetooth)
     result = 31 * result + PlatformPigeonUtils.deepHash(this.wifi)
     result = 31 * result + PlatformPigeonUtils.deepHash(this.location)
     result = 31 * result + PlatformPigeonUtils.deepHash(this.nfc)
     return result
   }
   override fun toString(): String {
-    return "Readiness(permission=$permission, permissionInSettings=$permissionInSettings, bluetooth=$bluetooth, wifi=$wifi, location=$location, nfc=$nfc)"
+    return "Readiness(permission=$permission, permissionInSettings=$permissionInSettings, wifi=$wifi, location=$location, nfc=$nfc)"
   }
 }
 
@@ -622,10 +599,7 @@ data class UpdateInfo (
 /** Generated class from Pigeon that represents data sent in messages. */
 data class PlatformEvent (
   val kind: PlatformEventKind,
-  val id: String? = null,
   val name: String? = null,
-  val deviceKind: String? = null,
-  val link: String? = null,
   val ticket: String? = null,
   val fd: Long? = null,
   val host: Boolean? = null,
@@ -635,24 +609,18 @@ data class PlatformEvent (
   companion object {
     fun fromList(pigeonVar_list: List<Any?>): PlatformEvent {
       val kind = pigeonVar_list[0] as PlatformEventKind
-      val id = pigeonVar_list[1] as String?
-      val name = pigeonVar_list[2] as String?
-      val deviceKind = pigeonVar_list[3] as String?
-      val link = pigeonVar_list[4] as String?
-      val ticket = pigeonVar_list[5] as String?
-      val fd = pigeonVar_list[6] as Long?
-      val host = pigeonVar_list[7] as Boolean?
-      val progress = pigeonVar_list[8] as Double?
-      return PlatformEvent(kind, id, name, deviceKind, link, ticket, fd, host, progress)
+      val name = pigeonVar_list[1] as String?
+      val ticket = pigeonVar_list[2] as String?
+      val fd = pigeonVar_list[3] as Long?
+      val host = pigeonVar_list[4] as Boolean?
+      val progress = pigeonVar_list[5] as Double?
+      return PlatformEvent(kind, name, ticket, fd, host, progress)
     }
   }
   fun toList(): List<Any?> {
     return listOf(
       kind,
-      id,
       name,
-      deviceKind,
-      link,
       ticket,
       fd,
       host,
@@ -667,16 +635,13 @@ data class PlatformEvent (
       return true
     }
     val other = other as PlatformEvent
-    return PlatformPigeonUtils.deepEquals(this.kind, other.kind) && PlatformPigeonUtils.deepEquals(this.id, other.id) && PlatformPigeonUtils.deepEquals(this.name, other.name) && PlatformPigeonUtils.deepEquals(this.deviceKind, other.deviceKind) && PlatformPigeonUtils.deepEquals(this.link, other.link) && PlatformPigeonUtils.deepEquals(this.ticket, other.ticket) && PlatformPigeonUtils.deepEquals(this.fd, other.fd) && PlatformPigeonUtils.deepEquals(this.host, other.host) && PlatformPigeonUtils.deepEquals(this.progress, other.progress)
+    return PlatformPigeonUtils.deepEquals(this.kind, other.kind) && PlatformPigeonUtils.deepEquals(this.name, other.name) && PlatformPigeonUtils.deepEquals(this.ticket, other.ticket) && PlatformPigeonUtils.deepEquals(this.fd, other.fd) && PlatformPigeonUtils.deepEquals(this.host, other.host) && PlatformPigeonUtils.deepEquals(this.progress, other.progress)
   }
 
   override fun hashCode(): Int {
     var result = javaClass.hashCode()
     result = 31 * result + PlatformPigeonUtils.deepHash(this.kind)
-    result = 31 * result + PlatformPigeonUtils.deepHash(this.id)
     result = 31 * result + PlatformPigeonUtils.deepHash(this.name)
-    result = 31 * result + PlatformPigeonUtils.deepHash(this.deviceKind)
-    result = 31 * result + PlatformPigeonUtils.deepHash(this.link)
     result = 31 * result + PlatformPigeonUtils.deepHash(this.ticket)
     result = 31 * result + PlatformPigeonUtils.deepHash(this.fd)
     result = 31 * result + PlatformPigeonUtils.deepHash(this.host)
@@ -684,7 +649,7 @@ data class PlatformEvent (
     return result
   }
   override fun toString(): String {
-    return "PlatformEvent(kind=$kind, id=$id, name=$name, deviceKind=$deviceKind, link=$link, ticket=$ticket, fd=$fd, host=$host, progress=$progress)"
+    return "PlatformEvent(kind=$kind, name=$name, ticket=$ticket, fd=$fd, host=$host, progress=$progress)"
   }
 }
 private open class PlatformPigeonCodec : StandardMessageCodec() {
@@ -816,15 +781,11 @@ interface NearvoltPlatform {
    */
   fun releaseSelection(token: Long)
   suspend fun scanQr(): String?
+  /** Opens Receive: serves the tap ticket over NFC, then creates the Wi-Fi Direct group. */
+  suspend fun startReceiving(tapTicket: String, port: Long): ReceiveSetup
+  fun updateTickets(tapTicket: String, port: Long)
   /**
-   * Opens Receive: serves the tap ticket over NFC and advertises the public one
-   * on the local network and Bluetooth, then creates the Wi-Fi Direct group.
-   */
-  suspend fun startReceiving(tapTicket: String, publicTicket: String, port: Long): ReceiveSetup
-  fun updateTickets(tapTicket: String, publicTicket: String, port: Long)
-  /**
-   * A transfer started: stops advertising this phone over Bluetooth, the local
-   * network and NFC, and closes the Wi-Fi Direct group unless the sender
+   * A transfer started: stops serving the tap ticket over NFC and closes the Wi-Fi Direct group unless the sender
    * joined it. The receiver keeps listening, so the sender can still reconnect.
    *
    * `senderAddress` is where the sender connected from, when known: an address of
@@ -832,9 +793,6 @@ interface NearvoltPlatform {
    */
   fun stopAdvertising(senderAddress: String?)
   fun stopReceiving()
-  /** Looks for receivers on the local network and over Bluetooth. */
-  fun startNearby()
-  fun stopNearby()
   /** Reads a receiver's ticket when the phones are tapped together. */
   fun startTapReading()
   fun stopTapReading()
@@ -843,8 +801,6 @@ interface NearvoltPlatform {
    * `usbDisconnected` events.
    */
   fun watchUsb()
-  /** Reads the public ticket of a receiver found over Bluetooth. */
-  suspend fun readTicket(receiverId: String): String
   suspend fun joinWifi(group: WifiGroup): String?
   fun leaveWifi()
   fun startTransferService(title: String)
@@ -1022,11 +978,10 @@ interface NearvoltPlatform {
           channel.setMessageHandler { message, reply ->
             val args = message as List<Any?>
             val tapTicketArg = args[0] as String
-            val publicTicketArg = args[1] as String
-            val portArg = args[2] as Long
+            val portArg = args[1] as Long
             CoroutineScope(Dispatchers.Main).launch {
               val wrapped: List<Any?> = try {
-                listOf(api.startReceiving(tapTicketArg, publicTicketArg, portArg))
+                listOf(api.startReceiving(tapTicketArg, portArg))
               } catch (exception: Throwable) {
                 PlatformPigeonUtils.wrapError(exception)
               }
@@ -1043,10 +998,9 @@ interface NearvoltPlatform {
           channel.setMessageHandler { message, reply ->
             val args = message as List<Any?>
             val tapTicketArg = args[0] as String
-            val publicTicketArg = args[1] as String
-            val portArg = args[2] as Long
+            val portArg = args[1] as Long
             val wrapped: List<Any?> = try {
-              api.updateTickets(tapTicketArg, publicTicketArg, portArg)
+              api.updateTickets(tapTicketArg, portArg)
               listOf(null)
             } catch (exception: Throwable) {
               PlatformPigeonUtils.wrapError(exception)
@@ -1081,38 +1035,6 @@ interface NearvoltPlatform {
           channel.setMessageHandler { _, reply ->
             val wrapped: List<Any?> = try {
               api.stopReceiving()
-              listOf(null)
-            } catch (exception: Throwable) {
-              PlatformPigeonUtils.wrapError(exception)
-            }
-            reply.reply(wrapped)
-          }
-        } else {
-          channel.setMessageHandler(null)
-        }
-      }
-      run {
-        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.nearvolt.NearvoltPlatform.startNearby$separatedMessageChannelSuffix", codec)
-        if (api != null) {
-          channel.setMessageHandler { _, reply ->
-            val wrapped: List<Any?> = try {
-              api.startNearby()
-              listOf(null)
-            } catch (exception: Throwable) {
-              PlatformPigeonUtils.wrapError(exception)
-            }
-            reply.reply(wrapped)
-          }
-        } else {
-          channel.setMessageHandler(null)
-        }
-      }
-      run {
-        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.nearvolt.NearvoltPlatform.stopNearby$separatedMessageChannelSuffix", codec)
-        if (api != null) {
-          channel.setMessageHandler { _, reply ->
-            val wrapped: List<Any?> = try {
-              api.stopNearby()
               listOf(null)
             } catch (exception: Throwable) {
               PlatformPigeonUtils.wrapError(exception)
@@ -1166,25 +1088,6 @@ interface NearvoltPlatform {
               PlatformPigeonUtils.wrapError(exception)
             }
             reply.reply(wrapped)
-          }
-        } else {
-          channel.setMessageHandler(null)
-        }
-      }
-      run {
-        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.nearvolt.NearvoltPlatform.readTicket$separatedMessageChannelSuffix", codec)
-        if (api != null) {
-          channel.setMessageHandler { message, reply ->
-            val args = message as List<Any?>
-            val receiverIdArg = args[0] as String
-            CoroutineScope(Dispatchers.Main).launch {
-              val wrapped: List<Any?> = try {
-                listOf(api.readTicket(receiverIdArg))
-              } catch (exception: Throwable) {
-                PlatformPigeonUtils.wrapError(exception)
-              }
-              reply.reply(wrapped)
-            }
           }
         } else {
           channel.setMessageHandler(null)

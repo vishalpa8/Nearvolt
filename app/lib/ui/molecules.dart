@@ -5,52 +5,6 @@ import '../theme.dart';
 import 'atoms.dart';
 import 'format.dart';
 
-/// A nearby device: icon, name and how it connects.
-class DeviceTile extends StatelessWidget {
-  const DeviceTile({super.key, required this.device, this.selected = false, this.onTap});
-
-  final NearbyDevice device;
-  final bool selected;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-    return Semantics(
-      button: onTap != null,
-      selected: selected,
-      label: '${device.name}, ${device.link}',
-      excludeSemantics: true,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(Radii.card),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: Space.xs, vertical: Space.s),
-          child: SizedBox(
-            width: 112,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                DeviceIcon(kind: device.kind, selected: selected),
-                const SizedBox(height: Space.s),
-                Text(
-                  device.name,
-                  maxLines: 2,
-                  textAlign: TextAlign.center,
-                  overflow: TextOverflow.ellipsis,
-                  style: text.labelLarge,
-                ),
-                const SizedBox(height: 2),
-                Text(device.link, style: text.bodySmall, textAlign: TextAlign.center),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 /// One option in a list of ways to do something: an icon, a title and a line
 /// of detail.
 class ChoiceTile extends StatelessWidget {

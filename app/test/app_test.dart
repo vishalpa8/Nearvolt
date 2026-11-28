@@ -45,23 +45,22 @@ void main() {
     expect(find.text('the engine library is missing'), findsOneWidget);
   });
 
-  testWidgets('nothing looks for phones until a way to connect is chosen', (tester) async {
+  testWidgets('nothing starts until a way to connect is chosen', (tester) async {
     await open(tester);
     expect(find.text('Move files to anyone nearby'), findsOneWidget);
 
     await go(tester, 'Send');
     expect(find.text('How do you want to connect?'), findsOneWidget);
-    for (final method in ['Tap phones', 'Scan code', 'Nearby phones', 'USB cable']) {
+    for (final method in ['Tap phones', 'Scan code', 'USB cable']) {
       expect(find.text(method), findsOneWidget);
     }
     expect(engine.prepared, isEmpty);
-    expect(engine.discoveries, 0);
     expect(engine.receiveSessions, 0);
+    expect(engine.tapped.hasListener, isFalse);
 
     await go(tester, 'Tap phones');
     expect(engine.prepared, [Purpose.tap]);
     expect(engine.tapped.hasListener, isTrue);
-    expect(engine.discoveries, 0);
   });
 
   testWidgets('checks for updates only when asked', (tester) async {
@@ -117,16 +116,12 @@ void main() {
   });
 
   testWidgets('stays connected and sends each batch added, until Disconnect', (tester) async {
-    await openMethod(tester, 'Nearby phones');
-    expect(find.text('Looking for devices with Receive open…'), findsOneWidget);
-    engine.devices.add([rahul, tablet]);
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text(rahulName));
+    await openMethod(tester, 'Tap phones');
+    engine.tapped.add(rahul.ticket!);
     await tester.pumpAndSettle();
     expect(engine.connectedTo, rahul);
     expect(find.text('Sending to'), findsOneWidget);
-    expect(engine.devices.hasListener, isFalse, reason: 'no searching while connected');
+    expect(engine.tapped.hasListener, isFalse, reason: 'no listening for taps while connected');
 
     engine.sending!.add(const Connection(phase: LinkPhase.waiting, peer: rahulName, code: '4821'));
     await tester.pumpAndSettle();
@@ -188,8 +183,8 @@ void main() {
     expect(find.text('Disconnected'), findsOneWidget);
     await tester.tap(find.text('Done'));
     await tester.pumpAndSettle();
-    expect(find.text('Nearby'), findsOneWidget);
-    expect(engine.devices.hasListener, isTrue, reason: 'searching again once disconnected');
+    expect(find.text('Hold the backs of the phones together'), findsOneWidget);
+    expect(engine.tapped.hasListener, isTrue, reason: 'listening for taps again once disconnected');
   });
 
   Future<void> connectByCode(WidgetTester tester) async {
@@ -197,10 +192,8 @@ void main() {
     await go(tester, 'Send');
     await go(tester, 'Choose files');
     await go(tester, 'Files');
-    await go(tester, 'Nearby phones');
-    engine.devices.add([rahul]);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text(rahulName));
+    await go(tester, 'Tap phones');
+    engine.tapped.add(rahul.ticket!);
     await tester.pumpAndSettle();
     engine.sending!.add(connected.copyWith(code: '4821'));
     await tester.pumpAndSettle();
@@ -246,9 +239,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Done'));
     await tester.pumpAndSettle();
-    engine.devices.add([rahul]);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text(rahulName));
+    engine.tapped.add(rahul.ticket!);
     await tester.pumpAndSettle();
     engine.sending!.add(connected);
     await tester.pumpAndSettle();
@@ -265,10 +256,8 @@ void main() {
     expect(find.text('Change'), findsNothing);
   });
   testWidgets('Cancel before the other phone accepts leaves the screen at once', (tester) async {
-    await openMethod(tester, 'Nearby phones');
-    engine.devices.add([rahul]);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text(rahulName));
+    await openMethod(tester, 'Tap phones');
+    engine.tapped.add(rahul.ticket!);
     await tester.pumpAndSettle();
     expect(find.text('Connecting…'), findsOneWidget);
 
@@ -277,7 +266,11 @@ void main() {
 
     expect(engine.disconnects, 1);
     expect(find.text('Connecting…'), findsNothing);
-    expect(find.text('Nearby'), findsOneWidget, reason: 'back on the Nearby page, not stuck on "Cancelling…"');
+    expect(
+      find.text('Hold the backs of the phones together'),
+      findsOneWidget,
+      reason: 'back on the Tap page, not stuck on "Cancelling…"',
+    );
   });
 
   testWidgets('a second tap while a way to connect is opening does nothing', (tester) async {
@@ -296,14 +289,6 @@ void main() {
     );
   });
 
-  testWidgets('searching the network failing is said in words, not shown as an empty list', (tester) async {
-    await openMethod(tester, 'Nearby phones');
-    expect(find.text(searchFailedText), findsNothing);
-    engine.searchFailed.value = true;
-    await tester.pump();
-    expect(find.text(searchFailedText), findsOneWidget);
-  });
-
   testWidgets('tapping Check for updates again while one is running does nothing', (tester) async {
     engine.update = '0.1.9';
     await open(tester);
@@ -318,12 +303,9 @@ void main() {
   testWidgets('Receive says what stops other phones finding it, and what still works', (tester) async {
     await open(tester);
     await go(tester, 'Receive');
-    engine.receiving!.add(
-      const Connection(ticket: 'NV1ABC', problems: [SetupProblem.otherNetworks, SetupProblem.notListed]),
-    );
+    engine.receiving!.add(const Connection(ticket: 'NV1ABC', problems: [SetupProblem.otherNetworks]));
     await tester.pumpAndSettle();
     expect(find.text(setupProblemText(SetupProblem.otherNetworks)), findsOneWidget);
-    expect(find.text(setupProblemText(SetupProblem.notListed)), findsOneWidget);
   });
 
   testWidgets('Receive closes itself after ten quiet minutes and opens again on request', (tester) async {
@@ -362,36 +344,36 @@ void main() {
     await openMethod(tester, 'USB cable');
     expect(engine.prepared, [Purpose.usb]);
 
-    engine.usb.add(const NearbyDevice(id: 'usb', name: 'USB cable', kind: DeviceKind.phone, link: 'USB cable'));
+    engine.usb.add(const Peer(id: 'usb', name: 'USB cable', kind: DeviceKind.phone, link: 'USB cable'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('Sending to'), findsOneWidget);
     expect(engine.connectedTo?.id, 'usb');
   });
 
-  testWidgets('a missing permission closes the page: nothing is searched until it is allowed', (tester) async {
-    engine.missing = const [Need.permission, Need.bluetooth];
-    await openMethod(tester, 'Nearby phones');
+  testWidgets('a missing permission closes the page: nothing starts until it is allowed', (tester) async {
+    engine.missing = const [Need.permission, Need.location];
+    await openMethod(tester, 'Tap phones');
     expect(find.text('Turn these on to continue'), findsOneWidget);
-    expect(find.text('Allow Nearby devices so Nearvolt can find phones and be found.'), findsOneWidget);
-    expect(find.text('Bluetooth is off. Nearvolt needs it so phones can find each other.'), findsOneWidget);
-    expect(engine.discoveries, 0);
+    expect(find.text('Allow Nearby devices so Nearvolt can open its fast Wi-Fi link between phones.'), findsOneWidget);
+    expect(find.text('This Android version needs Location on to connect phones.'), findsOneWidget);
+    expect(engine.tapped.hasListener, isFalse);
 
     engine.missing = const [];
     await tester.tap(find.text('Allow'));
     await tester.pump();
     expect(engine.fixed, [Need.permission]);
     expect(find.text('Turn these on to continue'), findsNothing);
-    expect(engine.discoveries, 1);
+    expect(engine.tapped.hasListener, isTrue);
   });
 
   testWidgets('a prompt that never answers does not leave the page blank for ever', (tester) async {
     engine.hangPrepare = true;
-    await openMethod(tester, 'Nearby phones');
+    await openMethod(tester, 'Tap phones');
     expect(find.text('Turn these on to continue'), findsNothing);
 
     // Coming back to the app checks again, even though the first check never ended.
-    engine.missing = const [Need.bluetooth];
+    engine.missing = const [Need.location];
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
@@ -414,33 +396,33 @@ void main() {
 
     await open(tester);
     await go(tester, 'Send');
-    await go(tester, 'Nearby phones');
+    await go(tester, 'Tap phones');
 
     expect(lines.where((l) => l.startsWith('[tap]')), isNotEmpty, reason: lines.join('\n'));
     expect(lines.any((l) => l.startsWith('[tap] "Send')), isTrue, reason: lines.join('\n'));
-    expect(lines.any((l) => l.startsWith('[tap] "Nearby phones')), isTrue, reason: lines.join('\n'));
+    expect(lines.any((l) => l.startsWith('[tap] "Tap phones')), isTrue, reason: lines.join('\n'));
     expect(lines.any((l) => l.startsWith('[screen] opened')), isTrue, reason: lines.join('\n'));
   });
   testWidgets('backing out of the scanner leaves the other buttons working', (tester) async {
     await openMethod(tester, 'Scan code');
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    // Nothing stays locked: Nearby phones opens straight away.
-    await go(tester, 'Nearby phones');
-    expect(find.text('Nearby'), findsWidgets);
+    // Nothing stays locked: Tap phones opens straight away.
+    await go(tester, 'Tap phones');
+    expect(find.text('Hold the backs of the phones together'), findsOneWidget);
   });
   testWidgets('a switch turned on outside the app opens the page by itself', (tester) async {
     engine.missing = const [Need.wifi];
-    await openMethod(tester, 'Nearby phones');
+    await openMethod(tester, 'Tap phones');
     expect(find.text('Turn these on to continue'), findsOneWidget);
-    expect(engine.discoveries, 0);
+    expect(engine.tapped.hasListener, isFalse);
 
     // Switched on from the quick panel: no tap in the app, no return to the app.
     engine.missing = const [];
     await tester.pump(const Duration(seconds: 3));
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('Turn these on to continue'), findsNothing);
-    expect(engine.discoveries, 1);
+    expect(engine.tapped.hasListener, isTrue);
   });
   testWidgets('NFC off closes the tap page until it is on', (tester) async {
     engine.missing = const [Need.nfc];
@@ -519,10 +501,8 @@ void main() {
   });
 
   testWidgets('until the other phone accepts there is Cancel, not Disconnect, and no Add files', (tester) async {
-    await openMethod(tester, 'Nearby phones');
-    engine.devices.add([rahul]);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text(rahulName));
+    await openMethod(tester, 'Tap phones');
+    engine.tapped.add(rahul.ticket!);
     await tester.pumpAndSettle();
 
     expect(find.text('Connecting…'), findsOneWidget);

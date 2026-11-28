@@ -4,8 +4,8 @@ Move files directly between nearby Android phones at the full speed of the link.
 No server, no account, no internet. Every file is verified on disk, and
 interrupted transfers resume where they stopped.
 
-Connect by tapping phones together, by scanning a QR code, from the Nearby list
-(same Wi-Fi or Bluetooth, then Wi-Fi Direct), or with a USB cable. The phones
+Connect by tapping phones together, by scanning a QR code (both then move the files
+over a private Wi-Fi Direct link), or with a USB cable. The phones
 stay connected until either one taps Disconnect, and the sender can keep adding
 files.
 

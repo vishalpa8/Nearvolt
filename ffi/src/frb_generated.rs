@@ -584,12 +584,10 @@ impl SseDecode for crate::api::ReceiveTickets {
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut var_privateTicket = <String>::sse_decode(deserializer);
         let mut var_tapTicket = <String>::sse_decode(deserializer);
-        let mut var_publicTicket = <String>::sse_decode(deserializer);
         let mut var_port = <u16>::sse_decode(deserializer);
         return crate::api::ReceiveTickets {
             private_ticket: var_privateTicket,
             tap_ticket: var_tapTicket,
-            public_ticket: var_publicTicket,
             port: var_port,
         };
     }
@@ -781,7 +779,6 @@ impl flutter_rust_bridge::IntoDart for crate::api::ReceiveTickets {
         [
             self.private_ticket.into_into_dart().into_dart(),
             self.tap_ticket.into_into_dart().into_dart(),
-            self.public_ticket.into_into_dart().into_dart(),
             self.port.into_into_dart().into_dart(),
         ]
         .into_dart()
@@ -1041,7 +1038,6 @@ impl SseEncode for crate::api::ReceiveTickets {
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <String>::sse_encode(self.private_ticket, serializer);
         <String>::sse_encode(self.tap_ticket, serializer);
-        <String>::sse_encode(self.public_ticket, serializer);
         <u16>::sse_encode(self.port, serializer);
     }
 }

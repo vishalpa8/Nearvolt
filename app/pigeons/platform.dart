@@ -13,7 +13,6 @@ class DeviceInfo {
     this.name,
     this.kind,
     this.hasNfc,
-    this.hasBluetooth,
     this.dataDir,
     this.downloadDir,
     this.journalDir,
@@ -25,7 +24,6 @@ class DeviceInfo {
   /// "phone" or "tablet".
   String kind;
   bool hasNfc;
-  bool hasBluetooth;
   String dataDir;
   String downloadDir;
   String journalDir;
@@ -52,13 +50,11 @@ class PickResult {
   int skipped;
 }
 
-/// What came of opening Receive: the Wi-Fi Direct group, if one could be made, and
-/// whether this phone could be listed for others on the local network.
+/// What came of opening Receive: the Wi-Fi Direct group, if one could be made.
 class ReceiveSetup {
-  ReceiveSetup(this.group, this.listed);
+  ReceiveSetup(this.group);
 
   WifiGroup? group;
-  bool listed;
 }
 
 class WifiGroup {
@@ -71,7 +67,7 @@ class WifiGroup {
 
 /// What Send and Receive need from Android, as it is right now.
 class Readiness {
-  Readiness(this.permission, this.permissionInSettings, this.bluetooth, this.wifi, this.location, this.nfc);
+  Readiness(this.permission, this.permissionInSettings, this.wifi, this.location, this.nfc);
 
   /// The Nearby devices permissions are granted.
   bool permission;
@@ -79,8 +75,6 @@ class Readiness {
   /// They were refused for good, so only the app's settings can grant them.
   bool permissionInSettings;
 
-  /// On, or the device has no Bluetooth.
-  bool bluetooth;
   bool wifi;
 
   /// Location is on, or not needed (Android 13 and later).
@@ -97,7 +91,6 @@ enum Requirement {
 
   /// The app's settings page, for permissions refused for good.
   appSettings,
-  bluetooth,
   wifi,
   location,
   nfc,
@@ -113,11 +106,6 @@ class UpdateInfo {
 }
 
 enum PlatformEventKind {
-  /// A device with Receive open was found (`id`, `name`, `deviceKind`, `link`,
-  /// and `ticket` when it was found on the local network).
-  receiverFound,
-  receiverLost,
-
   /// The phones were tapped together; `ticket` carries the receiver's code.
   ticketTapped,
 
@@ -129,19 +117,13 @@ enum PlatformEventKind {
 
   /// Update download progress, 0 to 1.
   updateProgress,
-
-  /// Searching the local network for receivers couldn't start, even after retries.
-  searchFailed,
 }
 
 class PlatformEvent {
   PlatformEvent(this.kind);
 
   PlatformEventKind kind;
-  String? id;
   String? name;
-  String? deviceKind;
-  String? link;
   String? ticket;
   int? fd;
   bool? host;
@@ -181,15 +163,13 @@ abstract class NearvoltPlatform {
   @async
   String? scanQr();
 
-  /// Opens Receive: serves the tap ticket over NFC and advertises the public one
-  /// on the local network and Bluetooth, then creates the Wi-Fi Direct group.
+  /// Opens Receive: serves the tap ticket over NFC, then creates the Wi-Fi Direct group.
   @async
-  ReceiveSetup startReceiving(String tapTicket, String publicTicket, int port);
+  ReceiveSetup startReceiving(String tapTicket, int port);
 
-  void updateTickets(String tapTicket, String publicTicket, int port);
+  void updateTickets(String tapTicket, int port);
 
-  /// A transfer started: stops advertising this phone over Bluetooth, the local
-  /// network and NFC, and closes the Wi-Fi Direct group unless the sender
+  /// A transfer started: stops serving the tap ticket over NFC and closes the Wi-Fi Direct group unless the sender
   /// joined it. The receiver keeps listening, so the sender can still reconnect.
   ///
   /// `senderAddress` is where the sender connected from, when known: an address of
@@ -197,11 +177,6 @@ abstract class NearvoltPlatform {
   void stopAdvertising(String? senderAddress);
 
   void stopReceiving();
-
-  /// Looks for receivers on the local network and over Bluetooth.
-  void startNearby();
-
-  void stopNearby();
 
   /// Reads a receiver's ticket when the phones are tapped together.
   void startTapReading();
@@ -211,10 +186,6 @@ abstract class NearvoltPlatform {
   /// Starts noticing USB cables to other phones, reported as `usbConnected` and
   /// `usbDisconnected` events.
   void watchUsb();
-
-  /// Reads the public ticket of a receiver found over Bluetooth.
-  @async
-  String readTicket(String receiverId);
 
   @async
   String? joinWifi(WifiGroup group);

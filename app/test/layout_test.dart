@@ -121,18 +121,13 @@ void main() {
         });
       }
 
-      testWidgets('send and nearby fit a $where at text size $scale', (tester) async {
+      testWidgets('send and tap fit a $where at text size $scale', (tester) async {
         await show(tester, size, scale, NearvoltApp(engine: engine, profile: profile));
         await go(tester, 'Send');
         expect(tester.takeException(), isNull, reason: 'the send screen');
-        await go(tester, 'Nearby phones');
-        engine.devices.add([
-          const NearbyDevice(id: 'a', name: _longName, kind: DeviceKind.phone, link: 'Same Wi-Fi', ticket: 'x'),
-          const NearbyDevice(id: 'b', name: 'Studio tablet', kind: DeviceKind.tablet, link: 'Bluetooth'),
-        ]);
-        await tester.pump();
+        await go(tester, 'Tap phones');
         await tester.pump(const Duration(milliseconds: 400));
-        expect(tester.takeException(), isNull, reason: 'the nearby list');
+        expect(tester.takeException(), isNull, reason: 'the tap page');
       });
     }
   }

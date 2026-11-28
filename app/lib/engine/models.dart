@@ -14,21 +14,19 @@ enum Purpose {
   /// Scanning the receiver's QR code.
   scan,
 
-  /// Finding phones on the local network and over Bluetooth.
-  nearby,
-
   /// A USB cable.
   usb,
 
-  /// Being found, and receiving.
+  /// Receiving.
   receive;
 
-  /// Needs the Nearby devices permission, Bluetooth and, on Android 11 and 12, Location.
-  bool get findsPhones => this == nearby || this == receive;
+  /// Joins or makes a Wi-Fi Direct link: needs the Nearby devices permission and, on
+  /// Android 11 and 12, Location.
+  bool get usesWifiDirect => this == tap || this == scan || this == receive;
 }
 
 /// Something off that a page needs, most important first.
-enum Need { permission, permissionInSettings, nfc, wifi, bluetooth, location }
+enum Need { permission, permissionInSettings, nfc, wifi, location }
 
 class DeviceProfile {
   const DeviceProfile({required this.name, required this.kind, required this.hasNfc, required this.version});
@@ -41,9 +39,9 @@ class DeviceProfile {
   final String version;
 }
 
-/// A device with Receive open.
-class NearbyDevice {
-  const NearbyDevice({required this.id, required this.name, required this.kind, required this.link, this.ticket});
+/// The phone at the other end: a receiver from a code, or a phone on a USB cable.
+class Peer {
+  const Peer({required this.id, required this.name, required this.kind, required this.link, this.ticket});
 
   final String id;
   final String name;
@@ -52,8 +50,7 @@ class NearbyDevice {
   /// How the two devices connect, for example "Same Wi-Fi".
   final String link;
 
-  /// Known right away for QR codes, NFC taps and the local network; read on
-  /// demand for devices found over Bluetooth. None for a USB cable.
+  /// From the QR code or NFC tap. None for a USB cable.
   final String? ticket;
 }
 
@@ -170,9 +167,6 @@ enum LinkPhase {
 enum SetupProblem {
   /// No Wi-Fi Direct network could be made, so phones on other Wi-Fi networks can't connect.
   otherNetworks,
-
-  /// This phone couldn't be listed for the Nearby list.
-  notListed,
 }
 
 /// A phone asking to connect, on the receiving side.

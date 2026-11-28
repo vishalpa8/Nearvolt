@@ -2,8 +2,6 @@ package app.nearvolt
 
 import android.Manifest
 import android.app.Activity
-import android.bluetooth.BluetoothAdapter
-import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -39,7 +37,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import java.io.File
@@ -54,8 +51,6 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
     private val emit: (PlatformEvent) -> Unit = { event -> scope.launch { runCatching { events.onEvent(event) } } }
 
     private val wifiDirect = WifiDirect(context)
-    private val local = LocalDiscovery(context, emit)
-    private val ble = Ble(context, emit)
     private val nfc = Nfc(activity, emit)
     private val usb = Usb(context, emit)
     private val updater = Updater(activity, emit)
@@ -74,7 +69,6 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
     }
 
     private val prefs = context.getSharedPreferences("nearvolt", Context.MODE_PRIVATE)
-    private val bluetooth = context.getSystemService(BluetoothManager::class.java)?.adapter
     private val wifi = context.getSystemService(WifiManager::class.java)
     private val location = context.getSystemService(LocationManager::class.java)
 
@@ -94,7 +88,6 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
         name = name,
         kind = kind,
         hasNfc = NfcAdapter.getDefaultAdapter(context) != null,
-        hasBluetooth = context.packageManager.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE),
         dataDir = context.filesDir.absolutePath,
         downloadDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Nearvolt").absolutePath,
         journalDir = File(context.filesDir, "journals").absolutePath,
@@ -148,7 +141,6 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
             permission = missing.isEmpty(),
             permissionInSettings = missing.isNotEmpty() && prefs.getBoolean(ASKED, false) &&
                 missing.none(activity::shouldShowRequestPermissionRationale),
-            bluetooth = bluetooth?.isEnabled ?: true,
             wifi = wifi.isWifiEnabled,
             location = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU || location.isLocationEnabled,
             nfc = NfcAdapter.getDefaultAdapter(context)?.isEnabled ?: true,
@@ -167,18 +159,6 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
             Requirement.APP_SETTINGS -> activity.settings.launch(
                 Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null)),
             )
-            // Android's "turn on Bluetooth" dialog needs the Nearby devices permission.
-            Requirement.BLUETOOTH -> if (nearbyGranted) {
-                val answer = activity.settings.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE))
-                if (answer.resultCode == Activity.RESULT_OK) settle { bluetooth?.isEnabled == false }
-                if (bluetooth?.isEnabled == false) {
-                    // The small dialog was closed, or this phone never showed it. Bluetooth's
-                    // own settings page always works, so the user is taken there.
-                    AppLog.write("setup", "Bluetooth is still off after the dialog; opening its settings")
-                    activity.settings.launch(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
-                    settle { bluetooth?.isEnabled == false }
-                }
-            }
             Requirement.WIFI -> {
                 activity.settings.launch(Intent(Settings.Panel.ACTION_WIFI))
                 settle { wifi.wifiState == WifiManager.WIFI_STATE_ENABLING }
@@ -199,22 +179,13 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
 
     private fun granted(permission: String) = activity.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
 
-    /** Bluetooth and Wi-Fi Direct stay off without it; the local network, QR codes and NFC still work. */
+    /** Wi-Fi Direct stays off without it; the shared Wi-Fi network, QR codes and NFC still work, but slower. */
     private val nearbyGranted get() = permissionsFor("nearby").all(::granted)
 
     private fun permissionsFor(feature: String): List<String> = when (feature) {
         "nearby" -> when {
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> listOf(
                 Manifest.permission.NEARBY_WIFI_DEVICES,
-                Manifest.permission.BLUETOOTH_SCAN,
-                Manifest.permission.BLUETOOTH_ADVERTISE,
-                Manifest.permission.BLUETOOTH_CONNECT,
-            )
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> listOf(
-                Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.BLUETOOTH_SCAN,
-                Manifest.permission.BLUETOOTH_ADVERTISE,
-                Manifest.permission.BLUETOOTH_CONNECT,
             )
             else -> listOf(Manifest.permission.ACCESS_FINE_LOCATION)
         }
@@ -257,7 +228,7 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
     } catch (e: Exception) {
         AppLog.write("scanner", "scan failed${(e as? MlKitException)?.let { " with code ${it.errorCode}" } ?: ""}")
         AppLog.error("scanner", e)
-        throw FlutterError("scanner", "The code scanner didn't start. Try again, or tap phones or pick from Nearby phones instead.")
+        throw FlutterError("scanner", "The code scanner didn't start. Try again, or tap the phones instead.")
     }
 
     /**
@@ -355,55 +326,28 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
         throw FlutterError("scanner", "The code scanner is still downloading. Try again in a moment.")
     }
 
-    override suspend fun startReceiving(tapTicket: String, publicTicket: String, port: Long): ReceiveSetup {
-        val listing = advertise(tapTicket, publicTicket, port)
+    override suspend fun startReceiving(tapTicket: String, port: Long): ReceiveSetup {
+        nfc.serve(tapTicket)
         val group = if (nearbyGranted) wifiDirect.createGroup() else null
-        // Android answers within a moment; no answer counts as not listed.
-        val listed = withTimeoutOrNull(2_000) { listing.await() } ?: false
         AppLog.write(
             "receive",
-            "listening on port $port, Wi-Fi Direct group ${group?.let { "on ${it.frequency} MHz" } ?: "not created"}, " +
-                "${if (listed) "listed" else "not listed"} on the network",
+            "listening on port $port, Wi-Fi Direct group ${group?.let { "on ${it.frequency} MHz" } ?: "not created"}",
         )
-        return ReceiveSetup(group, listed)
+        return ReceiveSetup(group)
     }
 
-    override fun updateTickets(tapTicket: String, publicTicket: String, port: Long) {
-        advertise(tapTicket, publicTicket, port)
-    }
-
-    /** Makes this phone findable: by tap, on the local network, and over Bluetooth. */
-    private fun advertise(tapTicket: String, publicTicket: String, port: Long): CompletableDeferred<Boolean> {
-        nfc.serve(tapTicket)
-        val listed = local.advertise(name, kind, publicTicket, port.toInt())
-        if (nearbyGranted) ble.advertise(publicTicket)
-        return listed
-    }
+    override fun updateTickets(tapTicket: String, port: Long) = nfc.serve(tapTicket)
 
     override fun releaseSelection(token: Long) = NativeBridge.release(token)
 
     override fun stopAdvertising(senderAddress: String?) {
         nfc.stopServing()
-        local.stopAdvertising()
-        ble.stopAdvertising()
         if (nearbyGranted) scope.launch { wifiDirect.removeGroupIfUnused(senderAddress) }
     }
 
     override fun stopReceiving() {
         nfc.stopServing()
-        local.stopAdvertising()
-        ble.stopAdvertising()
         wifiDirect.removeGroup()
-    }
-
-    override fun startNearby() {
-        local.browse()
-        if (nearbyGranted) ble.scan()
-    }
-
-    override fun stopNearby() {
-        local.stopBrowsing()
-        ble.stopScan()
     }
 
     override fun startTapReading() = nfc.read()
@@ -411,8 +355,6 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
     override fun stopTapReading() = nfc.stopReading()
 
     override fun watchUsb() = usb.watch()
-
-    override suspend fun readTicket(receiverId: String): String = ble.readTicket(receiverId)
 
     override suspend fun joinWifi(group: WifiGroup): String? {
         val started = SystemClock.elapsedRealtime()
@@ -447,7 +389,6 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
     fun onNewIntent(intent: Intent) = usb.handle(intent)
 
     fun close() {
-        stopNearby()
         stopTapReading()
         stopReceiving()
         usb.close()

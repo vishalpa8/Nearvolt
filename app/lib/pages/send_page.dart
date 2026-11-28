@@ -97,7 +97,7 @@ class _SendPageState extends State<SendPage> {
       return tell(friendlyPlatform(e));
     }
     if (ticket == null) return;
-    final NearbyDevice device;
+    final Peer device;
     try {
       device = engine.deviceFor(ticket);
     } on Object {
@@ -175,12 +175,6 @@ class _SendPageState extends State<SendPage> {
             onTap: () => _scan(context),
           ),
           ChoiceTile(
-            icon: Icons.radar_rounded,
-            title: 'Nearby phones',
-            detail: 'Pick it from a list when you are on the same Wi-Fi. The other phone approves with a code.',
-            onTap: () => _open(context, _NearbyPage(engine: engine, files: _unsent)),
-          ),
-          ChoiceTile(
             icon: Icons.usb_rounded,
             title: 'USB cable',
             detail: 'Plug the phones into each other. No Wi-Fi needed.',
@@ -194,7 +188,7 @@ class _SendPageState extends State<SendPage> {
 
 /// Connects to [device] and shows the connection until the user leaves it.
 /// [files], if chosen first, are sent once the connection is set up.
-Future<void> openConnection(BuildContext context, TransferEngine engine, NearbyDevice device, {Selection? files}) {
+Future<void> openConnection(BuildContext context, TransferEngine engine, Peer device, {Selection? files}) {
   final updates = engine.connect(device);
   return Navigator.of(context).push(
     MaterialPageRoute<void>(
@@ -244,7 +238,7 @@ mixin _MethodMixin<T extends StatefulWidget, F> on State<T>, NeedsMixin<T> {
 
   /// Opens the connection. A second tap, or a second tap-read, while one is opening
   /// does nothing, so there's never two connections to the same phone.
-  Future<void> connectTo(NearbyDevice device) async {
+  Future<void> connectTo(Peer device) async {
     if (_connecting) return;
     _connecting = true;
     _sub?.cancel();
@@ -285,7 +279,7 @@ class _TapPageState extends State<_TapPage> with NeedsMixin, _MethodMixin<_TapPa
 
   @override
   void found(String ticket) {
-    final NearbyDevice device;
+    final Peer device;
     try {
       device = engine.deviceFor(ticket);
     } on Object {
@@ -316,7 +310,7 @@ class _UsbPage extends StatefulWidget {
   State<_UsbPage> createState() => _UsbPageState();
 }
 
-class _UsbPageState extends State<_UsbPage> with NeedsMixin, _MethodMixin<_UsbPage, NearbyDevice?> {
+class _UsbPageState extends State<_UsbPage> with NeedsMixin, _MethodMixin<_UsbPage, Peer?> {
   @override
   TransferEngine get engine => widget.engine;
 
@@ -327,10 +321,10 @@ class _UsbPageState extends State<_UsbPage> with NeedsMixin, _MethodMixin<_UsbPa
   Purpose get purpose => Purpose.usb;
 
   @override
-  Stream<NearbyDevice?> find() => engine.usbPeer();
+  Stream<Peer?> find() => engine.usbPeer();
 
   @override
-  void found(NearbyDevice? device) {
+  void found(Peer? device) {
     if (device != null) connectTo(device);
   }
 
@@ -343,78 +337,6 @@ class _UsbPageState extends State<_UsbPage> with NeedsMixin, _MethodMixin<_UsbPa
         headline: 'Connect the phones with a USB cable',
         detail: 'A USB-C to USB-C cable, or an adapter. The other phone needs Receive open and asks once to allow it.',
       );
-}
-
-class _NearbyPage extends StatefulWidget {
-  const _NearbyPage({required this.engine, this.files});
-
-  final TransferEngine engine;
-  final Selection? files;
-
-  @override
-  State<_NearbyPage> createState() => _NearbyPageState();
-}
-
-class _NearbyPageState extends State<_NearbyPage> with NeedsMixin, _MethodMixin<_NearbyPage, List<NearbyDevice>> {
-  List<NearbyDevice> _devices = const [];
-
-  @override
-  TransferEngine get engine => widget.engine;
-
-  @override
-  Selection? get files => widget.files;
-
-  @override
-  Purpose get purpose => Purpose.nearby;
-
-  @override
-  Stream<List<NearbyDevice>> find() => engine.nearby();
-
-  @override
-  void found(List<NearbyDevice> devices) => setState(() => _devices = devices);
-
-  @override
-  Widget build(BuildContext context) {
-    if (blockedPage('Nearby phones') case final page?) return page;
-    final text = Theme.of(context).textTheme;
-    return PageScaffold(
-      title: 'Nearby phones',
-      onBack: () => Navigator.of(context).maybePop(),
-      body: ListView(
-        padding: const EdgeInsets.only(bottom: Space.xl),
-        children: [
-          const SizedBox(height: Space.xl),
-          Text('Nearby', style: text.titleMedium),
-          const SizedBox(height: Space.xs),
-          Text(
-            'Phones on the same Wi-Fi with Receive open. For phones on different networks, use Scan code or Tap.',
-            style: text.bodySmall?.copyWith(color: AppColors.textSecondary),
-          ),
-          const SizedBox(height: Space.m),
-          // Searching the network couldn't start: say so, instead of an empty list that
-          // looks like nobody is there.
-          ValueListenableBuilder<bool>(
-            valueListenable: engine.searchFailed,
-            builder: (context, failed, _) => failed
-                ? Padding(
-                    padding: const EdgeInsets.only(bottom: Space.m),
-                    child: Panel(
-                      child: Row(
-                        children: [
-                          const Icon(Icons.info_outline_rounded, color: AppColors.warning),
-                          const SizedBox(width: Space.m),
-                          Expanded(child: Text(searchFailedText, style: text.bodyMedium)),
-                        ],
-                      ),
-                    ),
-                  )
-                : const SizedBox.shrink(),
-          ),
-          DeviceList(devices: _devices, onTap: connectTo),
-        ],
-      ),
-    );
-  }
 }
 
 /// A method page with nothing to choose: one picture and what to do.
@@ -435,25 +357,32 @@ class _Waiting extends StatelessWidget {
       body: Column(
         children: [
           Expanded(
-            child: Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 120,
-                    height: 120,
-                    decoration: const BoxDecoration(shape: BoxShape.circle, color: AppColors.accentSoft),
-                    child: Icon(icon, size: 56, color: AppColors.accent),
+            child: LayoutBuilder(
+              builder: (context, box) => SingleChildScrollView(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(minHeight: box.maxHeight),
+                  child: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 120,
+                          height: 120,
+                          decoration: const BoxDecoration(shape: BoxShape.circle, color: AppColors.accentSoft),
+                          child: Icon(icon, size: 56, color: AppColors.accent),
+                        ),
+                        const SizedBox(height: Space.xl),
+                        Text(headline, style: text.titleLarge, textAlign: TextAlign.center),
+                        const SizedBox(height: Space.s),
+                        Text(
+                          detail,
+                          style: text.bodyMedium?.copyWith(color: AppColors.textSecondary),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ),
                   ),
-                  const SizedBox(height: Space.xl),
-                  Text(headline, style: text.titleLarge, textAlign: TextAlign.center),
-                  const SizedBox(height: Space.s),
-                  Text(
-                    detail,
-                    style: text.bodyMedium?.copyWith(color: AppColors.textSecondary),
-                    textAlign: TextAlign.center,
-                  ),
-                ],
+                ),
               ),
             ),
           ),

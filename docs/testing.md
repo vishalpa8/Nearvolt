@@ -34,7 +34,7 @@ Golden screenshots are rendered on Windows, so CI on Linux skips them
     long it took (a request with no "answered" line never came back).
   - `[setup]` what each page is missing, `[event]` each step of a transfer
     (batch started, completed, failed), `[error]` anything that went wrong.
-  - `[bluetooth]`, `[nfc]`, `[nearby]`, `[usb]`, `[wifi-direct]`: what each
+  - `[nfc]`, `[usb]`, `[wifi-direct]`: what each
     radio did. A failure is written, never swallowed.
   Phone names can appear in tap labels, so share the log only with people you
   trust. All of this is switched off by `detailedLogging` in `app/lib/debug.dart`
@@ -80,39 +80,38 @@ adb -s <B> shell sha256sum "/sdcard/Download/Nearvolt/<file>"
 
 ### Permissions and switches
 
-Start with a fresh install, Bluetooth off.
+Start with a fresh install.
 
 | # | Steps | Expected |
 |---|---|---|
-| P1 | Open the app, then tap Send. | Send lists Tap phones, Scan code, Nearby phones and USB cable; no permission prompt yet. |
-| P2 | Tap Nearby phones. | Android asks for Nearby devices and notifications, then asks to turn on Bluetooth. Allow all: the page opens with no gate. |
-| P3 | Reinstall, open Nearby phones and deny Nearby devices. | The page doesn't open; a "Turn these on to continue" screen asks to allow it. Tap Allow and grant it: the page opens and Bluetooth phones start appearing. |
+| P1 | Open the app, then tap Send. | Send lists Tap phones, Scan code and USB cable; no permission prompt yet. |
+| P2 | Tap Tap phones. | Android asks for Nearby devices and notifications. Allow all: the page opens with no gate. |
+| P3 | Reinstall, open Tap phones and deny Nearby devices. | The page doesn't open; a "Turn these on to continue" screen asks to allow it. Tap Allow and grant it: the page opens. |
 | P4 | Deny Nearby devices twice. | The button says Settings and opens Nearvolt's app settings; granting it there and coming back opens the page. |
-| P5 | Turn NFC off, open Tap phones. Then, on the other phone, turn NFC off and open Receive. | Neither page opens; each shows an NFC gate whose Turn on button opens Android's NFC settings, and the page opens once NFC is on. No permission or Bluetooth prompt on Tap. |
-| P6 | Turn Wi-Fi off, open Nearby phones. | The page stays closed behind a Wi-Fi gate; Turn on opens Android's Wi-Fi panel. Also try Receive and Scan code: Receive doesn't start, and the camera doesn't open until Wi-Fi is on. |
+| P5 | Turn NFC off, open Tap phones. Then, on the other phone, turn NFC off and open Receive. | Neither page opens; each shows an NFC gate whose Turn on button opens Android's NFC settings, and the page opens once NFC is on. |
+| P6 | Turn Wi-Fi off, open Tap phones. | The page stays closed behind a Wi-Fi gate; Turn on opens Android's Wi-Fi panel. Also try Receive and Scan code: Receive doesn't start, and the camera doesn't open until Wi-Fi is on. |
 | P6a | With the gate showing, turn the switch on from the quick settings panel (pull down from the top) and don't touch the app. | The page opens by itself within a couple of seconds; it re-checks every 2 s while the gate shows. |
-| P7 | Android 11 or 12 only: turn Location off, open Nearby phones. | A Location gate; Turn on opens Location settings. |
-| P8 | With Nearby phones open, turn Bluetooth off from quick settings. | The page closes behind the Bluetooth gate, and opens again when it is back on. |
+| P7 | Android 11 or 12 only: turn Location off, open Tap phones. | A Location gate; Turn on opens Location settings. |
 
 ### Ways to connect
 
 | # | Steps | Expected |
 |---|---|---|
-| 1 | Both on the same Wi-Fi. B opens Receive, A opens Send › Nearby phones. | B appears within 3 s, marked "Same Wi-Fi". |
-| 2 | On A, tap B. | Both screens show the same 4-digit code. B accepts; A shows "Connected". |
+| 1 | B opens Receive. | B shows its QR code, "Waiting for a sender" and hints for scan, tap and USB. There is no list of phones to pick from. |
+| 2 | Connect over USB (row 7). | Both screens show the same 4-digit code. B accepts; A shows "Connected". |
 | 3 | On A, tap Add files and pick some. Before they finish, add more. | The first batch shows "Sending", the second "Waiting its turn", then each "Sent and verified". B lists the same as "Received and verified". Hashes match. |
 | 3a | While a file is sending, disconnect on either phone. | Both screens say Disconnected and the file row says "Cancelled · not sent" (A) or "Cancelled · not received" (B), never "Sending" or "Receiving". The line below says how many files were not sent. |
 | 3b | On A, choose files on the Send screen, connect, send, disconnect, and go back to Send. | Nothing is selected any more: it says "Choose files" again. Connecting again does not resend the old files. |
-| 4 | Both with Wi-Fi on but not connected to the same network (or none). B opens Receive. | B appears on A marked "Bluetooth". Connecting joins B's Wi-Fi Direct group with no pop-up; then as in 2 and 3. |
+| 4 | Both with Wi-Fi on but not connected to the same network (or none). B opens Receive. | Scanning or tapping joins B's Wi-Fi Direct group with no pop-up; then as in 3. |
 | 5 | B opens Receive. On A, Send › Scan code, scan B's QR code. | No code to compare, and B is not asked: scanning is the consent. A shows "Connected" at once. |
 | 6 | B opens Receive. On A, Send › Tap phones, then hold the backs together. | Connected at once, with no prompt on B. |
 | 6a | As 6, but first choose files on A's Send page. | The files start sending as soon as A says Connected, with no "Add files" tap. |
 | 6b | On A, choose a way to connect, then keep B's screen on its accept prompt for 10 seconds before accepting. | A shows "Connecting…" or "Waiting for B to accept" with Cancel and no Add files. B is asked once. After accepting, A says Connected and shows Add files and Disconnect. |
 | 6c | Turn B's Wi-Fi off for 15 seconds while connected. | A shows "Link dropped · Reconnecting…" with Stop reconnecting and no Add files, then Connected again. |
 | 7 | B opens Receive, A opens Send › USB cable, then connect the phones with a cable. Answer Android's prompts ("Allow access", "Open Nearvolt"). | A connects by itself; both show the same code, as in 2. |
-| 8 | B closes Receive. | B disappears from A's Nearby list. |
+| 8 | B closes Receive. | A's next connection attempt says B isn't reachable any more. |
 | 9 | B declines. | A shows "Connection failed" with "The receiver declined." |
-| 10 | While A and B are connected over the same Wi-Fi, look for B in a third phone's Nearby list and in its Wi-Fi Direct settings, and try connecting from the third phone with B's QR code. | B is in neither list, and the third phone is turned away: "This phone is connected to another device." |
+| 10 | While A and B are connected, try connecting from a third phone with B's QR code. | The third phone is turned away: "This phone is connected to another device." |
 | 11 | Tap Disconnect on B. | A shows "B disconnected" and a Done button. Both stop. |
 | 11a | Send a large video and tap Disconnect on either phone halfway. | The receiver's `Download/Nearvolt` has no half file and no `.nvpart` file; files that had finished stay. Sending again starts the video from the beginning. |
 | 11b | Fill the receiver's storage almost completely, then send a file bigger than the free space. | Both phones say, in words, that there isn't enough space (on the receiving phone's screen: "on this phone"). The sender doesn't sit on "Reconnecting…", and the connection stays so another batch can be sent. |
@@ -175,7 +174,6 @@ run, share `nearvolt.log` from both phones.
 | S2a | Shared Wi-Fi only (to compare) | Turn off Wi-Fi Direct on the receiver or use a phone that can't create a group; the log then says `falling back to the shared network`. | `connected … (same Wi-Fi)` |
 | S3 | Wi-Fi Direct, no router | Wi-Fi on, but forget or switch off the router on both. Send › Scan code. | `joined the receiver's Wi-Fi Direct group in … s`, `(Wi-Fi Direct)` |
 | S4 | Wi-Fi Direct, phones on different networks | Each phone on a different Wi-Fi network. Send › Tap phones. | As S3 |
-| S5 | A third phone's hotspot | Both phones join the hotspot. Send › Nearby phones. | `(same Wi-Fi)` |
 | S6 | USB cable | Send › USB cable. | `over the USB cable` |
 
 What the log shows for each run:
@@ -200,5 +198,4 @@ What the log shows for each run:
 | S2 | | | | | |
 | S3 | | | | | |
 | S4 | | | | | |
-| S5 | | | | | |
 | S6 | | | | | |

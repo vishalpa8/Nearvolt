@@ -1,5 +1,3 @@
-import 'package:flutter/foundation.dart' show ValueListenable;
-
 import 'models.dart';
 
 /// Everything the UI needs. [NativeEngine] implements it with the Rust engine and
@@ -8,8 +6,8 @@ abstract interface class TransferEngine {
   /// This device. Call once before anything else.
   Future<DeviceProfile> start();
 
-  /// Asks Android for what `purpose` uses, such as permissions and Bluetooth, then
-  /// returns what's still missing. Tapping, scanning and USB ask for nothing.
+  /// Asks Android for what `purpose` uses, such as the permissions for Wi-Fi Direct,
+  /// then returns what's still missing. USB asks for nothing.
   Future<List<Need>> prepare(Purpose purpose);
 
   /// What `purpose` is missing right now.
@@ -18,21 +16,14 @@ abstract interface class TransferEngine {
   /// Shows Android's prompt or settings page for `need`; then call [needs].
   Future<void> fix(Need need);
 
-  /// Devices with Receive open on the local network or over Bluetooth, while listened to.
-  Stream<List<NearbyDevice>> nearby();
-
-  /// True when searching the local network couldn't start, even after retrying;
-  /// the Nearby page then says so and points to the other ways to connect.
-  ValueListenable<bool> get searchFailed;
-
   /// Tickets from phones tapped against this one, while listened to.
   Stream<String> taps();
 
   /// The phone at the other end of a USB cable, or null, while listened to.
-  Stream<NearbyDevice?> usbPeer();
+  Stream<Peer?> usbPeer();
 
   /// The receiver a ticket describes.
-  NearbyDevice deviceFor(String ticket);
+  Peer deviceFor(String ticket);
 
   /// Scans a receiver's QR code. Returns its ticket, or null if cancelled.
   Future<String?> scanCode();
@@ -44,7 +35,7 @@ abstract interface class TransferEngine {
   /// Connects to `to` and keeps the connection, reconnecting the same way
   /// whenever the link drops, until [disconnect]. Each event is the whole
   /// connection as it is now.
-  Stream<Connection> connect(NearbyDevice to);
+  Stream<Connection> connect(Peer to);
 
   /// Adds files to the open connection; they go after anything queued before.
   void queue(Selection what);

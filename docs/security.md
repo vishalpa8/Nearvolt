@@ -8,7 +8,7 @@ two devices.
 | Threat | Defense |
 |---|---|
 | Someone nearby intercepts or reads the transfer | TLS 1.3 encryption on every byte, over Wi-Fi and USB alike |
-| Someone nearby impersonates the receiver | With a QR code or NFC tap, the sender only accepts the certificate in the ticket. From the Nearby list or over USB, both screens show a 4-digit code bound to both certificates, and the receiver's user accepts only when they match |
+| Someone nearby impersonates the receiver | With a QR code or NFC tap, the sender only accepts the certificate in the ticket. Over USB, both screens show a 4-digit code bound to both certificates, and the receiver's user accepts only when they match |
 | A device in the middle tries to make the two codes match | The sender commits to its random nonce before seeing the receiver's, so the codes can't be steered; each attempt has a 1 in 10,000 chance and needs the user to accept |
 | Someone nearby pushes files to you | The receiver's user accepts each connection, comparing the code when there is one. Only a phone held against yours connects without asking. While one phone is connected, every other is turned away |
 | Brute-forcing the pairing secret | 128-bit secret, constant-time comparison, failed handshakes are ignored and limited to 32 at once, so they can't end Receive |
@@ -30,17 +30,12 @@ two devices.
     centimetres. Scanning or tapping is the consent, so neither asks the
     receiver's user again. The trade-off: anyone who can photograph the QR code
     while it is on screen can connect, so keep it from view of strangers.
-  - A phone found in a Nearby list (or over USB) has no secret, so both screens show a
+  - A phone on a USB cable has no secret, so both screens show a
     4-digit code and the receiver's user compares it while accepting. The sender has
-    no second confirmation. The trade-off, chosen to keep pairing to one tap: if
-    another phone advertises under the receiver's name, the sender is told only by the
-    code on its screen, and nothing stops it unless the user notices.
-- The public ticket advertised over the local network and Bluetooth has no
-  secret, so connections started from it always go through the code. It also
-  leaves out the Wi-Fi Direct group's name and password: everyone on the network
-  and in Bluetooth range can read it, and with the password anyone could join
-  the receiver's own network. Phones on different networks connect with the QR
-  code or a tap, which carry the group details. Tickets leave out mobile-data
+    no second confirmation.
+- Nothing advertises the receiver over the network or Bluetooth any more, so a
+  stranger can't list it. The Wi-Fi Direct group's name and password are only in
+  the QR code and the NFC tap, never broadcast. Tickets leave out mobile-data
   and VPN addresses too.
 
 ## Limits on what a stranger can send
@@ -56,14 +51,13 @@ two devices.
 ## Listening
 
 The receiver listens only while the Receive page is open, on a random port, and
-the network listener, Bluetooth advertisement, NFC card and Wi-Fi Direct group all
-stop when it closes. Every receive session creates a new secret. Streams arriving
+the NFC card and Wi-Fi Direct group stop when it closes. Every receive session creates a new secret. Streams arriving
 over a USB cable are dropped unless Receive is open.
 
 ## Permissions
 
-- Bluetooth and Wi-Fi Direct are requested with `neverForLocation`; location is
-  only requested on Android 11 and 12, where the system requires it for scans.
+- Wi-Fi Direct is requested with `neverForLocation`; location is
+  only requested on Android 11 and 12, where the system requires it for Wi-Fi Direct.
 - Sending uses the system file picker, so the app has no storage permission.
 - Received files go to `Download/Nearvolt`, which needs no permission on
   Android 11 and later.
