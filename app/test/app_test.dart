@@ -65,7 +65,7 @@ void main() {
 
   testWidgets('Share opens the share sheet with where to get Nearvolt', (tester) async {
     await open(tester);
-    await tester.tap(find.text('Share Nearvolt'));
+    await tester.tap(find.byTooltip('Share Nearvolt'));
     await tester.pump();
     expect(engine.shared, [shareText]);
     expect(shareText, contains('https://github.com/vishalpa8/Nearvolt/releases/latest'));

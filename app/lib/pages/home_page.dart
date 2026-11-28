@@ -93,7 +93,7 @@ class _HomePageState extends State<HomePage> {
     final (engine, profile) = (widget.engine, widget.profile);
     return PageScaffold(
       title: 'Nearvolt',
-      trailing: TextButton(onPressed: _updating ? null : _update, child: const Text('Check for updates')),
+      trailing: _actions(context),
       // Scrolls when the phone is short or the text is large, and still spreads out when there is room.
       body: LayoutBuilder(
         builder: (context, box) => SingleChildScrollView(
@@ -128,6 +128,31 @@ class _HomePageState extends State<HomePage> {
           ],
         ),
       ),
+    );
+  }
+
+  /// Share and Check for updates, top right. With very large text the update button
+  /// becomes an icon, so the row still fits a small phone.
+  Widget _actions(BuildContext context) {
+    final big = MediaQuery.textScalerOf(context).scale(10) > 13;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Anyone can be sent the link: it opens the phone's own share sheet.
+        IconButton(
+          onPressed: () => widget.engine.shareApp(shareText),
+          tooltip: 'Share Nearvolt',
+          icon: const Icon(Icons.share_rounded, color: AppColors.accent),
+        ),
+        if (big)
+          IconButton(
+            onPressed: _updating ? null : _update,
+            tooltip: 'Check for updates',
+            icon: const Icon(Icons.system_update_rounded, color: AppColors.accent),
+          )
+        else
+          TextButton(onPressed: _updating ? null : _update, child: const Text('Check for updates')),
+      ],
     );
   }
 
@@ -166,14 +191,6 @@ class _HomePageState extends State<HomePage> {
         Text(
           'No internet or account needed. Every file arrives exactly as it was sent.',
           style: text.bodyLarge?.copyWith(color: AppColors.textSecondary),
-        ),
-        const SizedBox(height: Space.s),
-        // Anyone can be sent the link: it opens the phone's own share sheet.
-        TextButton.icon(
-          onPressed: () => engine.shareApp(shareText),
-          style: TextButton.styleFrom(padding: EdgeInsets.zero, alignment: Alignment.centerLeft),
-          icon: const Icon(Icons.share_rounded, size: 20),
-          label: const Text('Share Nearvolt'),
         ),
         const Spacer(flex: 2),
       ],
