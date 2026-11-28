@@ -398,6 +398,9 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
   }
 
   @override
+  void shareApp(String text) => _platform.shareApp(text);
+
+  @override
   Future<String?> checkForUpdate() async {
     _update = await _platform.checkForUpdate();
     return _update?.version;

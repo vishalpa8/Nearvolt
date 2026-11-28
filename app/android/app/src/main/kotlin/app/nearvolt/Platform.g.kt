@@ -803,6 +803,8 @@ interface NearvoltPlatform {
   fun watchUsb()
   suspend fun joinWifi(group: WifiGroup): String?
   fun leaveWifi()
+  /** Opens Android's share sheet with 	ext, so the app can be passed on in any chat. */
+  fun shareApp(text: String)
   fun startTransferService(title: String)
   /**
    * Refreshes the transfer notification. percent is 0 to 100 for a bar, -1 for a bar
@@ -1122,6 +1124,24 @@ interface NearvoltPlatform {
           channel.setMessageHandler { _, reply ->
             val wrapped: List<Any?> = try {
               api.leaveWifi()
+              listOf(null)
+            } catch (exception: Throwable) {
+              PlatformPigeonUtils.wrapError(exception)
+            }
+            reply.reply(wrapped)
+          }
+        } else {
+          channel.setMessageHandler(null)
+        }
+      }
+      run {
+        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.nearvolt.NearvoltPlatform.shareApp$separatedMessageChannelSuffix", codec)
+        if (api != null) {
+          channel.setMessageHandler { message, reply ->
+            val args = message as List<Any?>
+            val textArg = args[0] as String
+            val wrapped: List<Any?> = try {
+              api.shareApp(textArg)
               listOf(null)
             } catch (exception: Throwable) {
               PlatformPigeonUtils.wrapError(exception)

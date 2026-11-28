@@ -105,6 +105,11 @@ class FakeEngine implements TransferEngine {
     return canSkip;
   }
 
+  final shared = <String>[];
+
+  @override
+  void shareApp(String text) => shared.add(text);
+
   @override
   void queue(Selection what) => queued.add(what);
 

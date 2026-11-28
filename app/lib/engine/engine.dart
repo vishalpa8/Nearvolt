@@ -64,6 +64,9 @@ abstract interface class TransferEngine {
   /// Ends the open connection; the other phone is told.
   void disconnect();
 
+  /// Opens the system share sheet with 	ext.
+  void shareApp(String text);
+
   /// The version of an available update, if any. Throws when GitHub can't be
   /// reached.
   Future<String?> checkForUpdate();

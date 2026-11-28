@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:material_ui/material_ui.dart';
 
 import '../engine/engine.dart';
+import '../engine/messages.dart';
 import '../engine/models.dart';
 import '../theme.dart';
 import '../ui/molecules.dart';
@@ -165,6 +166,14 @@ class _HomePageState extends State<HomePage> {
         Text(
           'No internet or account needed. Every file arrives exactly as it was sent.',
           style: text.bodyLarge?.copyWith(color: AppColors.textSecondary),
+        ),
+        const SizedBox(height: Space.s),
+        // Anyone can be sent the link: it opens the phone's own share sheet.
+        TextButton.icon(
+          onPressed: () => engine.shareApp(shareText),
+          style: TextButton.styleFrom(padding: EdgeInsets.zero, alignment: Alignment.centerLeft),
+          icon: const Icon(Icons.share_rounded, size: 20),
+          label: const Text('Share Nearvolt'),
         ),
         const Spacer(flex: 2),
       ],

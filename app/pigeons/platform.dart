@@ -192,6 +192,9 @@ abstract class NearvoltPlatform {
 
   void leaveWifi();
 
+  /// Opens Android's share sheet with 	ext, so the app can be passed on in any chat.
+  void shareApp(String text);
+
   void startTransferService(String title);
 
   /// Refreshes the transfer notification. percent is 0 to 100 for a bar, -1 for a bar

@@ -153,6 +153,7 @@ Send at least 5 GB for each of these.
 
 | # | Steps | Expected |
 |---|---|---|
+| 19a | On the home screen tap Share Nearvolt. | Android's share sheet opens with a message and the link https://github.com/vishalpa8/Nearvolt/releases/latest; sending it to a chat shows the link. |
 | 20 | Install the latest release, open the app and tap Check for updates. | "Nearvolt N is the latest version." It goes away by itself after a few seconds. |
 | 21 | Push a change to `main` and wait for its release. Tap Check for updates. | "Nearvolt N+1 is available. Download and install it now?" with Later and Update; nothing downloads until Update. After Update it downloads. The first time, Android opens "Install unknown apps"; turn it on and go back, and the update continues by itself. Nearvolt closes for a moment; reopened, it runs N+1. |
 | 22 | Repeat 21 on Android 12 or later. | No prompt at all this time. |

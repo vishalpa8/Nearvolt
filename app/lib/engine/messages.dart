@@ -95,6 +95,10 @@ String endedLine({required bool sending, required List<Batch> batches}) {
   return "${filesLabel(left)} $was $verb. What finished was verified${sending ? '' : ' and saved'}.";
 }
 
+/// Where anyone can get Nearvolt, and what is sent along with it when it is shared.
+const appLink = 'https://github.com/vishalpa8/Nearvolt/releases/latest';
+const shareText = 'Nearvolt moves files between Android phones, with no internet or account. Get it here: $appLink';
+
 /// What the transfer notification says: the same on both phones, built from the
 /// connection as the screen shows it, so the two never disagree and the last
 /// update is always the end of the story.

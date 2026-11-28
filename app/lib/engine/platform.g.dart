@@ -9,14 +9,22 @@ import 'dart:typed_data' show Float64List, Int32List, Int64List;
 import 'package:flutter/services.dart';
 import 'package:meta/meta.dart' show immutable, protected, visibleForTesting;
 
-Object? _extractReplyValueOrThrow(List<Object?>? replyList, String channelName, {required bool isNullValid}) {
+Object? _extractReplyValueOrThrow(
+    List<Object?>? replyList,
+    String channelName, {
+    required bool isNullValid,
+}) {
   if (replyList == null) {
     throw PlatformException(
       code: 'channel-error',
       message: 'Unable to establish connection on channel: "$channelName".',
     );
   } else if (replyList.length > 1) {
-    throw PlatformException(code: replyList[0]! as String, message: replyList[1] as String?, details: replyList[2]);
+    throw PlatformException(
+      code: replyList[0]! as String,
+      message: replyList[1] as String?,
+      details: replyList[2],
+    );
   } else if (!isNullValid && (replyList.isNotEmpty && replyList[0] == null)) {
     throw PlatformException(
       code: 'null-error',
@@ -25,6 +33,7 @@ Object? _extractReplyValueOrThrow(List<Object?>? replyList, String channelName, 
   }
   return replyList.firstOrNull;
 }
+
 
 List<Object?> wrapResponse({Object? result, PlatformException? error, bool empty = false}) {
   if (empty) {
@@ -35,7 +44,6 @@ List<Object?> wrapResponse({Object? result, PlatformException? error, bool empty
   }
   return <Object?>[error.code, error.message, error.details];
 }
-
 bool _deepEquals(Object? a, Object? b) {
   if (identical(a, b)) {
     return true;
@@ -47,7 +55,9 @@ bool _deepEquals(Object? a, Object? b) {
     return a == b;
   }
   if (a is List && b is List) {
-    return a.length == b.length && a.indexed.every(((int, dynamic) item) => _deepEquals(item.$2, b[item.$1]));
+    return a.length == b.length &&
+        a.indexed
+            .every(((int, dynamic) item) => _deepEquals(item.$2, b[item.$1]));
   }
   if (a is Map && b is Map) {
     if (a.length != b.length) {
@@ -96,30 +106,28 @@ int _deepHash(Object? value) {
   return value.hashCode;
 }
 
+
 /// Something Android can be asked to turn on.
 enum Requirement {
   /// Nearby devices and notifications, through Android's permission dialogs.
   permissions,
-
   /// The app's settings page, for permissions refused for good.
   appSettings,
   wifi,
   location,
-  nfc,
+  nfc;
 }
 
 enum PlatformEventKind {
   /// The phones were tapped together; `ticket` carries the receiver's code.
   ticketTapped,
-
   /// A USB link to another phone is ready: `fd` is a socket the engine owns,
   /// `host` is true on the phone powering the cable, and `name` is the other
   /// phone's name when the host knows it.
   usbConnected,
   usbDisconnected,
-
   /// Update download progress, 0 to 1.
-  updateProgress,
+  updateProgress;
 }
 
 class DeviceInfo {
@@ -149,12 +157,19 @@ class DeviceInfo {
   String versionName;
 
   List<Object?> _toList() {
-    return <Object?>[name, kind, hasNfc, dataDir, downloadDir, journalDir, versionName];
+    return <Object?>[
+      name,
+      kind,
+      hasNfc,
+      dataDir,
+      downloadDir,
+      journalDir,
+      versionName,
+    ];
   }
 
   Object encode() {
-    return _toList();
-  }
+    return _toList();  }
 
   static DeviceInfo decode(Object result) {
     result as List<Object?>;
@@ -178,13 +193,7 @@ class DeviceInfo {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(name, other.name) &&
-        _deepEquals(kind, other.kind) &&
-        _deepEquals(hasNfc, other.hasNfc) &&
-        _deepEquals(dataDir, other.dataDir) &&
-        _deepEquals(downloadDir, other.downloadDir) &&
-        _deepEquals(journalDir, other.journalDir) &&
-        _deepEquals(versionName, other.versionName);
+    return _deepEquals(name, other.name) && _deepEquals(kind, other.kind) && _deepEquals(hasNfc, other.hasNfc) && _deepEquals(dataDir, other.dataDir) && _deepEquals(downloadDir, other.downloadDir) && _deepEquals(journalDir, other.journalDir) && _deepEquals(versionName, other.versionName);
   }
 
   @override
@@ -199,7 +208,11 @@ class DeviceInfo {
 
 /// One picked file. `path` is relative and includes the picked folder's name.
 class PickedFile {
-  PickedFile({required this.path, required this.size, this.modifiedMs});
+  PickedFile({
+    required this.path,
+    required this.size,
+    this.modifiedMs,
+  });
 
   String path;
 
@@ -208,16 +221,23 @@ class PickedFile {
   int? modifiedMs;
 
   List<Object?> _toList() {
-    return <Object?>[path, size, modifiedMs];
+    return <Object?>[
+      path,
+      size,
+      modifiedMs,
+    ];
   }
 
   Object encode() {
-    return _toList();
-  }
+    return _toList();  }
 
   static PickedFile decode(Object result) {
     result as List<Object?>;
-    return PickedFile(path: result[0]! as String, size: result[1]! as int, modifiedMs: result[2] as int?);
+    return PickedFile(
+      path: result[0]! as String,
+      size: result[1]! as int,
+      modifiedMs: result[2] as int?,
+    );
   }
 
   @override
@@ -243,7 +263,11 @@ class PickedFile {
 }
 
 class PickResult {
-  PickResult({required this.token, required this.files, required this.skipped});
+  PickResult({
+    required this.token,
+    required this.files,
+    required this.skipped,
+  });
 
   /// Lets the engine open the files later, one at a time.
   int token;
@@ -254,12 +278,15 @@ class PickResult {
   int skipped;
 
   List<Object?> _toList() {
-    return <Object?>[token, files, skipped];
+    return <Object?>[
+      token,
+      files,
+      skipped,
+    ];
   }
 
   Object encode() {
-    return _toList();
-  }
+    return _toList();  }
 
   static PickResult decode(Object result) {
     result as List<Object?>;
@@ -294,21 +321,26 @@ class PickResult {
 
 /// What came of opening Receive: the Wi-Fi Direct group, if one could be made.
 class ReceiveSetup {
-  ReceiveSetup({this.group});
+  ReceiveSetup({
+    this.group,
+  });
 
   WifiGroup? group;
 
   List<Object?> _toList() {
-    return <Object?>[group];
+    return <Object?>[
+      group,
+    ];
   }
 
   Object encode() {
-    return _toList();
-  }
+    return _toList();  }
 
   static ReceiveSetup decode(Object result) {
     result as List<Object?>;
-    return ReceiveSetup(group: result[0] as WifiGroup?);
+    return ReceiveSetup(
+      group: result[0] as WifiGroup?,
+    );
   }
 
   @override
@@ -334,7 +366,11 @@ class ReceiveSetup {
 }
 
 class WifiGroup {
-  WifiGroup({required this.ssid, required this.passphrase, required this.frequency});
+  WifiGroup({
+    required this.ssid,
+    required this.passphrase,
+    required this.frequency,
+  });
 
   String ssid;
 
@@ -343,16 +379,23 @@ class WifiGroup {
   int frequency;
 
   List<Object?> _toList() {
-    return <Object?>[ssid, passphrase, frequency];
+    return <Object?>[
+      ssid,
+      passphrase,
+      frequency,
+    ];
   }
 
   Object encode() {
-    return _toList();
-  }
+    return _toList();  }
 
   static WifiGroup decode(Object result) {
     result as List<Object?>;
-    return WifiGroup(ssid: result[0]! as String, passphrase: result[1]! as String, frequency: result[2]! as int);
+    return WifiGroup(
+      ssid: result[0]! as String,
+      passphrase: result[1]! as String,
+      frequency: result[2]! as int,
+    );
   }
 
   @override
@@ -364,9 +407,7 @@ class WifiGroup {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(ssid, other.ssid) &&
-        _deepEquals(passphrase, other.passphrase) &&
-        _deepEquals(frequency, other.frequency);
+    return _deepEquals(ssid, other.ssid) && _deepEquals(passphrase, other.passphrase) && _deepEquals(frequency, other.frequency);
   }
 
   @override
@@ -404,12 +445,17 @@ class Readiness {
   bool nfc;
 
   List<Object?> _toList() {
-    return <Object?>[permission, permissionInSettings, wifi, location, nfc];
+    return <Object?>[
+      permission,
+      permissionInSettings,
+      wifi,
+      location,
+      nfc,
+    ];
   }
 
   Object encode() {
-    return _toList();
-  }
+    return _toList();  }
 
   static Readiness decode(Object result) {
     result as List<Object?>;
@@ -431,11 +477,7 @@ class Readiness {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(permission, other.permission) &&
-        _deepEquals(permissionInSettings, other.permissionInSettings) &&
-        _deepEquals(wifi, other.wifi) &&
-        _deepEquals(location, other.location) &&
-        _deepEquals(nfc, other.nfc);
+    return _deepEquals(permission, other.permission) && _deepEquals(permissionInSettings, other.permissionInSettings) && _deepEquals(wifi, other.wifi) && _deepEquals(location, other.location) && _deepEquals(nfc, other.nfc);
   }
 
   @override
@@ -449,7 +491,12 @@ class Readiness {
 }
 
 class UpdateInfo {
-  UpdateInfo({required this.version, required this.notes, required this.url, required this.sha256});
+  UpdateInfo({
+    required this.version,
+    required this.notes,
+    required this.url,
+    required this.sha256,
+  });
 
   String version;
 
@@ -460,12 +507,16 @@ class UpdateInfo {
   String sha256;
 
   List<Object?> _toList() {
-    return <Object?>[version, notes, url, sha256];
+    return <Object?>[
+      version,
+      notes,
+      url,
+      sha256,
+    ];
   }
 
   Object encode() {
-    return _toList();
-  }
+    return _toList();  }
 
   static UpdateInfo decode(Object result) {
     result as List<Object?>;
@@ -486,10 +537,7 @@ class UpdateInfo {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(version, other.version) &&
-        _deepEquals(notes, other.notes) &&
-        _deepEquals(url, other.url) &&
-        _deepEquals(sha256, other.sha256);
+    return _deepEquals(version, other.version) && _deepEquals(notes, other.notes) && _deepEquals(url, other.url) && _deepEquals(sha256, other.sha256);
   }
 
   @override
@@ -503,7 +551,14 @@ class UpdateInfo {
 }
 
 class PlatformEvent {
-  PlatformEvent({required this.kind, this.name, this.ticket, this.fd, this.host, this.progress});
+  PlatformEvent({
+    required this.kind,
+    this.name,
+    this.ticket,
+    this.fd,
+    this.host,
+    this.progress,
+  });
 
   PlatformEventKind kind;
 
@@ -518,12 +573,18 @@ class PlatformEvent {
   double? progress;
 
   List<Object?> _toList() {
-    return <Object?>[kind, name, ticket, fd, host, progress];
+    return <Object?>[
+      kind,
+      name,
+      ticket,
+      fd,
+      host,
+      progress,
+    ];
   }
 
   Object encode() {
-    return _toList();
-  }
+    return _toList();  }
 
   static PlatformEvent decode(Object result) {
     result as List<Object?>;
@@ -546,12 +607,7 @@ class PlatformEvent {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(kind, other.kind) &&
-        _deepEquals(name, other.name) &&
-        _deepEquals(ticket, other.ticket) &&
-        _deepEquals(fd, other.fd) &&
-        _deepEquals(host, other.host) &&
-        _deepEquals(progress, other.progress);
+    return _deepEquals(kind, other.kind) && _deepEquals(name, other.name) && _deepEquals(ticket, other.ticket) && _deepEquals(fd, other.fd) && _deepEquals(host, other.host) && _deepEquals(progress, other.progress);
   }
 
   @override
@@ -564,6 +620,7 @@ class PlatformEvent {
   }
 }
 
+
 class _PigeonCodec extends StandardMessageCodec {
   const _PigeonCodec();
   @override
@@ -571,34 +628,34 @@ class _PigeonCodec extends StandardMessageCodec {
     if (value is int) {
       buffer.putUint8(4);
       buffer.putInt64(value);
-    } else if (value is Requirement) {
+    }    else if (value is Requirement) {
       buffer.putUint8(129);
       writeValue(buffer, value.index);
-    } else if (value is PlatformEventKind) {
+    }    else if (value is PlatformEventKind) {
       buffer.putUint8(130);
       writeValue(buffer, value.index);
-    } else if (value is DeviceInfo) {
+    }    else if (value is DeviceInfo) {
       buffer.putUint8(131);
       writeValue(buffer, value.encode());
-    } else if (value is PickedFile) {
+    }    else if (value is PickedFile) {
       buffer.putUint8(132);
       writeValue(buffer, value.encode());
-    } else if (value is PickResult) {
+    }    else if (value is PickResult) {
       buffer.putUint8(133);
       writeValue(buffer, value.encode());
-    } else if (value is ReceiveSetup) {
+    }    else if (value is ReceiveSetup) {
       buffer.putUint8(134);
       writeValue(buffer, value.encode());
-    } else if (value is WifiGroup) {
+    }    else if (value is WifiGroup) {
       buffer.putUint8(135);
       writeValue(buffer, value.encode());
-    } else if (value is Readiness) {
+    }    else if (value is Readiness) {
       buffer.putUint8(136);
       writeValue(buffer, value.encode());
-    } else if (value is UpdateInfo) {
+    }    else if (value is UpdateInfo) {
       buffer.putUint8(137);
       writeValue(buffer, value.encode());
-    } else if (value is PlatformEvent) {
+    }    else if (value is PlatformEvent) {
       buffer.putUint8(138);
       writeValue(buffer, value.encode());
     } else {
@@ -641,18 +698,21 @@ class NearvoltPlatform {
   /// Constructor for [NearvoltPlatform]. The [binaryMessenger] named argument is
   /// available for dependency injection. If it is left null, the default
   /// BinaryMessenger will be used which routes to the host platform.
-  NearvoltPlatform({BinaryMessenger? binaryMessenger, String messageChannelSuffix = ''})
-    : pigeonVar_binaryMessenger = binaryMessenger,
-      pigeonVar_messageChannelSuffix = messageChannelSuffix.isNotEmpty ? '.$messageChannelSuffix' : '';
+  NearvoltPlatform({
+      BinaryMessenger? binaryMessenger, 
+      String messageChannelSuffix = '', 
+      })
+      : pigeonVar_binaryMessenger = binaryMessenger,
+        pigeonVar_messageChannelSuffix = messageChannelSuffix.isNotEmpty ? '.$messageChannelSuffix' : '';
 
   final BinaryMessenger? pigeonVar_binaryMessenger;
   static const MessageCodec<Object?> pigeonChannelCodec = _PigeonCodec();
 
   final String pigeonVar_messageChannelSuffix;
 
+
   Future<DeviceInfo> deviceInfo() async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.nearvolt.NearvoltPlatform.deviceInfo$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.deviceInfo$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
@@ -661,10 +721,11 @@ class NearvoltPlatform {
     final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(null);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
     final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
-      pigeonVar_replyList,
-      pigeonVar_channelName,
-      isNullValid: false,
-    );
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: false,
+    )
+    ;
     return pigeonVar_replyValue! as DeviceInfo;
   }
 
@@ -678,15 +739,19 @@ class NearvoltPlatform {
     );
     final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[tag, message]);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
-    _extractReplyValueOrThrow(pigeonVar_replyList, pigeonVar_channelName, isNullValid: true);
+    _extractReplyValueOrThrow(
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: true,
+    )
+    ;
   }
 
   /// One line on what can slow a transfer down, for the log: the Wi-Fi link
   /// (generation, band, signal, speed), any Wi-Fi Direct group, battery saver
   /// and how hot the phone is.
   Future<String> linkReport() async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.nearvolt.NearvoltPlatform.linkReport$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.linkReport$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
@@ -695,16 +760,16 @@ class NearvoltPlatform {
     final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(null);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
     final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
-      pigeonVar_replyList,
-      pigeonVar_channelName,
-      isNullValid: false,
-    );
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: false,
+    )
+    ;
     return pigeonVar_replyValue! as String;
   }
 
   Future<Readiness> readiness() async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.nearvolt.NearvoltPlatform.readiness$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.readiness$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
@@ -713,10 +778,11 @@ class NearvoltPlatform {
     final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(null);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
     final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
-      pigeonVar_replyList,
-      pigeonVar_channelName,
-      isNullValid: false,
-    );
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: false,
+    )
+    ;
     return pigeonVar_replyValue! as Readiness;
   }
 
@@ -732,16 +798,16 @@ class NearvoltPlatform {
     final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[requirement]);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
     final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
-      pigeonVar_replyList,
-      pigeonVar_channelName,
-      isNullValid: false,
-    );
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: false,
+    )
+    ;
     return pigeonVar_replyValue! as Readiness;
   }
 
   Future<PickResult?> pickFiles() async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.nearvolt.NearvoltPlatform.pickFiles$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.pickFiles$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
@@ -750,16 +816,16 @@ class NearvoltPlatform {
     final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(null);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
     final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
-      pigeonVar_replyList,
-      pigeonVar_channelName,
-      isNullValid: true,
-    );
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: true,
+    )
+    ;
     return pigeonVar_replyValue as PickResult?;
   }
 
   Future<PickResult?> pickFolder() async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.nearvolt.NearvoltPlatform.pickFolder$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.pickFolder$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
@@ -768,18 +834,18 @@ class NearvoltPlatform {
     final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(null);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
     final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
-      pigeonVar_replyList,
-      pigeonVar_channelName,
-      isNullValid: true,
-    );
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: true,
+    )
+    ;
     return pigeonVar_replyValue as PickResult?;
   }
 
   /// The batch made from this pick is over: forget the files and give back the
   /// access Android granted to them.
   Future<void> releaseSelection(int token) async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.nearvolt.NearvoltPlatform.releaseSelection$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.releaseSelection$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
@@ -787,7 +853,12 @@ class NearvoltPlatform {
     );
     final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[token]);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
-    _extractReplyValueOrThrow(pigeonVar_replyList, pigeonVar_channelName, isNullValid: true);
+    _extractReplyValueOrThrow(
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: true,
+    )
+    ;
   }
 
   Future<String?> scanQr() async {
@@ -800,17 +871,17 @@ class NearvoltPlatform {
     final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(null);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
     final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
-      pigeonVar_replyList,
-      pigeonVar_channelName,
-      isNullValid: true,
-    );
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: true,
+    )
+    ;
     return pigeonVar_replyValue as String?;
   }
 
   /// Opens Receive: serves the tap ticket over NFC, then creates the Wi-Fi Direct group.
   Future<ReceiveSetup> startReceiving(String tapTicket, int port) async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.nearvolt.NearvoltPlatform.startReceiving$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.startReceiving$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
@@ -819,16 +890,16 @@ class NearvoltPlatform {
     final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[tapTicket, port]);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
     final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
-      pigeonVar_replyList,
-      pigeonVar_channelName,
-      isNullValid: false,
-    );
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: false,
+    )
+    ;
     return pigeonVar_replyValue! as ReceiveSetup;
   }
 
   Future<void> updateTickets(String tapTicket, int port) async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.nearvolt.NearvoltPlatform.updateTickets$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.updateTickets$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
@@ -836,7 +907,12 @@ class NearvoltPlatform {
     );
     final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[tapTicket, port]);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
-    _extractReplyValueOrThrow(pigeonVar_replyList, pigeonVar_channelName, isNullValid: true);
+    _extractReplyValueOrThrow(
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: true,
+    )
+    ;
   }
 
   /// A transfer started: stops serving the tap ticket over NFC and closes the Wi-Fi Direct group unless the sender
@@ -845,8 +921,7 @@ class NearvoltPlatform {
   /// `senderAddress` is where the sender connected from, when known: an address of
   /// the group means it came that way.
   Future<void> stopAdvertising(String? senderAddress) async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.nearvolt.NearvoltPlatform.stopAdvertising$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.stopAdvertising$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
@@ -854,12 +929,16 @@ class NearvoltPlatform {
     );
     final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[senderAddress]);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
-    _extractReplyValueOrThrow(pigeonVar_replyList, pigeonVar_channelName, isNullValid: true);
+    _extractReplyValueOrThrow(
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: true,
+    )
+    ;
   }
 
   Future<void> stopReceiving() async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.nearvolt.NearvoltPlatform.stopReceiving$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.stopReceiving$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
@@ -867,13 +946,17 @@ class NearvoltPlatform {
     );
     final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(null);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
-    _extractReplyValueOrThrow(pigeonVar_replyList, pigeonVar_channelName, isNullValid: true);
+    _extractReplyValueOrThrow(
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: true,
+    )
+    ;
   }
 
   /// Reads a receiver's ticket when the phones are tapped together.
   Future<void> startTapReading() async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.nearvolt.NearvoltPlatform.startTapReading$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.startTapReading$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
@@ -881,12 +964,16 @@ class NearvoltPlatform {
     );
     final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(null);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
-    _extractReplyValueOrThrow(pigeonVar_replyList, pigeonVar_channelName, isNullValid: true);
+    _extractReplyValueOrThrow(
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: true,
+    )
+    ;
   }
 
   Future<void> stopTapReading() async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.nearvolt.NearvoltPlatform.stopTapReading$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.stopTapReading$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
@@ -894,14 +981,18 @@ class NearvoltPlatform {
     );
     final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(null);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
-    _extractReplyValueOrThrow(pigeonVar_replyList, pigeonVar_channelName, isNullValid: true);
+    _extractReplyValueOrThrow(
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: true,
+    )
+    ;
   }
 
   /// Starts noticing USB cables to other phones, reported as `usbConnected` and
   /// `usbDisconnected` events.
   Future<void> watchUsb() async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.nearvolt.NearvoltPlatform.watchUsb$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.watchUsb$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
@@ -909,12 +1000,16 @@ class NearvoltPlatform {
     );
     final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(null);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
-    _extractReplyValueOrThrow(pigeonVar_replyList, pigeonVar_channelName, isNullValid: true);
+    _extractReplyValueOrThrow(
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: true,
+    )
+    ;
   }
 
   Future<String?> joinWifi(WifiGroup group) async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.nearvolt.NearvoltPlatform.joinWifi$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.joinWifi$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
@@ -923,16 +1018,16 @@ class NearvoltPlatform {
     final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[group]);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
     final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
-      pigeonVar_replyList,
-      pigeonVar_channelName,
-      isNullValid: true,
-    );
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: true,
+    )
+    ;
     return pigeonVar_replyValue as String?;
   }
 
   Future<void> leaveWifi() async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.nearvolt.NearvoltPlatform.leaveWifi$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.leaveWifi$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
@@ -940,12 +1035,34 @@ class NearvoltPlatform {
     );
     final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(null);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
-    _extractReplyValueOrThrow(pigeonVar_replyList, pigeonVar_channelName, isNullValid: true);
+    _extractReplyValueOrThrow(
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: true,
+    )
+    ;
+  }
+
+  /// Opens Android's share sheet with 	ext, so the app can be passed on in any chat.
+  Future<void> shareApp(String text) async {
+    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.shareApp$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channel = BasicMessageChannel<Object?>(
+      pigeonVar_channelName,
+      pigeonChannelCodec,
+      binaryMessenger: pigeonVar_binaryMessenger,
+    );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[text]);
+    final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
+    _extractReplyValueOrThrow(
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: true,
+    )
+    ;
   }
 
   Future<void> startTransferService(String title) async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.nearvolt.NearvoltPlatform.startTransferService$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.startTransferService$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
@@ -953,14 +1070,18 @@ class NearvoltPlatform {
     );
     final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[title]);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
-    _extractReplyValueOrThrow(pigeonVar_replyList, pigeonVar_channelName, isNullValid: true);
+    _extractReplyValueOrThrow(
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: true,
+    )
+    ;
   }
 
   /// Refreshes the transfer notification. percent is 0 to 100 for a bar, -1 for a bar
   /// that waits, and -2 for no bar at all.
   Future<void> updateTransferService(String title, String text, int percent) async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.nearvolt.NearvoltPlatform.updateTransferService$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.updateTransferService$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
@@ -968,12 +1089,16 @@ class NearvoltPlatform {
     );
     final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[title, text, percent]);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
-    _extractReplyValueOrThrow(pigeonVar_replyList, pigeonVar_channelName, isNullValid: true);
+    _extractReplyValueOrThrow(
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: true,
+    )
+    ;
   }
 
   Future<void> stopTransferService() async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.nearvolt.NearvoltPlatform.stopTransferService$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.stopTransferService$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
@@ -981,12 +1106,16 @@ class NearvoltPlatform {
     );
     final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(null);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
-    _extractReplyValueOrThrow(pigeonVar_replyList, pigeonVar_channelName, isNullValid: true);
+    _extractReplyValueOrThrow(
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: true,
+    )
+    ;
   }
 
   Future<UpdateInfo?> checkForUpdate() async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.nearvolt.NearvoltPlatform.checkForUpdate$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.checkForUpdate$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
@@ -995,16 +1124,16 @@ class NearvoltPlatform {
     final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(null);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
     final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
-      pigeonVar_replyList,
-      pigeonVar_channelName,
-      isNullValid: true,
-    );
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: true,
+    )
+    ;
     return pigeonVar_replyValue as UpdateInfo?;
   }
 
   Future<void> installUpdate(UpdateInfo update) async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.nearvolt.NearvoltPlatform.installUpdate$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.installUpdate$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
@@ -1012,7 +1141,12 @@ class NearvoltPlatform {
     );
     final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[update]);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
-    _extractReplyValueOrThrow(pigeonVar_replyList, pigeonVar_channelName, isNullValid: true);
+    _extractReplyValueOrThrow(
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: true,
+    )
+    ;
   }
 }
 
@@ -1021,14 +1155,16 @@ abstract class NearvoltEvents {
 
   void onEvent(PlatformEvent event);
 
-  static void setUp(NearvoltEvents? api, {BinaryMessenger? binaryMessenger, String messageChannelSuffix = ''}) {
+  static void setUp(NearvoltEvents? api, {
+    BinaryMessenger? binaryMessenger,
+    String messageChannelSuffix = '',
+  }) 
+{
     messageChannelSuffix = messageChannelSuffix.isNotEmpty ? '.$messageChannelSuffix' : '';
     {
       final pigeonVar_channel = BasicMessageChannel<Object?>(
-        'dev.flutter.pigeon.nearvolt.NearvoltEvents.onEvent$messageChannelSuffix',
-        pigeonChannelCodec,
-        binaryMessenger: binaryMessenger,
-      );
+          'dev.flutter.pigeon.nearvolt.NearvoltEvents.onEvent$messageChannelSuffix', pigeonChannelCodec,
+          binaryMessenger: binaryMessenger);
       if (api == null) {
         pigeonVar_channel.setMessageHandler(null);
       } else {
@@ -1040,10 +1176,8 @@ abstract class NearvoltEvents {
             return wrapResponse(empty: true);
           } on PlatformException catch (e) {
             return wrapResponse(error: e);
-          } catch (e) {
-            return wrapResponse(
-              error: PlatformException(code: 'error', message: e.toString()),
-            );
+          }          catch (e) {
+            return wrapResponse(error: PlatformException(code: 'error', message: e.toString()));
           }
         });
       }

@@ -78,9 +78,11 @@ Numbers in progress views use tabular figures so they don't jitter.
 
 Golden screenshots of each one are in [app/test/goldens](../app/test/goldens).
 
-1. **Home.** Two large cards, Send and Receive, and a "Check for updates" button
-   that downloads and installs a new version in place. Nothing looks for other
-   phones, or for updates, until asked.
+1. **Home.** Two large cards, Send and Receive, a "Share Nearvolt" link that opens
+   the phone's share sheet with where to get the app, and a "Check for updates"
+   button. A new version, found by that button or by the quiet check a few seconds
+   after opening (and every 6 hours), is offered first and installed only on Update.
+   Nothing looks for other phones until a way to connect is chosen.
 2. **Send.** An optional "Choose files" step, then "How do you want to connect?"
    with three choices: Tap phones (only on phones with NFC), Scan code and
    USB cable. Only the chosen one runs. Files chosen first are sent

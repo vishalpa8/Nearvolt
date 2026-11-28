@@ -337,6 +337,12 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
 
     override fun updateTickets(tapTicket: String, port: Long) = nfc.serve(tapTicket)
 
+    override fun shareApp(text: String) {
+        AppLog.write("share", "opening the share sheet")
+        val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
+        activity.startActivity(Intent.createChooser(send, "Share Nearvolt"))
+    }
+
     override fun releaseSelection(token: Long) = NativeBridge.release(token)
 
     override fun stopAdvertising(senderAddress: String?) {
