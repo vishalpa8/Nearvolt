@@ -593,4 +593,110 @@ mod tests {
         assert!(!journals.join("old").exists());
         assert!(journals.join("new").exists());
     }
+    fn open_state(root: &Path, journals: &Path, sizes: &[u64]) -> Arc<TransferState> {
+        let offer = Offer {
+            files: sizes
+                .iter()
+                .enumerate()
+                .map(|(i, &size)| crate::protocol::FileEntry { path: format!("f{i}.bin"), size, modified: None })
+                .collect(),
+        };
+        let files = plan_files(&offer).unwrap();
+        TransferState::open(transfer_id(&[1; 32], &offer), files, root, journals, Arc::new(Stats::default())).unwrap()
+    }
+
+    fn deliver(
+        state: &Arc<TransferState>,
+        file: u32,
+        offset: u64,
+        data: &[u8],
+        hash: Option<[u8; 32]>,
+    ) -> Result<bool> {
+        let mut chunk = state.begin(file, offset, data.len() as u64)?.expect("a chunk to receive");
+        chunk.write(offset, data)?;
+        chunk.finish(hash.unwrap_or(*blake3::hash(data).as_bytes()))
+    }
+
+    #[tokio::test]
+    async fn chunks_in_any_order_make_the_file_and_a_damaged_one_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (root, journals) = (tmp.path().join("out"), tmp.path().join("j"));
+        let state = open_state(&root, &journals, &[30]);
+        let data: Vec<u8> = (0..30).collect();
+
+        assert!(deliver(&state, 0, 20, &data[20..], None).unwrap());
+        // The middle arrives damaged: refused, nothing counted, and the file isn't made.
+        assert!(!deliver(&state, 0, 10, &data[10..20], Some([9; 32])).unwrap());
+        assert!(!root.join("f0.bin").exists());
+        assert_eq!(state.have_list(), vec![FileHave::Partial { ranges: vec![(20, 30)] }]);
+        assert!(deliver(&state, 0, 0, &data[..10], None).unwrap());
+        assert!(deliver(&state, 0, 10, &data[10..20], None).unwrap());
+        assert_eq!(std::fs::read(root.join("f0.bin")).unwrap(), data);
+        assert_eq!(state.have_list(), vec![FileHave::Complete]);
+        // A late copy of a chunk that is already in is read and dropped.
+        assert!(state.begin(0, 0, 10).unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_chunk_that_keeps_arriving_damaged_ends_the_batch_with_a_reason() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = open_state(&tmp.path().join("out"), &tmp.path().join("j"), &[10]);
+        let data = [7u8; 10];
+        for _ in 0..MAX_DAMAGED - 1 {
+            assert!(!deliver(&state, 0, 0, &data, Some([1; 32])).unwrap());
+        }
+        let error = deliver(&state, 0, 0, &data, Some([1; 32])).unwrap_err();
+        assert_eq!(crate::transfer::classify(&error), FailureKind::FileDamaged);
+    }
+
+    #[tokio::test]
+    async fn a_stream_that_breaks_mid_chunk_leaves_nothing_counted() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = open_state(&tmp.path().join("out"), &tmp.path().join("j"), &[100]);
+        let mut chunk = state.begin(0, 0, 100).unwrap().unwrap();
+        chunk.write(0, &[1; 40]).unwrap();
+        assert_eq!(state.stats.snapshot().done_bytes, 40);
+        drop(chunk);
+        assert_eq!(state.stats.snapshot().done_bytes, 0);
+        assert_eq!(state.have_list(), vec![FileHave::None]);
+    }
+
+    #[tokio::test]
+    async fn headers_that_do_not_fit_the_offer_are_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = open_state(&tmp.path().join("out"), &tmp.path().join("j"), &[100]);
+        assert!(state.begin(1, 0, 10).is_err(), "unknown file");
+        assert!(state.begin(0, 95, 10).is_err(), "past the end");
+        assert!(state.begin(0, u64::MAX, 2).is_err(), "overflow");
+        assert!(state.begin(0, 0, MAX_CHUNK + 1).is_err(), "too long");
+    }
+
+    #[tokio::test]
+    async fn after_a_crash_the_receiver_resumes_with_exactly_the_flushed_ranges() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (root, journals) = (tmp.path().join("out"), tmp.path().join("j"));
+        let data: Vec<u8> = (0..60).collect();
+        {
+            let state = open_state(&root, &journals, &[60]);
+            assert!(deliver(&state, 0, 40, &data[40..], None).unwrap());
+            assert!(deliver(&state, 0, 0, &data[..10], None).unwrap());
+            state.checkpoint().unwrap();
+            // Arrives after the last checkpoint, so a crash loses it.
+            assert!(deliver(&state, 0, 10, &data[10..20], None).unwrap());
+            state.journal.lock().unwrap().close();
+        }
+        let state = open_state(&root, &journals, &[60]);
+        assert_eq!(state.have_list(), vec![FileHave::Partial { ranges: vec![(0, 10), (40, 60)] }]);
+        assert!(deliver(&state, 0, 10, &data[10..40], None).unwrap());
+        assert_eq!(std::fs::read(root.join("f0.bin")).unwrap(), data);
+    }
+
+    #[tokio::test]
+    async fn an_empty_file_is_made_by_its_empty_chunk() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("out");
+        let state = open_state(&root, &tmp.path().join("j"), &[0, 5]);
+        assert!(deliver(&state, 0, 0, &[], None).unwrap());
+        assert_eq!(std::fs::metadata(root.join("f0.bin")).unwrap().len(), 0);
+    }
 }
