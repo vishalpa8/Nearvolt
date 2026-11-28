@@ -9,7 +9,9 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use crate::transfer::FailureKind;
 
 pub const ALPN: &[u8] = b"nearvolt/1";
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
+/// From this version on a single file can be skipped and a batch cancelled by the user.
+pub const SKIP_VERSION: u32 = 6;
 /// The oldest version this one still talks to. Raise it only when a change truly can't
 /// work with the version before; see "Versions" in docs/protocol.md.
 pub const MIN_PROTOCOL_VERSION: u32 = 5;
@@ -82,6 +84,9 @@ pub enum Control {
         session: SessionId,
         #[serde(default)]
         nonce: Option<[u8; 16]>,
+        /// The receiver's protocol version; absent from version 5, which has no extras.
+        #[serde(default)]
+        version: Option<u32>,
     },
     /// The sender's nonce, revealed only after the receiver sent its own.
     Reveal {
@@ -129,6 +134,16 @@ pub enum Control {
     /// any more. The receiver throws away what it has of it; the connection stays.
     Cancel {
         batch: u32,
+        /// Why; absent means a file couldn't be read. The user cancelling is "cancelled".
+        #[serde(default)]
+        kind: Option<FailureKind>,
+    },
+    /// The user skipped one file of this batch. Either phone can say it; the other
+    /// stops sending or receiving that file and drops what it has of it. The rest of
+    /// the batch carries on. Only sent when the other phone is at SKIP_VERSION.
+    Skip {
+        batch: u32,
+        file: u32,
     },
     /// The receiver can't go on with this batch, for example because its storage
     /// is full. The sender drops the batch; the connection stays.

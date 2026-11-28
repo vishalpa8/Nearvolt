@@ -341,7 +341,11 @@ fn print_event(event: Event) {
         Event::PeerLeft => note("The other side disconnected"),
         Event::RequestWithdrawn { .. } => note("The other side stopped asking"),
         Event::Note { text } => note(&text),
-        Event::Started { .. } | Event::Incoming { .. } | Event::Completed { .. } => {}
+        Event::Started { .. }
+        | Event::Incoming { .. }
+        | Event::Completed { .. }
+        | Event::Listing { .. }
+        | Event::Files { .. } => {}
     }
 }
 

@@ -31,7 +31,7 @@ class TransferService : Service() {
         // Android crashes the app if a service started this way stops before
         // calling startForeground, so it always does, even when already told to stop.
         try {
-            startForeground(NOTIFICATION_ID, notification(this, title, null, 0), ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
+            startForeground(NOTIFICATION_ID, notification(this, title, null, -1), ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         } catch (e: Exception) {
             // Refused by this Android version or device; the transfer runs without the service.
             AppLog.error("service", e)
@@ -83,6 +83,7 @@ class TransferService : Service() {
         private const val CHANNEL = "transfers"
         private const val NOTIFICATION_ID = 1
         private const val EXTRA_TITLE = "title"
+        private const val NO_BAR = -2
 
         /** Locks are let go this long after the last progress update. */
         private const val IDLE_RELEASE_MS = 15_000L
@@ -117,12 +118,17 @@ class TransferService : Service() {
             }
         }
 
-        /** Data is moving: refreshes the notification and keeps the locks held. */
-        fun update(context: Context, text: String, percent: Int) {
+        /**
+         * Refreshes the notification with what the app says is going on. A percent of 0 to 100
+         * is a bar and means data is moving, so the locks are held; -1 is a bar that waits
+         * (reconnecting); -2 is no bar, for a connection with nothing moving.
+         */
+        fun update(context: Context, title: String, text: String, percent: Int) {
             if (!active) return
+            this.title = title
             context.getSystemService(NotificationManager::class.java)
                 .notify(NOTIFICATION_ID, notification(context, title, text, percent))
-            instance?.hold()
+            if (percent >= 0) instance?.hold()
         }
 
         fun stop(context: Context) {
@@ -141,7 +147,7 @@ class TransferService : Service() {
                 .setSmallIcon(android.R.drawable.stat_sys_upload)
                 .setContentTitle(title)
                 .setContentText(text)
-                .setProgress(100, percent, text == null)
+                .apply { if (percent != NO_BAR) setProgress(100, percent.coerceAtLeast(0), percent < 0) }
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
                 .setContentIntent(open)

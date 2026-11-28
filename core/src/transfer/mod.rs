@@ -35,6 +35,8 @@ pub enum FailureKind {
     OldVersion,
     /// Too many files for one offer, or some other limit.
     TooBig,
+    /// The user cancelled the batch.
+    Cancelled,
     Other,
 }
 
@@ -93,6 +95,8 @@ pub struct Stats {
     /// Bytes read back from disk only to hash them. Grows while a large file is
     /// checked, when the other counters stand still.
     checked: AtomicU64,
+    /// The protocol version of the phone at the other end; 0 until known.
+    peer_version: std::sync::atomic::AtomicU32,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -111,6 +115,15 @@ impl Stats {
             total_files: self.total_files.load(Ordering::Relaxed),
             done_files: self.done_files.load(Ordering::Relaxed),
         }
+    }
+
+    pub(crate) fn set_peer_version(&self, version: u32) {
+        self.peer_version.store(version, Ordering::Relaxed);
+    }
+
+    /// The other phone's protocol version, once connected.
+    pub fn peer_version(&self) -> u32 {
+        self.peer_version.load(Ordering::Relaxed)
     }
 
     pub(crate) fn set_totals(&self, files: u64, bytes: u64) {
@@ -211,8 +224,148 @@ pub enum Event {
     Note {
         text: String,
     },
+    /// The files of a batch that is arriving, as (path, size), so the app can list them.
+    /// Cut off after LISTED_FILES; the sender already knows its own.
+    Listing {
+        batch: u32,
+        files: Vec<(String, u64)>,
+    },
+    /// How the files of atch are doing: (file, bytes so far) for those moving now,
+    /// and the ones that just finished or were skipped. Numbers are positions in the
+    /// batch's file list.
+    Files {
+        batch: u32,
+        active: Vec<(u32, u64)>,
+        finished: Vec<u32>,
+        skipped: Vec<u32>,
+    },
 }
 
+/// Most files listed to the receiving app for one batch.
+pub const LISTED_FILES: usize = 5_000;
+
+/// Byte counts for the individual files being moved, by (batch, file), and the
+/// ones that just finished or were skipped. Both phones keep one, to show a
+/// file list; it is not on the wire.
+#[derive(Default)]
+pub(crate) struct FileMeter {
+    inner: std::sync::Mutex<MeterInner>,
+}
+
+#[derive(Default)]
+struct MeterInner {
+    bytes: std::collections::BTreeMap<(u32, u32), u64>,
+    /// Chunks of a file still to go, so its last one says it is finished.
+    chunks_left: std::collections::HashMap<(u32, u32), u32>,
+    finished: Vec<(u32, u32)>,
+    skipped: std::collections::HashSet<(u32, u32)>,
+    news_skipped: Vec<(u32, u32)>,
+}
+
+/// What a report says about one batch: files moving, finished, skipped.
+type PerBatch = (Vec<(u32, u64)>, Vec<u32>, Vec<u32>);
+
+impl FileMeter {
+    pub(crate) fn expect(&self, batch: u32, file: u32, chunks: u32) {
+        *self.inner.lock().unwrap().chunks_left.entry((batch, file)).or_default() += chunks;
+    }
+
+    pub(crate) fn add(&self, batch: u32, file: u32, n: u64) {
+        *self.inner.lock().unwrap().bytes.entry((batch, file)).or_default() += n;
+    }
+
+    /// Makes sure a file shows at least `n` bytes, for what it already had.
+    pub(crate) fn set_at_least(&self, batch: u32, file: u32, n: u64) {
+        if n > 0 {
+            let mut inner = self.inner.lock().unwrap();
+            let b = inner.bytes.entry((batch, file)).or_default();
+            *b = (*b).max(n);
+        }
+    }
+
+    pub(crate) fn sub(&self, batch: u32, file: u32, n: u64) {
+        let mut inner = self.inner.lock().unwrap();
+        if let Some(b) = inner.bytes.get_mut(&(batch, file)) {
+            *b = b.saturating_sub(n);
+        }
+    }
+
+    /// One chunk is through. The last one of a file finishes it.
+    pub(crate) fn chunk_done(&self, batch: u32, file: u32) {
+        let mut inner = self.inner.lock().unwrap();
+        let key = (batch, file);
+        if let Some(left) = inner.chunks_left.get_mut(&key) {
+            *left = left.saturating_sub(1);
+            if *left == 0 {
+                inner.chunks_left.remove(&key);
+                inner.bytes.remove(&key);
+                if !inner.skipped.contains(&key) {
+                    inner.finished.push(key);
+                }
+            }
+        }
+    }
+
+    /// Done without chunks coming through, for example because it was already there.
+    pub(crate) fn finish(&self, batch: u32, file: u32) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.bytes.remove(&(batch, file));
+        inner.chunks_left.remove(&(batch, file));
+        inner.finished.push((batch, file));
+    }
+
+    /// Returns true the first time a file is skipped.
+    pub(crate) fn skip(&self, batch: u32, file: u32) -> bool {
+        let mut inner = self.inner.lock().unwrap();
+        let key = (batch, file);
+        inner.bytes.remove(&key);
+        inner.chunks_left.remove(&key);
+        let fresh = inner.skipped.insert(key);
+        if fresh {
+            inner.news_skipped.push(key);
+        }
+        fresh
+    }
+
+    pub(crate) fn is_skipped(&self, batch: u32, file: u32) -> bool {
+        self.inner.lock().unwrap().skipped.contains(&(batch, file))
+    }
+
+    /// What changed since the last call, one event per batch.
+    pub(crate) fn report(&self) -> Vec<Event> {
+        let mut inner = self.inner.lock().unwrap();
+        let mut by_batch: std::collections::BTreeMap<u32, PerBatch> = Default::default();
+        for (&(batch, file), &bytes) in &inner.bytes {
+            by_batch.entry(batch).or_default().0.push((file, bytes));
+        }
+        for (batch, file) in std::mem::take(&mut inner.finished) {
+            by_batch.entry(batch).or_default().1.push(file);
+        }
+        for (batch, file) in std::mem::take(&mut inner.news_skipped) {
+            by_batch.entry(batch).or_default().2.push(file);
+        }
+        by_batch
+            .into_iter()
+            .map(|(batch, (active, finished, skipped))| Event::Files { batch, active, finished, skipped })
+            .collect()
+    }
+
+    /// Starts a batch's byte counts over (a reconnect resumes from what the receiver has),
+    /// keeping which files were skipped.
+    pub(crate) fn forget_counts(&self, batch: u32) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.bytes.retain(|k, _| k.0 != batch);
+        inner.chunks_left.retain(|k, _| k.0 != batch);
+    }
+
+    /// A batch is over: forget its files.
+    pub(crate) fn forget(&self, batch: u32) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.bytes.retain(|k, _| k.0 != batch);
+        inner.chunks_left.retain(|k, _| k.0 != batch);
+        inner.skipped.retain(|k| k.0 != batch);
+    }
+}
 pub type EventSender = tokio::sync::mpsc::UnboundedSender<Event>;
 
 pub(crate) fn emit(events: &Option<EventSender>, event: Event) {

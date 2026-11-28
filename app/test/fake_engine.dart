@@ -88,6 +88,22 @@ class FakeEngine implements TransferEngine {
     return (sending = StreamController()).stream;
   }
 
+  final cancelledBatches = <int>[];
+  final skippedFiles = <(int, int)>[];
+  bool canSkip = true;
+
+  @override
+  bool cancelBatch(int batch) {
+    cancelledBatches.add(batch);
+    return true;
+  }
+
+  @override
+  bool skipFile(int batch, int file) {
+    if (canSkip) skippedFiles.add((batch, file));
+    return canSkip;
+  }
+
   @override
   void queue(Selection what) => queued.add(what);
 

@@ -51,10 +51,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   FailureKind dco_decode_failure_kind(dynamic raw);
 
   @protected
+  FileBytes dco_decode_file_bytes(dynamic raw);
+
+  @protected
   int dco_decode_i_32(dynamic raw);
 
   @protected
   PlatformInt64 dco_decode_i_64(dynamic raw);
+
+  @protected
+  List<FileBytes> dco_decode_list_file_bytes(dynamic raw);
+
+  @protected
+  List<ListedFile> dco_decode_list_listed_file(dynamic raw);
 
   @protected
   Uint32List dco_decode_list_prim_u_32_strict(dynamic raw);
@@ -64,6 +73,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<SourceFile> dco_decode_list_source_file(dynamic raw);
+
+  @protected
+  ListedFile dco_decode_listed_file(dynamic raw);
 
   @protected
   String? dco_decode_opt_String(dynamic raw);
@@ -134,10 +146,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   FailureKind sse_decode_failure_kind(SseDeserializer deserializer);
 
   @protected
+  FileBytes sse_decode_file_bytes(SseDeserializer deserializer);
+
+  @protected
   int sse_decode_i_32(SseDeserializer deserializer);
 
   @protected
   PlatformInt64 sse_decode_i_64(SseDeserializer deserializer);
+
+  @protected
+  List<FileBytes> sse_decode_list_file_bytes(SseDeserializer deserializer);
+
+  @protected
+  List<ListedFile> sse_decode_list_listed_file(SseDeserializer deserializer);
 
   @protected
   Uint32List sse_decode_list_prim_u_32_strict(SseDeserializer deserializer);
@@ -147,6 +168,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<SourceFile> sse_decode_list_source_file(SseDeserializer deserializer);
+
+  @protected
+  ListedFile sse_decode_listed_file(SseDeserializer deserializer);
 
   @protected
   String? sse_decode_opt_String(SseDeserializer deserializer);
@@ -232,10 +256,25 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_failure_kind(FailureKind self, SseSerializer serializer);
 
   @protected
+  void sse_encode_file_bytes(FileBytes self, SseSerializer serializer);
+
+  @protected
   void sse_encode_i_32(int self, SseSerializer serializer);
 
   @protected
   void sse_encode_i_64(PlatformInt64 self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_file_bytes(
+    List<FileBytes> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_listed_file(
+    List<ListedFile> self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_list_prim_u_32_strict(
@@ -254,6 +293,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     List<SourceFile> self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_listed_file(ListedFile self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_String(String? self, SseSerializer serializer);

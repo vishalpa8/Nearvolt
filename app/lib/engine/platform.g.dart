@@ -1060,14 +1060,16 @@ class NearvoltPlatform {
     ;
   }
 
-  Future<void> updateTransferService(String text, int percent) async {
+  /// Refreshes the transfer notification. percent is 0 to 100 for a bar, -1 for a bar
+  /// that waits, and -2 for no bar at all.
+  Future<void> updateTransferService(String title, String text, int percent) async {
     final pigeonVar_channelName = 'dev.flutter.pigeon.nearvolt.NearvoltPlatform.updateTransferService$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
       binaryMessenger: pigeonVar_binaryMessenger,
     );
-    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[text, percent]);
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[title, text, percent]);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
     _extractReplyValueOrThrow(
         pigeonVar_replyList,

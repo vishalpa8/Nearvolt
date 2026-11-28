@@ -105,9 +105,35 @@ class PickedItem {
 /// (or not received) in full.
 enum BatchState { queued, moving, done, failed, cancelled }
 
+/// Where one file of a batch is. A skipped file is one the user left out.
+enum FileState { queued, moving, done, skipped }
+
+/// One file of a batch: its name and size, and how much has moved.
+class BatchFile {
+  const BatchFile({required this.name, required this.size, this.state = FileState.queued, this.bytes = 0});
+
+  /// Path inside the batch, with / separators.
+  final String name;
+  final int size;
+  final FileState state;
+  final int bytes;
+
+  double get fraction => size == 0 ? (state == FileState.done ? 1 : 0) : (bytes / size).clamp(0, 1);
+
+  BatchFile copyWith({FileState? state, int? bytes}) =>
+      BatchFile(name: name, size: size, state: state ?? this.state, bytes: bytes ?? this.bytes);
+}
+
 /// Files added together, sent one batch after another over a connection.
 class Batch {
-  const Batch({required this.id, required this.files, required this.bytes, this.state = BatchState.queued, this.error});
+  const Batch({
+    required this.id,
+    required this.files,
+    required this.bytes,
+    this.state = BatchState.queued,
+    this.error,
+    this.rows = const [],
+  });
 
   /// Counts batches on the connection, from 0.
   final int id;
@@ -116,12 +142,17 @@ class Batch {
   final BatchState state;
   final String? error;
 
-  Batch copyWith({int? files, int? bytes, BatchState? state, String? error}) => Batch(
+  /// The batch's files, in order. The receiving phone lists at most the first few
+  /// thousand of a very big batch, so this can be shorter than [files].
+  final List<BatchFile> rows;
+
+  Batch copyWith({int? files, int? bytes, BatchState? state, String? error, List<BatchFile>? rows}) => Batch(
     id: id,
     files: files ?? this.files,
     bytes: bytes ?? this.bytes,
     state: state ?? this.state,
     error: error ?? this.error,
+    rows: rows ?? this.rows,
   );
 }
 

@@ -3,7 +3,7 @@ import 'dart:ui' show AppLifecycleState, Size;
 import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart'
-    show CircularProgressIndicator, LinearProgressIndicator, NavigatorState, Navigator;
+    show CircularProgressIndicator, LinearProgressIndicator, NavigatorState, Navigator, TextButton;
 import 'package:nearvolt/app.dart';
 import 'package:nearvolt/debug.dart';
 import 'package:nearvolt/engine/messages.dart';
@@ -206,6 +206,124 @@ void main() {
     expect(find.text("It doesn't match"), findsNothing);
     expect(engine.queued, [album]);
     expect(find.text('Add files'), findsOneWidget);
+  });
+
+  const goaRows = [
+    BatchFile(name: 'Goa trip/IMG_0001.jpg', size: 4200000, state: FileState.done, bytes: 4200000),
+    BatchFile(name: 'Goa trip/clip.mp4', size: 812000000, state: FileState.moving, bytes: 203000000),
+    BatchFile(name: 'Notes.pdf', size: 1300000),
+  ];
+  final goaBatch = Batch(id: 0, files: 3, bytes: 817500000, state: BatchState.moving, rows: goaRows);
+
+  testWidgets('every file of a batch is listed by name, the one moving with a bar and how far it is', (tester) async {
+    await connectByCode(tester);
+    engine.sending!.add(connected.copyWith(batches: [goaBatch]));
+    await tester.pumpAndSettle();
+
+    expect(find.text('IMG_0001.jpg'), findsOneWidget);
+    expect(find.text('clip.mp4'), findsOneWidget);
+    expect(find.text('Notes.pdf'), findsOneWidget);
+    expect(find.text('203 MB of 812 MB'), findsOneWidget);
+    expect(find.textContaining('· waiting'), findsOneWidget);
+    expect(
+      tester.widget<LinearProgressIndicator>(find.byType(LinearProgressIndicator).last).value,
+      closeTo(0.25, 0.01),
+    );
+    // A finished file has nothing to skip.
+    expect(find.byTooltip('Skip IMG_0001.jpg'), findsNothing);
+    expect(find.byTooltip('Skip clip.mp4'), findsOneWidget);
+  });
+
+  testWidgets('skipping one file asks first, then tells only that file to stop', (tester) async {
+    await connectByCode(tester);
+    engine.sending!.add(connected.copyWith(batches: [goaBatch]));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Skip clip.mp4'));
+    await tester.pumpAndSettle();
+    expect(find.text('Skip clip.mp4?'), findsOneWidget);
+    expect(find.text('Only this file is left out. The other files carry on.'), findsOneWidget);
+
+    await tester.tap(find.text('Keep going'));
+    await tester.pumpAndSettle();
+    expect(engine.skippedFiles, isEmpty, reason: 'backing out changes nothing');
+
+    await tester.tap(find.byTooltip('Skip clip.mp4'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Skip file'));
+    await tester.pumpAndSettle();
+    expect(engine.skippedFiles, [(0, 1)]);
+    expect(engine.cancelledBatches, isEmpty);
+
+    engine.sending!.add(
+      connected.copyWith(
+        batches: [
+          goaBatch.copyWith(
+            rows: [
+              goaRows[0],
+              goaRows[1].copyWith(state: FileState.skipped),
+              goaRows[2],
+            ],
+          ),
+        ],
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Skipped · not sent'), findsOneWidget);
+    expect(find.byTooltip('Skip clip.mp4'), findsNothing);
+  });
+
+  testWidgets('a phone that cannot skip a single file says so, and the batch can still be cancelled', (tester) async {
+    engine.canSkip = false;
+    await connectByCode(tester);
+    engine.sending!.add(connected.copyWith(batches: [goaBatch]));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Skip Notes.pdf'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Skip file'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('needs the latest Nearvolt'), findsOneWidget);
+  });
+
+  testWidgets('cancelling a batch asks first and leaves the other batches alone', (tester) async {
+    await connectByCode(tester);
+    engine.sending!.add(
+      connected.copyWith(
+        batches: [
+          goaBatch,
+          const Batch(id: 1, files: 1, bytes: 2000000, rows: [BatchFile(name: 'Later.txt', size: 2000000)]),
+        ],
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Cancel batch'), findsNWidgets(2));
+
+    await tester.tap(find.text('Cancel batch').last);
+    await tester.pumpAndSettle();
+    expect(find.text('Cancel this batch?'), findsOneWidget);
+    await tester.tap(find.text('Keep going'));
+    await tester.pumpAndSettle();
+    expect(engine.cancelledBatches, isEmpty);
+
+    await tester.tap(find.text('Cancel batch').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, 'Cancel batch').last);
+    await tester.pumpAndSettle();
+    expect(engine.cancelledBatches.length, 1);
+  });
+
+  testWidgets('a connection that has ended offers nothing to cancel or skip', (tester) async {
+    await connectByCode(tester);
+    engine.sending!.add(
+      connected.copyWith(
+        phase: LinkPhase.ended,
+        batches: [goaBatch.copyWith(state: BatchState.cancelled)],
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Cancel batch'), findsNothing);
+    expect(find.byTooltip('Skip clip.mp4'), findsNothing);
   });
 
   testWidgets('a connection screen whose events stop does not keep saying Connected', (tester) async {

@@ -74,7 +74,7 @@ class Diagnostics {
         _log(_tag, 'the phone asking to connect left before an answer');
       case rust.EventKind.note:
         _log(_tag, e.text ?? '');
-      case rust.EventKind.ready:
+      case rust.EventKind.ready || rust.EventKind.listing || rust.EventKind.files:
         break;
     }
   }

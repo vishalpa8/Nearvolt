@@ -194,7 +194,9 @@ abstract class NearvoltPlatform {
 
   void startTransferService(String title);
 
-  void updateTransferService(String text, int percent);
+  /// Refreshes the transfer notification. percent is 0 to 100 for a bar, -1 for a bar
+  /// that waits, and -2 for no bar at all.
+  void updateTransferService(String title, String text, int percent);
 
   void stopTransferService();
 

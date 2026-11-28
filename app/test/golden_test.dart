@@ -27,8 +27,19 @@ const _half = Progress(
 
 const _batches = [
   Batch(id: 0, files: 12, bytes: 48200000, state: BatchState.done),
-  Batch(id: 1, files: 4, bytes: 821400000, state: BatchState.moving),
-  Batch(id: 2, files: 1, bytes: 2300000),
+  Batch(
+    id: 1,
+    files: 4,
+    bytes: 821400000,
+    state: BatchState.moving,
+    rows: [
+      BatchFile(name: 'Goa trip/IMG_0001.jpg', size: 4200000, state: FileState.done, bytes: 4200000),
+      BatchFile(name: 'Goa trip/IMG_0002.jpg', size: 3900000, state: FileState.done, bytes: 3900000),
+      BatchFile(name: 'Goa trip/clip.mp4', size: 812000000, state: FileState.moving, bytes: 406500000),
+      BatchFile(name: 'Notes.pdf', size: 1300000),
+    ],
+  ),
+  Batch(id: 2, files: 1, bytes: 2300000, rows: [BatchFile(name: 'Receipt.pdf', size: 2300000)]),
 ];
 
 void main() {

@@ -100,7 +100,14 @@ Golden screenshots of each one are in [app/test/goldens](../app/test/goldens).
    Asked once per connection, and never after a scan or a tap.
 7. **Connection.** Both phones: who they're connected to and how, the batch on
    the move as a large progress ring with percent, speed, time left and file
-   count, and every batch so far, newest first. While the receiver decides it
+   count, and every batch so far, newest first. Each batch lists its files by name:
+   the one moving shows a bar and how much has moved, finished ones a tick, waiting
+   ones their size. A big batch shows the files around the one moving, with how many
+   are done above and waiting below. Every waiting or moving file has a cross to skip
+   just that file, and every batch that hasn't finished has Cancel batch; both ask first,
+   and nothing else is affected. Either phone can do either. The notification says the
+   same thing on both phones (Sending to / Receiving from, files and bytes, and at the end
+   Sent or Received N files). While the receiver decides it
    shows the 4-digit code to compare (after a scan it says it is waiting for the other
    phone to accept). The sender has no code to confirm: comparing it on the receiver,
    when accepting, is the one check. "Connected" appears only once the other

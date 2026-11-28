@@ -265,6 +265,193 @@ async fn a_big_file_is_sent_in_chunks_and_a_cut_leaves_only_the_holes_to_resend(
     assert!(on_the_wire < HUGE + HUGE / 2, "sent {on_the_wire} bytes for a {HUGE}-byte file: it restarted");
     assert!(fs::read(dst.join("album/big.bin")).unwrap() == data, "the file arrived different");
 }
+/// Runs one transfer where a helper reacts once part of the first file is on the
+/// receiver. `react` gets the sending commands and the receiver, and the index of the
+/// big file in the batch (as the receiver listed it).
+struct Run {
+    sent: Vec<Event>,
+    received: Vec<Event>,
+    dst: std::path::PathBuf,
+    _tmp: tempfile::TempDir,
+}
+
+async fn run_with_big_file<F>(second_dir: bool, max_files: usize, react: F) -> Run
+where
+    F: FnOnce(mpsc::UnboundedSender<Command>, Arc<Receiver>, u32) + Send + 'static,
+{
+    let tmp = tempfile::tempdir().unwrap();
+    let (src, dst) = (tmp.path().join("src"), tmp.path().join("dst"));
+    fs::create_dir_all(src.join("set")).unwrap();
+    // A sparse 400 MB file: big enough to still be arriving when the user acts.
+    fs::File::create(src.join("set/big.bin")).unwrap().set_len(400 * 1024 * 1024).unwrap();
+    fs::write(src.join("set/small.txt"), b"hello").unwrap();
+    let mut paths = vec![src.join("set")];
+    if second_dir {
+        fs::create_dir_all(src.join("other")).unwrap();
+        fs::write(src.join("other/note.txt"), b"keep me").unwrap();
+        paths.push(src.join("other"));
+    }
+    let rx = Arc::new(receiver(&dst, false));
+    let peer = Peer::from_ticket(&rx.ticket());
+    let received_stats = Arc::new(Stats::default());
+    let (rx_events, mut rx_events_rx) = mpsc::unbounded_channel();
+    let (tx_events, mut tx_events_rx) = mpsc::unbounded_channel();
+
+    let (commands, queue) = mpsc::unbounded_channel();
+    commands.send(Command::Send(FileSet::Paths(paths))).unwrap();
+    let (watch, receiver_handle) = (received_stats.clone(), rx.clone());
+    // Waits for the receiver's file list and for bytes to be moving, then lets the test act.
+    let (listing_tx, listing_rx) = tokio::sync::oneshot::channel::<u32>();
+    let _ = &listing_tx;
+    let helper = tokio::spawn(async move {
+        let big = listing_rx.await.unwrap();
+        while watch.snapshot().done_bytes < 8 * 1024 * 1024 {
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
+        react(commands, receiver_handle, big);
+    });
+    // The listing comes through the receiver's events; this task passes the index on.
+    let forward = {
+        let (events_tx, events_rx) = mpsc::unbounded_channel::<Event>();
+        let relay = tokio::spawn(async move {
+            let mut listing_tx = Some(listing_tx);
+            let mut events_rx: mpsc::UnboundedReceiver<Event> = events_rx;
+            let mut all = Vec::new();
+            while let Some(event) = events_rx.recv().await {
+                if let Event::Listing { files, .. } = &event {
+                    if let Some(tx) = listing_tx.take() {
+                        let big = files.iter().position(|(path, _)| path.ends_with("big.bin")).unwrap() as u32;
+                        let _ = tx.send(big);
+                    }
+                }
+                all.push(event);
+            }
+            all
+        });
+        (events_tx, relay)
+    };
+    let events_tx = forward.0.clone();
+    let pump = tokio::spawn(async move {
+        while let Some(event) = rx_events_rx.recv().await {
+            let _ = events_tx.send(event);
+        }
+    });
+
+    let identity = Identity::generate().unwrap();
+    let options = SendOptions { max_files_per_batch: max_files, ..SendOptions::default() };
+    let sending = connect(&identity, &peer, &options, queue, Arc::new(Stats::default()), Some(tx_events));
+    let receiving = rx.run(approve_all(Arc::default()), received_stats.clone(), Some(rx_events));
+    let (received, sent) =
+        tokio::time::timeout(std::time::Duration::from_secs(30), async { tokio::join!(receiving, sending) })
+            .await
+            .expect("both sides should finish");
+    received.unwrap();
+    sent.unwrap();
+    helper.await.unwrap();
+    let _ = pump.await;
+    drop(forward.0);
+    let received = forward.1.await.unwrap();
+    let sent = std::iter::from_fn(|| tx_events_rx.try_recv().ok()).collect();
+    Run { sent, received, dst, _tmp: tmp }
+}
+
+/// The files saved under dst, as relative paths with /, folders left out.
+fn saved(dst: &Path) -> Vec<String> {
+    let mut files: Vec<String> = files_under(dst)
+        .into_iter()
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.is_file())
+        .map(|p| p.strip_prefix(dst).unwrap().to_string_lossy().replace('\\', "/"))
+        .collect();
+    files.sort();
+    files
+}
+
+fn skipped_files(events: &[Event]) -> Vec<u32> {
+    events
+        .iter()
+        .flat_map(|e| match e {
+            Event::Files { skipped, .. } => skipped.clone(),
+            _ => Vec::new(),
+        })
+        .collect()
+}
+
+fn completed_files(events: &[Event]) -> Vec<(u32, u64)> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Completed { batch, summary } => Some((*batch, summary.files)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn skipping_one_file_from_the_sending_phone_leaves_the_others_to_arrive() {
+    let run = run_with_big_file(false, 1000, |commands, _rx, big| {
+        commands.send(Command::SkipFile { batch: 0, file: big }).unwrap();
+        drop(commands);
+    })
+    .await;
+
+    assert_eq!(saved(&run.dst), vec!["set/small.txt".to_string()], "only the small file should be saved");
+    assert_eq!(completed_files(&run.sent), vec![(0, 1)], "the batch finishes with the one file that was sent");
+    assert_eq!(completed_files(&run.received), vec![(0, 1)]);
+    assert_eq!(skipped_files(&run.sent).len(), 1, "the sender's list shows it skipped");
+    assert_eq!(skipped_files(&run.received).len(), 1, "so does the receiver's");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn skipping_one_file_from_the_receiving_phone_leaves_the_others_to_arrive() {
+    let run = run_with_big_file(false, 1000, |commands, rx, big| {
+        assert!(rx.skip_file(0, big), "this version of the sender can skip a file");
+        drop(commands);
+    })
+    .await;
+
+    assert_eq!(saved(&run.dst), vec!["set/small.txt".to_string()]);
+    assert_eq!(completed_files(&run.sent), vec![(0, 1)]);
+    assert_eq!(completed_files(&run.received), vec![(0, 1)]);
+    assert_eq!(skipped_files(&run.sent).len(), 1);
+    assert_eq!(skipped_files(&run.received).len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cancelling_a_batch_from_the_sending_phone_leaves_the_next_batch_alone() {
+    let run = run_with_big_file(true, 2, |commands, _rx, _big| {
+        commands.send(Command::CancelBatch(0)).unwrap();
+        drop(commands);
+    })
+    .await;
+
+    assert_eq!(saved(&run.dst), vec!["other/note.txt".to_string()], "batch 0 is gone, batch 1 arrived");
+    for events in [&run.sent, &run.received] {
+        assert!(
+            events.iter().any(|e| matches!(e, Event::BatchFailed { batch: 0, kind: FailureKind::Cancelled, .. })),
+            "batch 0 should be reported cancelled: {events:?}"
+        );
+        assert_eq!(completed_files(events), vec![(1, 1)]);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cancelling_a_batch_from_the_receiving_phone_leaves_the_next_batch_alone() {
+    let run = run_with_big_file(true, 2, |commands, rx, _big| {
+        rx.cancel_batch(0);
+        drop(commands);
+    })
+    .await;
+
+    assert_eq!(saved(&run.dst), vec!["other/note.txt".to_string()]);
+    for events in [&run.sent, &run.received] {
+        assert!(
+            events.iter().any(|e| matches!(e, Event::BatchFailed { batch: 0, kind: FailureKind::Cancelled, .. })),
+            "batch 0 should be reported cancelled: {events:?}"
+        );
+        assert_eq!(completed_files(events), vec![(1, 1)]);
+    }
+}
 /// Opens the first file for real and fails every other, as when a picked file
 /// is deleted or its permission is withdrawn in the middle of sending.
 struct HalfGone(std::path::PathBuf);

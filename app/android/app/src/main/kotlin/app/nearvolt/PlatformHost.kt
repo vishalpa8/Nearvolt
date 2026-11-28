@@ -374,7 +374,8 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
 
     override fun startTransferService(title: String) = TransferService.start(context, title)
 
-    override fun updateTransferService(text: String, percent: Long) = TransferService.update(context, text, percent.toInt())
+    override fun updateTransferService(title: String, text: String, percent: Long) =
+        TransferService.update(context, title, text, percent.toInt())
 
     override fun stopTransferService() = TransferService.stop(context)
 

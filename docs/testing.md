@@ -118,6 +118,11 @@ Start with a fresh install.
 | 11c | With B's Receive prompt showing, have A cancel (Back). | The prompt closes by itself on B and says "A cancelled."; tapping nothing leaves B ready for the next phone. |
 | 11d | With B's prompt showing for A, start a second phone C connecting to B. | C is told B is connected to another phone; B's prompt for A is unchanged, and Accept connects A, not C. |
 | 11e | Run a port scanner, or open the receiver's port in a browser many times, while connected. | The transfer and Receive carry on; the log shows "N unknown connection attempts were ignored". |
+| 12a | Send three files, one large. While it moves, look at the Send screen on A and the Receive screen on B. | Both list the same files by name; the moving one has a bar and `x MB of y MB`; finished ones have a tick; waiting ones say "waiting". |
+| 12b | On A, tap the cross on the large file and confirm Skip file. | On both phones the file shows `Skipped`; the other files finish and the batch says Sent and verified. B's folder has no part of the skipped file. |
+| 12c | Same, but tap the cross on B. | The same result: only that file is left out, on both phones. |
+| 12d | Send two batches (a big selection split in two, or add files twice). Tap Cancel batch on the first and confirm. | The first batch says `Cancelled · not sent` (B: `not received`); the second goes on and finishes. Do it from B as well. |
+| 12e | Watch the notification on both phones from connecting to the end. | `Connected to X`, then `Sending to X` / `Receiving from X` with the same file and byte counts, then `Sent N files` / `Received N files` with no bar. It never stays at a percentage after the files are done. |
 
 ### Keeping the connection
 

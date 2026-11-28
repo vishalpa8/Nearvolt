@@ -1,7 +1,7 @@
 import 'package:flutter/services.dart' show PlatformException;
 
 import '../ui/format.dart' show filesLabel;
-import 'models.dart' show Batch, BatchState, SetupProblem;
+import 'models.dart' show Batch, BatchState, Connection, LinkPhase, SetupProblem;
 import 'rust/api.dart' show FailureKind;
 
 /// Every failure the app shows is worded here, and only here. The engine reports
@@ -37,6 +37,7 @@ String friendlyFailure(FailureKind? kind, {String? peer, bool receiving = false}
       "Couldn't reach $who. Check that their phone has Receive open, then try Scan code or Tap again.",
     FailureKind.oldVersion => '$lead has an older version of Nearvolt. Update it on both phones.',
     FailureKind.tooBig => "That's too much to send in one go. Try sending fewer files at a time.",
+    FailureKind.cancelled => 'Cancelled.',
     FailureKind.other || null => _generic,
   };
 }
@@ -92,4 +93,47 @@ String endedLine({required bool sending, required List<Batch> batches}) {
   final was = left == 1 ? "wasn't" : "weren't";
   if (finished == 0) return 'Cancelled. ${filesLabel(left)} $was $verb.';
   return "${filesLabel(left)} $was $verb. What finished was verified${sending ? '' : ' and saved'}.";
+}
+
+/// What the transfer notification says: the same on both phones, built from the
+/// connection as the screen shows it, so the two never disagree and the last
+/// update is always the end of the story.
+class TransferNote {
+  const TransferNote(this.title, this.text, this.percent);
+
+  final String title;
+  final String text;
+
+  /// 0 to 100 while data moves; null for no bar; -1 for a bar that just waits.
+  final int? percent;
+
+  /// What changes the wording, as opposed to the numbers creeping up while data moves.
+  String get key => (percent ?? -1) >= 0 ? '$title|moving' : '$title|$text';
+}
+
+TransferNote transferNote(Connection c, {required bool sending, required String Function(int) bytes}) {
+  final peer = c.peer.trim().isEmpty ? 'the other phone' : c.peer.trim();
+  if (c.phase == LinkPhase.reconnecting) {
+    return TransferNote('Reconnecting to $peer', 'Waiting for the link to come back…', -1);
+  }
+  final moving = c.moving;
+  final p = c.progress;
+  if (moving != null && p != null) {
+    final title = sending ? 'Sending to $peer' : 'Receiving from $peer';
+    final files = p.totalFiles == 1 ? '1 file' : '${p.doneFiles} of ${p.totalFiles} files';
+    final speed = p.bytesPerSecond > 0 ? ' · ${bytes(p.bytesPerSecond.round())}/s' : '';
+    return TransferNote(
+      title,
+      '$files · ${bytes(p.doneBytes)} of ${bytes(p.totalBytes)}$speed',
+      (p.fraction * 100).round(),
+    );
+  }
+  final done = c.batches.where((b) => b.state == BatchState.done).fold(0, (sum, b) => sum + b.files);
+  final waiting = c.batches.where((b) => b.state == BatchState.queued).length;
+  final title = 'Connected to $peer';
+  if (waiting > 0) return TransferNote(title, waiting == 1 ? '1 batch waiting' : '$waiting batches waiting', null);
+  if (done > 0) {
+    return TransferNote(title, '${sending ? 'Sent' : 'Received'} ${filesLabel(done)}', null);
+  }
+  return TransferNote(title, sending ? 'Ready to send' : 'Ready to receive', null);
 }

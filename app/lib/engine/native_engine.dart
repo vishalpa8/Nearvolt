@@ -203,6 +203,7 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
         await previous;
         final ticket = to.id == 'usb' ? null : to.ticket;
         final wifi = ticket == null ? null : rust.readTicket(text: ticket).wifi;
+        _noteKey = '';
         await _platform.startTransferService('Connected to ${to.name}');
         _platform.log('send', 'connecting to the other phone (${to.link})');
         await diagnostics.network();
@@ -224,7 +225,7 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
         await for (final event in events) {
           diagnostics.record(event);
           live.apply(event);
-          _notify(live.state);
+          _notify(live.state, sending: true);
         }
       } on Object catch (e) {
         _platform.log('send', 'connection failed: $e');
@@ -273,12 +274,34 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
     final added = <Batch>[];
     for (final count in sizes) {
       final part = what.files.sublist(start, start + count);
-      added.add(Batch(id: live.queued++, files: count, bytes: part.fold(0, (sum, f) => sum + f.size)));
+      added.add(
+        Batch(
+          id: live.queued++,
+          files: count,
+          bytes: part.fold(0, (sum, f) => sum + f.size),
+          rows: [for (final f in part) BatchFile(name: f.path, size: f.size)],
+        ),
+      );
       start += count;
     }
     // Android's access to these files is given back when their last batch is over.
     live.hold(what.token, [for (final b in added) b.id]);
     live.emit(live.state.copyWith(batches: [...live.state.batches, ...added]));
+  }
+
+  /// True while this phone is the one sending, which is how a cancel finds its side.
+  bool get _isSending => _sending != null;
+
+  @override
+  bool cancelBatch(int batch) {
+    _platform.log('send', 'cancelling batch $batch');
+    return rust.cancelBatch(batch: batch, sending: _isSending);
+  }
+
+  @override
+  bool skipFile(int batch, int file) {
+    _platform.log('send', 'skipping file $file of batch $batch');
+    return rust.skipFile(batch: batch, file: file, sending: _isSending);
   }
 
   @override
@@ -320,10 +343,13 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
           if (event.kind == rust.EventKind.connected) {
             // Connected: the radios that found this phone have done their job.
             await _platform.stopAdvertising(event.route);
-            if (!serving) await _platform.startTransferService('Connected to ${live.state.peer}');
+            if (!serving) {
+              _noteKey = '';
+              await _platform.startTransferService('Connected to ${live.state.peer}');
+            }
             serving = true;
           }
-          _notify(live.state);
+          _notify(live.state, sending: false);
         }
       } on Object catch (e) {
         if (!cancelled) {
@@ -395,17 +421,18 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
   }
 
   DateTime _notified = DateTime(0);
+  String _noteKey = '';
 
-  /// The notification needs no more than one update a second.
-  void _notify(Connection c) {
-    final p = c.progress;
+  /// Brings the notification in line with the connection. Numbers creeping up while data
+  /// moves are sent once a second; anything that changes the wording (a batch finishing,
+  /// the link dropping) goes at once, so the last update is always how it really ended.
+  void _notify(Connection c, {required bool sending}) {
+    final note = transferNote(c, sending: sending, bytes: formatBytes);
     final now = DateTime.now();
-    if (p == null || now.difference(_notified) < const Duration(seconds: 1)) return;
+    if (note.key == _noteKey && now.difference(_notified) < const Duration(seconds: 1)) return;
+    _noteKey = note.key;
     _notified = now;
-    _platform.updateTransferService(
-      '${formatBytes(p.doneBytes)} of ${formatBytes(p.totalBytes)}',
-      (p.fraction * 100).round(),
-    );
+    _platform.updateTransferService(note.title, note.text, note.percent ?? -2);
   }
 }
 
@@ -495,12 +522,19 @@ class _Live {
       rust.EventKind.requestWithdrawn =>
         s.request?.id == e.requestId ? s.copyWith(phase: LinkPhase.connecting, peer: '', keepRequest: false) : s,
       rust.EventKind.note => s,
+      rust.EventKind.listing => _listed(s, e),
+      rust.EventKind.files => _files(s, e),
       rust.EventKind.code => s.copyWith(phase: LinkPhase.waiting, code: e.code),
       rust.EventKind.waiting => s.copyWith(phase: LinkPhase.waiting),
       rust.EventKind.connected => _connected(s, e),
       rust.EventKind.started => _start(s, e),
       rust.EventKind.progress => s.moving == null ? s : s.copyWith(progress: _progress(e)),
-      rust.EventKind.completed => s.copyWith(batches: _mark(s.batches, e.batch, BatchState.done), keepProgress: false),
+      rust.EventKind.completed => s.copyWith(batches: _finishBatch(s.batches, e.batch), keepProgress: false),
+      // A batch the user cancelled isn't a failure: it says so and goes grey.
+      rust.EventKind.batchFailed when e.failure == rust.FailureKind.cancelled => s.copyWith(
+        batches: _mark(s.batches, e.batch, BatchState.cancelled),
+        keepProgress: false,
+      ),
       rust.EventKind.batchFailed => s.copyWith(
         batches: _mark(
           s.batches,
@@ -539,13 +573,82 @@ class _Live {
   Connection _start(Connection s, rust.TransferEvent e) {
     _speedAt = null;
     _speed = 0;
-    final batch = Batch(id: e.batch, files: e.totalFiles, bytes: e.totalBytes, state: BatchState.moving);
     final known = s.batches.any((b) => b.id == e.batch);
+    final batch = Batch(
+      id: e.batch,
+      files: e.totalFiles,
+      bytes: e.totalBytes,
+      state: BatchState.moving,
+      rows: _listing.remove(e.batch) ?? const [],
+    );
     return s.copyWith(
-      batches: known ? [for (final b in s.batches) b.id == e.batch ? batch : b] : [...s.batches, batch],
+      batches: known
+          ? [
+              for (final b in s.batches)
+                b.id == e.batch ? b.copyWith(files: e.totalFiles, bytes: e.totalBytes, state: BatchState.moving) : b,
+            ]
+          : [...s.batches, batch],
       progress: Progress(totalBytes: e.totalBytes, totalFiles: e.totalFiles),
     );
   }
+
+  /// The files of batches the receiver was told about before they started.
+  final _listing = <int, List<BatchFile>>{};
+
+  /// The receiving phone learns the file names of a batch from the sender's offer.
+  Connection _listed(Connection s, rust.TransferEvent e) {
+    final rows = [for (final f in e.listing) BatchFile(name: f.path, size: f.size)];
+    if (!s.batches.any((b) => b.id == e.batch)) {
+      _listing[e.batch] = rows;
+      return s;
+    }
+    return s.copyWith(batches: [for (final b in s.batches) b.id == e.batch ? b.copyWith(rows: rows) : b]);
+  }
+
+  /// Brings the file rows of a batch up to date: which are moving and how far, which
+  /// finished, which the user skipped.
+  Connection _files(Connection s, rust.TransferEvent e) {
+    final active = {for (final a in e.active) a.file: a.bytes};
+    final finished = e.finished.toSet();
+    final skipped = e.skipped.toSet();
+    return s.copyWith(
+      batches: [
+        for (final b in s.batches)
+          if (b.id != e.batch)
+            b
+          else
+            b.copyWith(
+              rows: [
+                for (var i = 0; i < b.rows.length; i++)
+                  if (skipped.contains(i))
+                    b.rows[i].copyWith(state: FileState.skipped)
+                  else if (finished.contains(i))
+                    b.rows[i].copyWith(state: FileState.done, bytes: b.rows[i].size)
+                  else if (b.rows[i].state == FileState.done || b.rows[i].state == FileState.skipped)
+                    b.rows[i]
+                  else if (active.containsKey(i))
+                    b.rows[i].copyWith(state: FileState.moving, bytes: active[i])
+                  else
+                    b.rows[i].copyWith(state: FileState.queued),
+              ],
+            ),
+      ],
+    );
+  }
+
+  /// Every file the user didn't skip is verified once the batch completes.
+  List<Batch> _finishBatch(List<Batch> batches, int id) => [
+    for (final b in batches)
+      if (b.id != id)
+        b
+      else
+        b.copyWith(
+          state: BatchState.done,
+          rows: [
+            for (final r in b.rows) r.state == FileState.skipped ? r : r.copyWith(state: FileState.done, bytes: r.size),
+          ],
+        ),
+  ];
 
   /// The connection is over: anything still waiting or moving was not finished, and the
   /// screen must say so instead of still showing "Sending".

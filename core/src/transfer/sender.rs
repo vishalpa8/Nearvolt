@@ -17,12 +17,12 @@ use tokio::task::JoinSet;
 use super::disk;
 use super::manifest::{plan_batches, FileSet, Manifest, MAX_FILES_PER_BATCH};
 use super::ranges::Ranges;
-use super::{classify, emit, is_fatal, Event, EventSender, FailureKind, Fatal, Stats, Summary};
+use super::{classify, emit, is_fatal, Event, EventSender, FailureKind, Fatal, FileMeter, Stats, Summary};
 use crate::identity::{Fingerprint, Identity};
 use crate::pairing::{self, Secret, Ticket};
 use crate::protocol::{
     read_msg, write_msg, Control, FileHave, FileHeader, SessionId, CHUNK, HEARTBEAT_INTERVAL, HEARTBEAT_TIMEOUT,
-    PROTOCOL_VERSION,
+    MIN_PROTOCOL_VERSION, PROTOCOL_VERSION, SKIP_VERSION,
 };
 use crate::transport::{peer_fingerprint, Connector, Link, TcpLink, TlsStream};
 use crate::util::AbortOnDrop;
@@ -90,6 +90,10 @@ pub enum Command {
     Send(FileSet),
     /// Ends the connection now, even in the middle of a batch.
     Disconnect,
+    /// Cancels a batch, sent or waiting; other batches go on.
+    CancelBatch(u32),
+    /// Skips one file of a batch; the rest of the batch goes on.
+    SkipFile { batch: u32, file: u32 },
 }
 
 /// Sends one batch, then ends the connection.
@@ -234,6 +238,14 @@ struct Batches {
     closed: bool,
     files: u64,
     bytes: u64,
+    /// Per-file counts for the app's list, shared with the data streams.
+    meter: Arc<FileMeter>,
+    /// The receiver understands Skip, and cancelling for a reason.
+    supports_skip: bool,
+    /// Cancel asked for the batch being sent; the session carries it out.
+    cancel_current: Vec<u32>,
+    /// Files skipped, to tell the receiver, in the batch being sent.
+    skips: Vec<(u32, u32)>,
 }
 
 impl Batches {
@@ -261,6 +273,28 @@ impl Batches {
                 ControlFlow::Continue(())
             }
             Some(Command::Disconnect) => ControlFlow::Break(()),
+            Some(Command::CancelBatch(batch)) => {
+                if self.current.as_ref().is_some_and(|(b, _)| *b == batch) {
+                    self.cancel_current.push(batch);
+                } else if let Some(at) = self.pending.iter().position(|(b, _)| *b == batch) {
+                    // Not started yet: it just never goes.
+                    self.pending.remove(at);
+                    let reason = "You cancelled this batch.".to_string();
+                    emit(events, Event::BatchFailed { batch, reason, kind: FailureKind::Cancelled });
+                }
+                ControlFlow::Continue(())
+            }
+            Some(Command::SkipFile { batch, file }) => {
+                let known = self
+                    .current
+                    .iter()
+                    .chain(self.pending.iter())
+                    .any(|(b, m)| *b == batch && (file as usize) < m.offer.files.len());
+                if known && self.supports_skip && self.meter.skip(batch, file) {
+                    self.skips.push((batch, file));
+                }
+                ControlFlow::Continue(())
+            }
             None => {
                 self.closed = true;
                 ControlFlow::Continue(())
@@ -335,7 +369,13 @@ async fn session<L: Link>(
     };
     write_msg(&mut wr, &hello).await?;
     let (session_id, receiver_nonce) = match read_msg(&mut rd).await? {
-        Control::Welcome { session, nonce, .. } => (session, nonce),
+        Control::Welcome { session, nonce, version, .. } => {
+            // A receiver that doesn't say is at the oldest version we still talk to.
+            let version = version.unwrap_or(MIN_PROTOCOL_VERSION);
+            batches.supports_skip = version >= SKIP_VERSION;
+            stats.set_peer_version(version);
+            (session, nonce)
+        }
         Control::Reject { reason, kind } => return Err(Fatal::new(kind.unwrap_or(FailureKind::Other), reason).into()),
         other => bail!("unexpected reply: {other:?}"),
     };
@@ -394,6 +434,7 @@ async fn session<L: Link>(
     let mut remote = 0u64;
     let mut last_progress = (0u64, Instant::now());
     let mut stall_check = tokio::time::interval(Duration::from_secs(1));
+    let mut files_tick = tokio::time::interval(Duration::from_millis(500));
     loop {
         if batches.current.is_none() {
             batches.current = batches.pending.pop_front();
@@ -401,6 +442,9 @@ async fn session<L: Link>(
         }
         match &batches.current {
             Some((batch, manifest)) if !offered => {
+                // A fresh start for this batch's per-file counts: after a reconnect they begin again
+                // from what the receiver says it has.
+                batches.meter.forget_counts(*batch);
                 let _ = out.send(Control::Offer { batch: *batch, files: manifest.offer.files.clone() });
                 offered = true;
             }
@@ -414,29 +458,49 @@ async fn session<L: Link>(
                     let offer = &manifest.offer;
                     ensure!(have.len() == offer.files.len(), "the receiver answered for a different file list");
                     let (mut done_files, mut done_bytes) = (0u64, 0u64);
+                    let (mut total_files, mut total_bytes) = (offer.files.len() as u64, offer.total_bytes());
+                    let mut skipped_now = Vec::new();
                     for (i, state) in have.iter().enumerate() {
                         let size = offer.files[i].size;
+                        // Skipped while it was waiting, or before a reconnect: not sent, not counted.
+                        if batches.meter.is_skipped(batch, i as u32) {
+                            total_files -= 1;
+                            total_bytes -= size;
+                            skipped_now.push(i as u32);
+                            continue;
+                        }
                         let have = match state {
                             FileHave::Complete => {
                                 done_files += 1;
                                 done_bytes += size;
+                                batches.meter.finish(batch, i as u32);
                                 continue;
                             }
                             FileHave::None => Ranges::default(),
                             FileHave::Partial { ranges } => Ranges::from_pairs(ranges.iter().copied()),
                         };
                         done_bytes += have.total().min(size);
+                        batches.meter.set_at_least(batch, i as u32, have.total().min(size));
                         // An empty file still has to be made, so it gets a chunk with nothing in it.
                         let pieces: Vec<(u64, u64)> = if size == 0 {
                             vec![(0, 0)]
                         } else {
                             have.gaps(size).into_iter().flat_map(|(start, end)| chunks(start, end)).collect()
                         };
+                        if pieces.is_empty() {
+                            batches.meter.finish(batch, i as u32);
+                        } else {
+                            batches.meter.expect(batch, i as u32, pieces.len() as u32);
+                        }
                         for (offset, len) in pieces {
                             let _ = jobs.try_send(Job { batch, file: i as u32, offset, len, manifest: manifest.clone() });
                         }
                     }
-                                        let (files, bytes) = (offer.files.len() as u64, offer.total_bytes());
+                    // The receiver may not know yet about files skipped before it accepted.
+                    for file in skipped_now {
+                        let _ = out.send(Control::Skip { batch, file });
+                    }
+                                        let (files, bytes) = (total_files, total_bytes);
                     stats.set_totals(files, bytes);
                     stats.set_done(done_files, done_bytes);
                     (accepted, batch_started, last_progress.1) = (true, Instant::now(), Instant::now());
@@ -450,12 +514,28 @@ async fn session<L: Link>(
                     if let Some((batch, manifest)) = &batches.current {
                         let size = manifest.offer.files.get(file as usize).map(|f| f.size);
                         if size.is_some_and(|size| offset.checked_add(len).is_some_and(|end| end <= size)) {
+                            batches.meter.expect(*batch, file, 1);
                             let _ = jobs.try_send(Job { batch: *batch, file, offset, len, manifest: manifest.clone() });
+                        }
+                    }
+                }
+                // The receiver's user skipped a file: it stops here too.
+                Some(Ok(Control::Skip { batch, file })) => {
+                    if let Some((_, manifest)) = batches.current.as_ref().filter(|(b, _)| *b == batch) {
+                        if let Some(entry) = manifest.offer.files.get(file as usize) {
+                            if batches.meter.skip(batch, file) {
+                                let p = stats.snapshot();
+                                stats.set_totals(p.total_files.saturating_sub(1), p.total_bytes.saturating_sub(entry.size));
+                            }
                         }
                     }
                 }
                 Some(Ok(Control::Complete { batch, files, bytes })) => {
                     if batches.current.as_ref().is_some_and(|(b, _)| *b == batch) {
+                        for event in batches.meter.report() {
+                            emit(events, event);
+                        }
+                        batches.meter.forget(batch);
                         stats.set_done(files, bytes);
                         (batches.files, batches.bytes) = (batches.files + files, batches.bytes + bytes);
                         let summary = Summary { files, bytes, elapsed: batch_started.elapsed() };
@@ -473,7 +553,12 @@ async fn session<L: Link>(
                 // The receiver started the batch but can't go on, for example because its
                 // storage filled up. What's left of it is dropped, the connection stays.
                 Some(Ok(Control::Abort { batch, kind })) => {
-                    let reason = "The receiver couldn't keep the files.".to_string();
+                    let reason = if kind == FailureKind::Cancelled {
+                        "The receiver cancelled this batch."
+                    } else {
+                        "The receiver couldn't keep the files."
+                    }
+                    .to_string();
                     fail_current(batches, &jobs_rx, events, batch, reason, kind);
                 }
                 Some(Ok(Control::Ping)) => {}
@@ -489,9 +574,15 @@ async fn session<L: Link>(
                 if batches.handle(command, events).await.is_break() {
                     return say_bye(out, writer, &mut control_rx).await;
                 }
+                carry_out_requests(batches, &out, &jobs_rx, events, stats);
+            }
+            _ = files_tick.tick() => {
+                for event in batches.meter.report() {
+                    emit(events, event);
+                }
             }
             Some(stream) = opening.next() => {
-                workers.spawn(worker(stream?, session_id, peer.secret, jobs_rx.clone()));
+                workers.spawn(worker(stream?, session_id, peer.secret, jobs_rx.clone(), batches.meter.clone()));
             }
             Some(joined) = workers.join_next() => {
                 let error = match joined {
@@ -505,7 +596,7 @@ async fn session<L: Link>(
                 // middle of that file, now unusable, is replaced.
                 if let (true, Some(batch)) = (is_fatal(&error), current) {
                     fail_current(batches, &jobs_rx, events, batch, format!("{error:#}"), classify(&error));
-                    let _ = out.send(Control::Cancel { batch });
+                    let _ = out.send(Control::Cancel { batch, kind: None });
                     opening.push(open(&peer.link, connector));
                     continue;
                 }
@@ -540,6 +631,33 @@ async fn session<L: Link>(
                 }
             }
         }
+    }
+}
+
+/// Does what the user asked while a batch is being sent: cancel it, or skip a file.
+fn carry_out_requests(
+    batches: &mut Batches,
+    out: &mpsc::UnboundedSender<Control>,
+    jobs: &async_channel::Receiver<Job>,
+    events: &Option<EventSender>,
+    stats: &Arc<Stats>,
+) {
+    for batch in std::mem::take(&mut batches.cancel_current) {
+        let reason = "You cancelled this batch.".to_string();
+        if fail_current(batches, jobs, events, batch, reason, FailureKind::Cancelled) {
+            // An older receiver doesn't know this reason; it is told the plain way.
+            let kind = batches.supports_skip.then_some(FailureKind::Cancelled);
+            let _ = out.send(Control::Cancel { batch, kind });
+            batches.meter.forget(batch);
+        }
+    }
+    for (batch, file) in std::mem::take(&mut batches.skips) {
+        let Some((_, manifest)) = batches.current.as_ref().filter(|(b, _)| *b == batch) else { continue };
+        if let Some(entry) = manifest.offer.files.get(file as usize) {
+            let p = stats.snapshot();
+            stats.set_totals(p.total_files.saturating_sub(1), p.total_bytes.saturating_sub(entry.size));
+        }
+        let _ = out.send(Control::Skip { batch, file });
     }
 }
 
@@ -578,6 +696,7 @@ fn fail_current(
         return false;
     }
     batches.current = None;
+    batches.meter.forget(batch);
     while jobs.try_recv().is_ok() {}
     emit(events, Event::BatchFailed { batch, reason, kind });
     true
@@ -647,6 +766,7 @@ async fn worker(
     session: SessionId,
     secret: Option<Secret>,
     jobs: async_channel::Receiver<Job>,
+    meter: Arc<FileMeter>,
 ) -> Result<()> {
     let hello = Control::Hello {
         version: PROTOCOL_VERSION,
@@ -657,13 +777,17 @@ async fn worker(
     };
     write_msg(&mut stream, &hello).await?;
     while let Ok(job) = jobs.recv().await {
-        send_file(&mut stream, job).await?;
+        // A file the user skipped isn't sent any more.
+        if meter.is_skipped(job.batch, job.file) {
+            continue;
+        }
+        send_file(&mut stream, job, &meter).await?;
     }
     Ok(())
 }
 
 /// One chunk: its header, the bytes, then the hash of those bytes.
-async fn send_file(stream: &mut TlsStream, job: Job) -> Result<()> {
+async fn send_file(stream: &mut TlsStream, job: Job, meter: &FileMeter) -> Result<()> {
     let Job { batch, file, offset, len, manifest } = job;
     let entry = &manifest.offer.files[file as usize];
     let unreadable =
@@ -686,14 +810,17 @@ async fn send_file(stream: &mut TlsStream, job: Job) -> Result<()> {
         .await?
         .map_err(unreadable)?;
         stream.write_all(&buf[..n]).await?;
+        meter.add(batch, file, n as u64);
         pos += n as u64;
     }
     stream.write_all(hasher.finalize().as_bytes()).await?;
     // TLS keeps the tail of each write buffered until flushed; without this the
     // end of a chunk before an idle period would never leave the device.
     stream.flush().await?;
+    meter.chunk_done(batch, file);
     Ok(())
 }
+
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};

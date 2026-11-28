@@ -137,6 +137,58 @@ class _ConnectionPageState extends State<ConnectionPage> {
     widget.engine.disconnect();
   }
 
+  /// Asks first, then cancels the whole batch from this phone. The other batches carry on.
+  Future<void> _cancelBatch(Batch batch) async {
+    final unfinished = batch.rows.isEmpty
+        ? batch.files
+        : batch.rows.where((r) => r.state != FileState.done && r.state != FileState.skipped).length;
+    final sure = await _confirm(
+      title: 'Cancel this batch?',
+      body:
+          '${unfinished == 1 ? '1 file' : '$unfinished files'} that haven\'t finished won\'t be ${widget.sending ? 'sent' : 'received'}. '
+          'Files that already finished stay. Other batches carry on.',
+      stay: 'Keep going',
+      end: 'Cancel batch',
+    );
+    if (sure != true || !mounted) return;
+    widget.engine.cancelBatch(batch.id);
+  }
+
+  /// Asks first, then leaves one file out. Everything else carries on.
+  Future<void> _skipFile(Batch batch, int file) async {
+    final name = batch.rows[file].name.split('/').last;
+    final sure = await _confirm(
+      title: 'Skip $name?',
+      body: 'Only this file is left out. The other files carry on.',
+      stay: 'Keep going',
+      end: 'Skip file',
+    );
+    if (sure != true || !mounted) return;
+    if (!widget.engine.skipFile(batch.id, file)) {
+      showNote(
+        context,
+        'The other phone needs the latest Nearvolt to skip a single file. You can cancel the whole batch instead.',
+      );
+    }
+  }
+
+  Future<bool?> _confirm({required String title, required String body, required String stay, required String end}) =>
+      showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(title),
+          content: Text(body),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Keep going')),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              style: TextButton.styleFrom(foregroundColor: readableOn(AppColors.danger, AppColors.surface)),
+              child: Text(end),
+            ),
+          ],
+        ),
+      );
+
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
@@ -184,7 +236,13 @@ class _ConnectionPageState extends State<ConnectionPage> {
               const SizedBox(height: Space.xxl),
               Text(widget.sending ? 'Sent on this connection' : 'Received on this connection', style: text.titleMedium),
               const SizedBox(height: Space.xs),
-              BatchList(batches: c.batches, sending: widget.sending),
+              BatchList(
+                batches: c.batches,
+                sending: widget.sending,
+                // Nothing to cancel once the connection is over.
+                onCancelBatch: c.open ? _cancelBatch : null,
+                onSkipFile: c.open ? _skipFile : null,
+              ),
             ],
           ],
         ),

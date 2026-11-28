@@ -9,7 +9,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `batch`, `drive`, `engine`, `forward`, `new`, `picked_files`, `start_connection`, `usb_stream`, `with_progress`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Engine`, `Receiving`, `Sending`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `from`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `from`
 
 /// Loads or creates this device's identity in `data_dir`. Safe to call again.
 void startEngine({required String dataDir, required String deviceName}) =>
@@ -84,6 +84,21 @@ Uint32List queueFiles({
 /// receiver is told. The connection then ends with `Disconnected`.
 void disconnect() => RustLib.instance.api.crateApiDisconnect();
 
+/// Cancels batch `batch` on this phone's side of the connection: what moved of it is
+/// thrown away, the other phone is told, and later batches go on. Returns false when
+/// there is no connection.
+bool cancelBatch({required int batch, required bool sending}) =>
+    RustLib.instance.api.crateApiCancelBatch(batch: batch, sending: sending);
+
+/// Skips one file (`file` is its position in the batch) without touching the rest.
+/// Returns false when the other phone's version can't do this, so the app can say so.
+bool skipFile({required int batch, required int file, required bool sending}) =>
+    RustLib.instance.api.crateApiSkipFile(
+      batch: batch,
+      file: file,
+      sending: sending,
+    );
+
 /// A USB cable to another phone is ready: `fd` is a stream socket the engine now
 /// owns. `host` is true on the phone powering the cable, so the two ends differ.
 /// Streams the other phone opens go to Receive while it is open.
@@ -104,6 +119,13 @@ enum EventKind {
 
   /// A line for the log that isn't an error; `text` holds it.
   note,
+
+  /// The files of an arriving batch, in `listing`, so the receiving app can list them.
+  listing,
+
+  /// How the files of `batch` are doing: `active` are moving now, `finished` and
+  /// `skipped` changed since the last one. Numbers are positions in the batch.
+  files,
 
   /// Sender: show `code` while the receiver decides.
   code,
@@ -150,7 +172,46 @@ enum FailureKind {
   cannotReach,
   oldVersion,
   tooBig,
+
+  /// The user cancelled the batch.
+  cancelled,
   other,
+}
+
+class FileBytes {
+  final int file;
+  final PlatformInt64 bytes;
+
+  const FileBytes({required this.file, required this.bytes});
+
+  @override
+  int get hashCode => file.hashCode ^ bytes.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is FileBytes &&
+          runtimeType == other.runtimeType &&
+          file == other.file &&
+          bytes == other.bytes;
+}
+
+class ListedFile {
+  final String path;
+  final PlatformInt64 size;
+
+  const ListedFile({required this.path, required this.size});
+
+  @override
+  int get hashCode => path.hashCode ^ size.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ListedFile &&
+          runtimeType == other.runtimeType &&
+          path == other.path &&
+          size == other.size;
 }
 
 class ReceiveTickets {
@@ -242,6 +303,18 @@ class TransferEvent {
   final PlatformInt64 doneFiles;
   final PlatformInt64 totalFiles;
 
+  /// For `Files`: (file, bytes so far) of the files moving now.
+  final List<FileBytes> active;
+
+  /// For `Files`: files that finished since the last one.
+  final Uint32List finished;
+
+  /// For `Files`: files skipped since the last one.
+  final Uint32List skipped;
+
+  /// For `Listing`: the files of the batch, in order.
+  final List<ListedFile> listing;
+
   const TransferEvent({
     required this.kind,
     this.text,
@@ -254,6 +327,10 @@ class TransferEvent {
     required this.totalBytes,
     required this.doneFiles,
     required this.totalFiles,
+    required this.active,
+    required this.finished,
+    required this.skipped,
+    required this.listing,
   });
 
   @override
@@ -268,7 +345,11 @@ class TransferEvent {
       doneBytes.hashCode ^
       totalBytes.hashCode ^
       doneFiles.hashCode ^
-      totalFiles.hashCode;
+      totalFiles.hashCode ^
+      active.hashCode ^
+      finished.hashCode ^
+      skipped.hashCode ^
+      listing.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -285,7 +366,11 @@ class TransferEvent {
           doneBytes == other.doneBytes &&
           totalBytes == other.totalBytes &&
           doneFiles == other.doneFiles &&
-          totalFiles == other.totalFiles;
+          totalFiles == other.totalFiles &&
+          active == other.active &&
+          finished == other.finished &&
+          skipped == other.skipped &&
+          listing == other.listing;
 }
 
 class WifiInfo {

@@ -1,4 +1,4 @@
-# Nearvolt wire protocol, version 5
+# Nearvolt wire protocol, version 6
 
 ## Versions
 
@@ -8,7 +8,8 @@ Nearvolt". Rule: a protocol change must keep working with the version before it
 (new fields are optional, new messages are ignored by an older peer), so a phone
 that has not updated yet still connects. `MIN_PROTOCOL_VERSION` is raised only when
 a change truly can't, and the release notes say so. Version 5 broke version 4
-before this rule existed, because the chunk transfer replaced how files are cut.
+before this rule existed, because the chunk transfer replaced how files are cut. Version 6
+adds `skip`, `cancel.kind` and `welcome.version` and still works with version 5.
 
 ## Transport
 
@@ -77,7 +78,7 @@ Each control message is a 4-byte little-endian length followed by JSON (at most
 ```
 sender                                               receiver
   | -- hello {version, secret | commitment, name} ---> |   secret compared in constant time
-  | <-- welcome {name, session, nonce?} | reject ----- |   session: random 16-byte ID
+  | <-- welcome {name, session, nonce?, version?} | reject |   session: random 16-byte ID
   | -- reveal {nonce} (code pairing only) -----------> |   must match the commitment
   |                                                    |   both screens show the code
   | <-- ready | reject ------------------------------- |   asks the user, unless tapped or
@@ -90,6 +91,7 @@ sender                                               receiver
   | -- ping (every 500 ms) --------------------------> |
   | <-- progress {files, bytes, checked} (500 ms) ---- |   progress of the batch, doubles as heartbeat
   | <-- redo {file, offset, len} (rare) -------------- |   a chunk failed its check; send it again
+  | <-- skip {batch, file} / -- skip {batch, file} --> |   either side: one file is left out (version 6)
   | <-- complete {batch, files, bytes} --------------- |
   | -- offer {batch: 1, ...} ------------------------> |   the next batch, if any
   |                       ...                          |
@@ -100,7 +102,14 @@ sender                                               receiver
   separators. `modified` is milliseconds since the Unix epoch, when known.
 - A data stream is accepted only if its session matches the current control
   stream and its certificate matches the sender's.
-- While a phone is connected, the receiver turns away every other sender. While the\n  user is deciding about one phone, a different one is turned away too (eject\n  with kind usy); the same phone asking again, or a tap, takes over. Every\n  eject carries a kind (declined, usy, old_version, disk_full, ...), so\n  the app can say what happened in plain words instead of showing the reason text.\n- Connections that fail the handshake are ignored and counted, never fatal: at\n  most 32 handshakes run at once and the rest are dropped, so a flood of junk\n  connections can't end Receive or a transfer in progress.
+- While a phone is connected, the receiver turns away every other sender. While the
+  user is deciding about one phone, a different one is turned away too (`reject`
+  with kind `busy`); the same phone asking again, or a tap, takes over. Every
+  `reject` carries a kind (`declined`, `busy`, `old_version`, `disk_full`, ...), so
+  the app can say what happened in plain words instead of showing the reason text.
+- Connections that fail the handshake are ignored and counted, never fatal: at
+  most 32 handshakes run at once and the rest are dropped, so a flood of junk
+  connections can't end Receive or a transfer in progress.
 - Eight seconds without a message on the control stream means the link is
   gone; shorter pauses, such as a phone's Wi-Fi briefly stalling, are left to
   TCP. The sender reconnects through the same address, with backoff from 100 ms
@@ -116,7 +125,12 @@ sender                                               receiver
   Complete, verified files stay. A dropped link, or a phone that vanishes
   without saying `bye`, is not deliberate: the half-received file is kept so
   the transfer can resume.
-- A batch the receiver can't go on with after accepting it, because of full storage,\n  a file it can't save, or a file that keeps arriving damaged (3 tries), is ended\n  with `abort {batch, kind}`: the receiver throws away the batch, both phones report\n  it as failed with the kind, and the connection stays. Free space is checked when a\n  batch opens (counting only what's still missing) and again before each file.\n- A batch the receiver can't take, for example for lack of space, is rejected
+- A batch the receiver can't go on with after accepting it, because of full storage,
+  a file it can't save, or a file that keeps arriving damaged (3 tries), is ended
+  with `abort {batch, kind}`: the receiver throws away the batch, both phones report
+  it as failed with the kind, and the connection stays. Free space is checked when a
+  batch opens (counting only what's still missing) and again before each file.
+- A batch the receiver can't take, for example for lack of space, is rejected
   on its own; the connection stays open for the next one.
 - A batch the sender can't finish, because a file can't be read any more, is
   ended with `cancel {batch}`: the receiver throws away what it has of that
@@ -132,6 +146,27 @@ The receiver derives each batch's transfer ID as the BLAKE3 hash of the
 sender's certificate fingerprint and the canonical offer. Re-offering the same
 files after a reconnect maps to the same ID, which is how resume finds the
 journal.
+
+## Cancelling and skipping
+
+The user of either phone can cancel a batch or skip a single file while it moves. Only that
+batch or file is affected; every other batch and file carries on.
+
+- **Skip a file**: `skip {batch, file}`, sent by whichever phone the user tapped on. Both sides
+  stop that file: the receiver deletes what it has of it and drops later data for it, the
+  sender sends no more of it (a chunk already on the wire finishes, at most 8 MiB). The batch
+  no longer waits for the file and its totals shrink by the file's size. If the receiver
+  reconnects meanwhile, it reports the file as `complete` so nothing is sent again.
+- **Cancel a batch** by the sender: `cancel {batch, kind: cancelled}`; by the receiver:
+  `abort {batch, kind: cancelled}`. The receiver throws away what it has of the batch and both
+  phones report it as cancelled, not failed. A batch that hasn't started is simply dropped.
+- A phone only sends `skip` or `kind: cancelled` to a peer at version 6 or later. The
+  sender learns the receiver's version from `welcome.version` (absent means 5), the receiver
+  the sender's from `hello.version`. Towards an older peer, cancelling still works and uses
+  the old wording; skipping a single file isn't offered.
+- What the screen shows per file (which are moving and how far, which are done or skipped)
+  is not on the wire: each phone counts it from its own side, and the receiver lists the file
+  names from the offer (the first 5,000 of a batch).
 
 ## Code pairing
 

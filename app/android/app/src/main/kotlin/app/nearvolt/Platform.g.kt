@@ -804,7 +804,11 @@ interface NearvoltPlatform {
   suspend fun joinWifi(group: WifiGroup): String?
   fun leaveWifi()
   fun startTransferService(title: String)
-  fun updateTransferService(text: String, percent: Long)
+  /**
+   * Refreshes the transfer notification. percent is 0 to 100 for a bar, -1 for a bar
+   * that waits, and -2 for no bar at all.
+   */
+  fun updateTransferService(title: String, text: String, percent: Long)
   fun stopTransferService()
   suspend fun checkForUpdate(): UpdateInfo?
   suspend fun installUpdate(update: UpdateInfo)
@@ -1151,10 +1155,11 @@ interface NearvoltPlatform {
         if (api != null) {
           channel.setMessageHandler { message, reply ->
             val args = message as List<Any?>
-            val textArg = args[0] as String
-            val percentArg = args[1] as Long
+            val titleArg = args[0] as String
+            val textArg = args[1] as String
+            val percentArg = args[2] as Long
             val wrapped: List<Any?> = try {
-              api.updateTransferService(textArg, percentArg)
+              api.updateTransferService(titleArg, textArg, percentArg)
               listOf(null)
             } catch (exception: Throwable) {
               PlatformPigeonUtils.wrapError(exception)

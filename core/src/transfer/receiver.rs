@@ -16,12 +16,12 @@ use tokio::sync::{mpsc, watch, Semaphore};
 use tokio::task::JoinSet;
 
 use super::state::{plan_files, sweep_stale, transfer_id, TransferState};
-use super::{classify, emit, is_fatal, Event, EventSender, FailureKind, Fatal, Stats, Summary};
+use super::{classify, emit, is_fatal, Event, EventSender, FailureKind, Fatal, Stats, Summary, LISTED_FILES};
 use crate::identity::{Fingerprint, Identity};
 use crate::pairing::{self, constant_time_eq, Secret, Ticket};
 use crate::protocol::{
     read_header, read_msg, write_msg, Control, FileHeader, Offer, SessionId, FILE_HEADER_LEN, HASH_LEN,
-    HEARTBEAT_INTERVAL, HEARTBEAT_TIMEOUT, MIN_PROTOCOL_VERSION, PROTOCOL_VERSION,
+    HEARTBEAT_INTERVAL, HEARTBEAT_TIMEOUT, MIN_PROTOCOL_VERSION, PROTOCOL_VERSION, SKIP_VERSION,
 };
 use crate::transport::{listen_tcp, Acceptor, Arrival, RawStream, TlsStream};
 use crate::util::AbortOnDrop;
@@ -69,6 +69,12 @@ pub struct Request {
 /// Decides whether to accept a connection, for example by asking the user.
 pub type Approver = Arc<dyn Fn(Request) -> BoxFuture<'static, bool> + Send + Sync>;
 
+/// What the user asked for on the receiving phone while a batch is arriving.
+enum UserCommand {
+    CancelBatch(u32),
+    SkipFile { batch: u32, file: u32 },
+}
+
 pub struct Receiver {
     acceptor: Acceptor,
     fingerprint: Fingerprint,
@@ -80,6 +86,10 @@ pub struct Receiver {
     streams_tx: mpsc::Sender<Arrival>,
     streams_rx: tokio::sync::Mutex<mpsc::Receiver<Arrival>>,
     ending: watch::Sender<bool>,
+    user_tx: mpsc::UnboundedSender<UserCommand>,
+    user_rx: Mutex<Option<mpsc::UnboundedReceiver<UserCommand>>>,
+    /// The protocol version of the connected sender, for what it understands.
+    peer_version: Arc<AtomicU32>,
     _tcp: AbortOnDrop<()>,
 }
 
@@ -89,6 +99,7 @@ impl Receiver {
     pub fn bind(identity: &Identity, bind: SocketAddr, options: ReceiveOptions) -> Result<Self> {
         let (streams_tx, streams_rx) = mpsc::channel(64);
         let (local, tcp) = listen_tcp(bind, streams_tx.clone())?;
+        let (user_tx, user_rx) = mpsc::unbounded_channel();
         Ok(Self {
             acceptor: Acceptor::new(identity)?,
             fingerprint: *identity.fingerprint(),
@@ -100,6 +111,9 @@ impl Receiver {
             streams_tx,
             streams_rx: tokio::sync::Mutex::new(streams_rx),
             ending: watch::channel(false).0,
+            user_tx,
+            user_rx: Mutex::new(Some(user_rx)),
+            peer_version: Arc::new(AtomicU32::new(0)),
             _tcp: tcp,
         })
     }
@@ -135,6 +149,22 @@ impl Receiver {
         self.streams_tx.clone()
     }
 
+    /// Cancels a batch that is arriving. The sender is told, and what arrived of it is
+    /// removed; other batches are not affected.
+    pub fn cancel_batch(&self, batch: u32) {
+        let _ = self.user_tx.send(UserCommand::CancelBatch(batch));
+    }
+
+    /// Skips one file of a batch that is arriving, leaving the rest. Returns false when
+    /// the sender's version can't do this.
+    pub fn skip_file(&self, batch: u32, file: u32) -> bool {
+        let supported = self.peer_version.load(Ordering::Relaxed) >= SKIP_VERSION;
+        if supported {
+            let _ = self.user_tx.send(UserCommand::SkipFile { batch, file });
+        }
+        supported
+    }
+
     /// Ends the connection: the sender is told, so it stops reconnecting, and
     /// [`Receiver::run`] returns.
     pub fn disconnect(&self) {
@@ -160,6 +190,10 @@ impl Receiver {
             active: tokio::sync::Mutex::new(None),
             totals: Mutex::new((0, 0)),
             started: Instant::now(),
+            user: tokio::sync::Mutex::new(
+                self.user_rx.lock().unwrap().take().unwrap_or_else(|| mpsc::unbounded_channel().1),
+            ),
+            peer_version: self.peer_version.clone(),
         });
         let mut incoming = self.streams_rx.lock().await;
         let mut ending = self.ending.subscribe();
@@ -292,6 +326,8 @@ struct Shared {
     active: tokio::sync::Mutex<Option<Active>>,
     totals: Mutex<(u64, u64)>,
     started: Instant,
+    user: tokio::sync::Mutex<mpsc::UnboundedReceiver<UserCommand>>,
+    peer_version: Arc<AtomicU32>,
 }
 
 impl Shared {
@@ -332,6 +368,7 @@ struct Authed {
     consented: bool,
     /// Where the sender connected from, when it came over a network.
     from: Option<std::net::IpAddr>,
+    version: u32,
 }
 
 /// The connection currently being served. Data streams join it by session ID.
@@ -382,7 +419,7 @@ async fn authenticate(
     }
     let sender_name = pairing::clean_name(&device_name);
     let commitment = if offered.is_none() { commitment } else { None };
-    Ok(Authed { stream, sender, sender_name, session, commitment, consented, from })
+    Ok(Authed { stream, sender, sender_name, session, commitment, consented, from, version })
 }
 
 fn reject(kind: FailureKind, reason: &str) -> Control {
@@ -413,10 +450,16 @@ async fn serve(
     mut data_rx: mpsc::Receiver<TlsStream>,
     mut ending: watch::Receiver<bool>,
 ) -> Result<Outcome> {
-    let Authed { stream, sender, sender_name, commitment, consented, from, .. } = authed;
+    let Authed { stream, sender, sender_name, commitment, consented, from, version, .. } = authed;
+    shared.peer_version.store(version, Ordering::Relaxed);
     let (mut recv, mut send) = tokio::io::split(stream);
     let nonce = commitment.map(|_| pairing::new_secret());
-    let welcome = Control::Welcome { device_name: shared.options.device_name.clone(), session, nonce };
+    let welcome = Control::Welcome {
+        device_name: shared.options.device_name.clone(),
+        session,
+        nonce,
+        version: Some(PROTOCOL_VERSION),
+    };
     write_msg(&mut send, &welcome).await?;
     let code = match (commitment, nonce) {
         (Some(commitment), Some(ours)) => {
@@ -486,8 +529,35 @@ async fn serve(
     let mut readers = JoinSet::new();
     let mut heartbeat = tokio::time::interval(HEARTBEAT_INTERVAL);
     let mut complete: Option<watch::Receiver<bool>> = None;
+    let mut user = shared.user.lock().await;
     loop {
         tokio::select! {
+            Some(command) = user.recv() => match command {
+                UserCommand::CancelBatch(batch) => {
+                    let taken = {
+                        let mut active = shared.active.lock().await;
+                        if active.as_ref().is_some_and(|a| a.batch == batch) { active.take() } else { None }
+                    };
+                    if let Some(Active { state, .. }) = taken {
+                        complete = None;
+                        let _ = tokio::task::spawn_blocking(move || state.discard()).await;
+                        let reason = "You cancelled this batch.".to_string();
+                        emit(&shared.events, Event::BatchFailed { batch, reason, kind: FailureKind::Cancelled });
+                        // An older sender doesn't know this reason; it is told something it does.
+                        let kind = if version >= SKIP_VERSION { FailureKind::Cancelled } else { FailureKind::Other };
+                        write_msg(&mut send, &Control::Abort { batch, kind }).await?;
+                    }
+                }
+                UserCommand::SkipFile { batch, file } => {
+                    let state = shared.active.lock().await.as_ref().filter(|a| a.batch == batch).map(|a| a.state.clone());
+                    if let Some(state) = state {
+                        let skipped = tokio::task::spawn_blocking(move || state.skip(file)).await??;
+                        if skipped {
+                            write_msg(&mut send, &Control::Skip { batch, file }).await?;
+                        }
+                    }
+                }
+            },
             msg = control_rx.recv() => match msg {
                 Some(Ok(Control::Offer { batch, files })) => match open_batch(&shared, sender, batch, Offer { files }).await {
                     Ok(state) => {
@@ -502,15 +572,25 @@ async fn serve(
                 },
                 Some(Ok(Control::Ping)) => {}
                 // The sender gave up this batch: throw away what arrived of it.
-                Some(Ok(Control::Cancel { batch })) => {
+                // The sender skipped a file: it is dropped here too, and the rest carries on.
+                Some(Ok(Control::Skip { batch, file })) => {
+                    let state = shared.active.lock().await.as_ref().filter(|a| a.batch == batch).map(|a| a.state.clone());
+                    if let Some(state) = state {
+                        let _ = tokio::task::spawn_blocking(move || state.skip(file)).await?;
+                    }
+                }
+                Some(Ok(Control::Cancel { batch, kind })) => {
                     let mut active = shared.active.lock().await;
                     if active.as_ref().is_some_and(|a| a.batch == batch) {
                         if let Some(Active { state, .. }) = active.take() {
                             complete = None;
                             drop(active);
                             let _ = tokio::task::spawn_blocking(move || state.discard()).await;
-                            let reason = "The sender couldn't read one of the files.".to_string();
-                            emit(&shared.events, Event::BatchFailed { batch, reason, kind: FailureKind::CannotReadFile });
+                            let (reason, kind) = match kind {
+                                Some(FailureKind::Cancelled) => ("The sender cancelled this batch.", FailureKind::Cancelled),
+                                _ => ("The sender couldn't read one of the files.", FailureKind::CannotReadFile),
+                            };
+                            emit(&shared.events, Event::BatchFailed { batch, reason: reason.to_string(), kind });
                         }
                     }
                 }
@@ -531,6 +611,9 @@ async fn serve(
             () = finished(&mut complete) => {
                 complete = None;
                 let Some(Active { batch, state }) = shared.active.lock().await.take() else { continue };
+                for event in state.meter.report() {
+                    emit(&shared.events, with_batch(event, batch));
+                }
                 let summary = state.summary();
                 write_msg(&mut send, &Control::Complete { batch, files: summary.files, bytes: summary.bytes }).await?;
                 state.cleanup();
@@ -567,6 +650,15 @@ async fn serve(
                 }
             }
             _ = heartbeat.tick() => {
+                if complete.is_some() {
+                    if let Ok(active) = shared.active.try_lock() {
+                        if let Some(a) = active.as_ref() {
+                            for event in a.state.meter.report() {
+                                emit(&shared.events, with_batch(event, a.batch));
+                            }
+                        }
+                    }
+                }
                 let msg = if complete.is_some() {
                     let p = shared.stats.snapshot();
                     Control::Progress { files: p.done_files, bytes: p.done_bytes, checked: shared.stats.checked() }
@@ -580,6 +672,14 @@ async fn serve(
                 return Ok(Outcome::Ended);
             }
         }
+    }
+}
+
+/// A file report from a batch's own counters, which number their batch 0.
+fn with_batch(event: Event, batch: u32) -> Event {
+    match event {
+        Event::Files { active, finished, skipped, .. } => Event::Files { batch, active, finished, skipped },
+        other => other,
     }
 }
 
@@ -599,6 +699,8 @@ async fn open_batch(shared: &Shared, sender: Fingerprint, batch: u32, offer: Off
         TransferState::open(id, files, &options.dir, &options.journal_root(), stats)
     })
     .await??;
+    let listing = offer.files.iter().take(LISTED_FILES).map(|f| (f.path.clone(), f.size)).collect();
+    emit(&shared.events, Event::Listing { batch, files: listing });
     *active = Some(Active { batch, state: state.clone() });
     Ok(state)
 }

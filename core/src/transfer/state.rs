@@ -14,7 +14,7 @@ use tokio::sync::watch;
 use super::disk;
 use super::journal::{Journal, Replay};
 use super::ranges::Ranges;
-use super::{human_bytes, FailureKind, Fatal, Stats, Summary};
+use super::{human_bytes, FailureKind, Fatal, FileMeter, Stats, Summary};
 use crate::identity::Fingerprint;
 use crate::protocol::{FileHave, Offer, MAX_CHUNK, MAX_FILES};
 use crate::safety;
@@ -57,6 +57,8 @@ struct Slot {
     pending: Vec<(u64, u64)>,
     /// Some stream is saving the finished file.
     finishing: bool,
+    /// The user skipped this file: what arrived of it is gone, and more is dropped.
+    skipped: bool,
     /// Written to since the last checkpoint.
     dirty: bool,
     handle: Option<Arc<File>>,
@@ -98,6 +100,7 @@ impl Chunk {
         disk::write_all_at(self.file.as_ref().context("chunk already finished")?, data, pos)?;
         self.hasher.update(data);
         self.counted += data.len() as u64;
+        self.state.meter.add(0, self.index, data.len() as u64);
         self.state.stats.add_bytes(data.len() as u64);
         Ok(())
     }
@@ -122,16 +125,26 @@ impl Chunk {
         let (start, end) = (self.offset, self.offset + self.len);
         let ready = {
             let mut slot = state.slot(i);
+            // A file skipped while this chunk was arriving keeps nothing of it.
+            if slot.skipped {
+                drop(slot);
+                // A handle that was open when the file was skipped kept its part file in place.
+                state.clear_part(i);
+                return Ok(true);
+            }
             // Bytes that were already there (a chunk sent twice) don't count twice.
             let fresh = (end - start) - slot.have.overlap(start, end);
-            state.stats.sub_bytes(self.counted - fresh.min(self.counted));
+            let extra = self.counted - fresh.min(self.counted);
+            state.stats.sub_bytes(extra);
+            state.meter.sub(0, i, extra);
             self.counted = 0;
             slot.have.insert(start, end);
             slot.pending.push((start, end));
             slot.dirty = true;
             let size = state.files[i as usize].size;
             let whole = slot.have.total() == size;
-            let ready = whole && !slot.done && !slot.finishing && !state.discarded.load(Ordering::Acquire);
+            let ready =
+                whole && !slot.done && !slot.skipped && !slot.finishing && !state.discarded.load(Ordering::Acquire);
             slot.finishing |= ready;
             ready
         };
@@ -146,6 +159,7 @@ impl Drop for Chunk {
     fn drop(&mut self) {
         if self.counted > 0 {
             self.state.stats.sub_bytes(self.counted);
+            self.state.meter.sub(0, self.index, self.counted);
         }
     }
 }
@@ -164,6 +178,8 @@ pub(super) struct TransferState {
     /// bring its part files back.
     discarded: AtomicBool,
     pub(super) complete: watch::Sender<bool>,
+    /// Per-file byte counts for the app's file list. Its batch number is always 0 here.
+    pub(super) meter: FileMeter,
     stats: Arc<Stats>,
     started: Instant,
 }
@@ -190,6 +206,7 @@ impl TransferState {
             files,
             journal: Mutex::new(journal),
             complete: watch::channel(false).0,
+            meter: FileMeter::default(),
             stats,
             started: Instant::now(),
         };
@@ -241,7 +258,7 @@ impl TransferState {
     fn check_space(&self) -> Result<()> {
         let needed = (0..self.files.len() as u32).fold(0u64, |sum, i| {
             let slot = self.slot(i);
-            if slot.done {
+            if slot.done || slot.skipped {
                 return sum;
             }
             sum.saturating_add(self.files[i as usize].size.saturating_sub(slot.have.total()))
@@ -271,7 +288,7 @@ impl TransferState {
             .iter()
             .map(|slot| {
                 let slot = slot.lock().unwrap();
-                if slot.done {
+                if slot.done || slot.skipped {
                     FileHave::Complete
                 } else if slot.have.is_empty() {
                     FileHave::None
@@ -291,9 +308,14 @@ impl TransferState {
         let end = end.with_context(|| format!("data for {} has the wrong length", f.rel.display()))?;
         {
             let slot = self.slot(i);
-            if slot.done || self.discarded.load(Ordering::Acquire) || slot.have.contains(offset, end) && len > 0 {
+            if slot.done
+                || slot.skipped
+                || self.discarded.load(Ordering::Acquire)
+                || slot.have.contains(offset, end) && len > 0
+            {
                 return Ok(None);
             }
+            self.meter.set_at_least(0, i, slot.have.total());
         }
         // Other apps may have filled the storage since the batch was accepted.
         self.require_space(len.saturating_add(SPACE_MARGIN))?;
@@ -332,6 +354,7 @@ impl TransferState {
         drop(file);
         fs::rename(&part, self.root.join(&target)).with_context(|| format!("can't save {}", target.display()))?;
         self.slot(i).done = true;
+        self.meter.finish(0, i);
         self.stats.add_file();
         if self.remaining_files.fetch_sub(1, Ordering::AcqRel) == 1 {
             self.complete.send_replace(true);
@@ -398,16 +421,60 @@ impl TransferState {
             files += slot.done as u64;
             bytes += if slot.done { self.files[i].size } else { slot.have.total() };
         }
-        self.stats.set_totals(self.files.len() as u64, self.total_bytes());
+        let (total_files, total_bytes) = self.totals();
+        self.stats.set_totals(total_files, total_bytes);
         self.stats.set_done(files, bytes);
     }
 
-    fn total_bytes(&self) -> u64 {
-        self.files.iter().fold(0u64, |sum, f| sum.saturating_add(f.size))
+    /// Files and bytes this batch is about: the ones the user didn't skip.
+    fn totals(&self) -> (u64, u64) {
+        let mut files = 0u64;
+        let mut bytes = 0u64;
+        for (i, f) in self.files.iter().enumerate() {
+            if !self.slot(i as u32).skipped {
+                files += 1;
+                bytes = bytes.saturating_add(f.size);
+            }
+        }
+        (files, bytes)
     }
 
     pub(super) fn summary(&self) -> Summary {
-        Summary { files: self.files.len() as u64, bytes: self.total_bytes(), elapsed: self.started.elapsed() }
+        let (files, bytes) = self.totals();
+        Summary { files, bytes, elapsed: self.started.elapsed() }
+    }
+
+    /// Removes the part file of a skipped file.
+    fn clear_part(&self, i: u32) {
+        remove_part(&self.part_path(i), &self.root);
+    }
+
+    /// The user skipped file `i`: its part file goes, later data for it is dropped, and the
+    /// batch no longer waits for it. Returns false when there was nothing to skip (it
+    /// is saved already, or skipped before).
+    pub(super) fn skip(&self, i: u32) -> Result<bool> {
+        ensure!((i as usize) < self.files.len(), "skipping an unknown file");
+        let part = {
+            let mut slot = self.slot(i);
+            if slot.done || slot.skipped {
+                return Ok(false);
+            }
+            slot.skipped = true;
+            slot.handle = None;
+            slot.have = Ranges::default();
+            slot.pending.clear();
+            slot.part.take()
+        };
+        if let Some(part) = part {
+            remove_part(&part, &self.root);
+        }
+        remove_part(&self.part_path(i), &self.root);
+        self.meter.skip(0, i);
+        if self.remaining_files.fetch_sub(1, Ordering::AcqRel) == 1 {
+            self.complete.send_replace(true);
+        }
+        self.publish_progress();
+        Ok(true)
     }
 
     /// Flushes the part files written since the last checkpoint, then records which

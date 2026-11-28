@@ -308,54 +308,194 @@ Future<PickKind?> showPickMenu(BuildContext context) => showModalBottomSheet<Pic
   ),
 );
 
-/// Every batch on a connection, oldest first, with what happened to it.
+/// Every batch on a connection, newest first. Each lists its files by name, with a bar
+/// for the one moving, and lets the user cancel the whole batch or skip a single file.
 class BatchList extends StatelessWidget {
-  const BatchList({super.key, required this.batches, required this.sending});
+  const BatchList({super.key, required this.batches, required this.sending, this.onCancelBatch, this.onSkipFile});
 
   final List<Batch> batches;
 
   /// The sender says "Sent"; the receiver says "Received".
   final bool sending;
 
+  /// Null once the connection is over, so nothing offers to cancel.
+  final void Function(Batch batch)? onCancelBatch;
+  final void Function(Batch batch, int file)? onSkipFile;
+
   @override
   Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         for (final batch in batches.reversed)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: Space.s),
-            child: Row(
-              children: [
-                _BatchIcon(state: batch.state),
-                const SizedBox(width: Space.m),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('${filesLabel(batch.files)} · ${formatBytes(batch.bytes)}', style: text.bodyLarge),
-                      Text(
-                        switch (batch.state) {
-                          BatchState.queued => 'Waiting its turn',
-                          BatchState.moving => sending ? 'Sending' : 'Receiving',
-                          BatchState.done => sending ? 'Sent and verified' : 'Received and verified',
-                          BatchState.failed => batch.error ?? "Couldn't be sent",
-                          BatchState.cancelled => sending ? 'Cancelled · not sent' : 'Cancelled · not received',
-                        },
-                        style: text.bodySmall?.copyWith(
-                          color: batch.state == BatchState.failed
-                              ? readableOn(AppColors.danger, AppColors.background)
-                              : null,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+          _BatchCard(
+            key: ValueKey('batch-${batch.id}'),
+            batch: batch,
+            sending: sending,
+            onCancel: onCancelBatch == null ? null : () => onCancelBatch!(batch),
+            onSkip: onSkipFile == null ? null : (file) => onSkipFile!(batch, file),
           ),
       ],
+    );
+  }
+}
+
+/// Rows shown for one batch before the list is cut down to what's happening now.
+const _rowsShown = 40;
+
+class _BatchCard extends StatelessWidget {
+  const _BatchCard({super.key, required this.batch, required this.sending, this.onCancel, this.onSkip});
+
+  final Batch batch;
+  final bool sending;
+  final VoidCallback? onCancel;
+  final void Function(int file)? onSkip;
+
+  bool get _live => batch.state == BatchState.queued || batch.state == BatchState.moving;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final rows = batch.rows;
+    // Finished batches of many files collapse to their summary line.
+    final showRows = rows.isNotEmpty && (_live || rows.length <= _rowsShown);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: Space.s),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              _BatchIcon(state: batch.state),
+              const SizedBox(width: Space.m),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('${filesLabel(batch.files)} · ${formatBytes(batch.bytes)}', style: text.bodyLarge),
+                    Text(
+                      switch (batch.state) {
+                        BatchState.queued => 'Waiting its turn',
+                        BatchState.moving => sending ? 'Sending' : 'Receiving',
+                        BatchState.done => sending ? 'Sent and verified' : 'Received and verified',
+                        BatchState.failed => batch.error ?? "Couldn't be sent",
+                        BatchState.cancelled => sending ? 'Cancelled · not sent' : 'Cancelled · not received',
+                      },
+                      style: text.bodySmall?.copyWith(
+                        color: batch.state == BatchState.failed
+                            ? readableOn(AppColors.danger, AppColors.background)
+                            : null,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (_live && onCancel != null) TextButton(onPressed: onCancel, child: const Text('Cancel batch')),
+            ],
+          ),
+          if (showRows) ...[const SizedBox(height: Space.xs), ..._fileRows(context, rows)],
+        ],
+      ),
+    );
+  }
+
+  /// All rows of a small batch; of a big one, the files around the one moving, with
+  /// how many are done above and waiting below.
+  List<Widget> _fileRows(BuildContext context, List<BatchFile> rows) {
+    var from = 0;
+    var to = rows.length;
+    if (rows.length > _rowsShown) {
+      final firstOpen = rows.indexWhere((r) => r.state != FileState.done && r.state != FileState.skipped);
+      from = firstOpen < 0 ? 0 : firstOpen;
+      to = (from + _rowsShown).clamp(0, rows.length);
+    }
+    final text = Theme.of(context).textTheme;
+    Widget note(String label) => Padding(
+      padding: const EdgeInsets.only(left: 44 + Space.m, top: Space.xs, bottom: Space.xs),
+      child: Text(label, style: text.bodySmall?.copyWith(color: AppColors.textSecondary)),
+    );
+    final listed = rows.length;
+    return [
+      if (from > 0) note(from == 1 ? '1 file already done' : '$from files already done'),
+      for (var i = from; i < to; i++)
+        FileTile(
+          key: ValueKey('file-${batch.id}-$i'),
+          row: rows[i],
+          sending: sending,
+          batchLive: _live,
+          onSkip: onSkip == null ? null : () => onSkip!(i),
+        ),
+      if (to < listed) note(listed - to == 1 ? '1 more waiting' : '${listed - to} more waiting'),
+      if (batch.files > listed) note('and ${batch.files - listed} more that aren\'t listed here'),
+    ];
+  }
+}
+
+/// One file of a batch: its name, how far it is, and a button to skip it.
+class FileTile extends StatelessWidget {
+  const FileTile({super.key, required this.row, required this.sending, required this.batchLive, this.onSkip});
+
+  final BatchFile row;
+  final bool sending;
+  final bool batchLive;
+  final VoidCallback? onSkip;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final skippable = batchLive && onSkip != null && (row.state == FileState.queued || row.state == FileState.moving);
+    final (icon, color) = switch (row.state) {
+      FileState.done => (Icons.check_circle_rounded, AppColors.success),
+      FileState.moving => (Icons.sync_rounded, AppColors.accent),
+      FileState.skipped => (Icons.block_rounded, AppColors.warning),
+      FileState.queued => (batchLive ? Icons.schedule_rounded : Icons.block_rounded, AppColors.textSecondary),
+    };
+    final detail = switch (row.state) {
+      FileState.done => formatBytes(row.size),
+      FileState.moving => '${formatBytes(row.bytes)} of ${formatBytes(row.size)}',
+      FileState.skipped => 'Skipped · ${sending ? 'not sent' : 'not received'}',
+      FileState.queued =>
+        batchLive
+            ? '${formatBytes(row.size)} · waiting'
+            : '${formatBytes(row.size)} · not ${sending ? 'sent' : 'received'}',
+    };
+    return Semantics(
+      label: '${row.name}, $detail',
+      child: Padding(
+        padding: const EdgeInsets.only(left: 44 + Space.m - 22, top: 2, bottom: 2),
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: color),
+            const SizedBox(width: Space.m),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(row.name.split('/').last, maxLines: 1, overflow: TextOverflow.ellipsis, style: text.bodyMedium),
+                  const SizedBox(height: 2),
+                  if (row.state == FileState.moving)
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(2),
+                      child: LinearProgressIndicator(
+                        value: row.fraction,
+                        minHeight: 4,
+                        color: AppColors.accent,
+                        backgroundColor: AppColors.accentSoft,
+                      ),
+                    ),
+                  Text(detail, style: text.bodySmall?.copyWith(color: AppColors.textSecondary)),
+                ],
+              ),
+            ),
+            if (skippable)
+              IconButton(
+                onPressed: onSkip,
+                tooltip: 'Skip ${row.name.split('/').last}',
+                icon: const Icon(Icons.close_rounded, size: 20, color: AppColors.textSecondary),
+              ),
+          ],
+        ),
+      ),
     );
   }
 }

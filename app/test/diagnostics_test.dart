@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nearvolt/engine/diagnostics.dart';
 import 'package:nearvolt/engine/platform.g.dart';
@@ -24,6 +26,10 @@ TransferEvent _event(EventKind kind, {String? text, String? route, int batch = -
       totalBytes: total,
       doneFiles: 0,
       totalFiles: 1,
+      active: const [],
+      finished: Uint32List(0),
+      skipped: Uint32List(0),
+      listing: const [],
     );
 
 void main() {

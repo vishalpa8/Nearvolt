@@ -9,7 +9,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use flutter_rust_bridge::frb;
 use futures::FutureExt;
-use nearvolt_core::protocol::FileEntry;
+use nearvolt_core::protocol::{FileEntry, SKIP_VERSION};
 use nearvolt_core::transfer as core_kind;
 use nearvolt_core::util::AbortOnDrop;
 use nearvolt_core::{
@@ -66,6 +66,11 @@ pub enum EventKind {
     RequestWithdrawn,
     /// A line for the log that isn't an error; `text` holds it.
     Note,
+    /// The files of an arriving batch, in `listing`, so the receiving app can list them.
+    Listing,
+    /// How the files of `batch` are doing: `active` are moving now, `finished` and
+    /// `skipped` changed since the last one. Numbers are positions in the batch.
+    Files,
     /// Sender: show `code` while the receiver decides.
     Code,
     /// Sender: the receiver is deciding, with no code to compare.
@@ -103,6 +108,8 @@ pub enum FailureKind {
     CannotReach,
     OldVersion,
     TooBig,
+    /// The user cancelled the batch.
+    Cancelled,
     Other,
 }
 
@@ -120,6 +127,7 @@ impl From<core_kind::FailureKind> for FailureKind {
             K::CannotReach => Self::CannotReach,
             K::OldVersion => Self::OldVersion,
             K::TooBig => Self::TooBig,
+            K::Cancelled => Self::Cancelled,
             K::Other => Self::Other,
         }
     }
@@ -142,6 +150,26 @@ pub struct TransferEvent {
     pub total_bytes: i64,
     pub done_files: i64,
     pub total_files: i64,
+    /// For `Files`: (file, bytes so far) of the files moving now.
+    pub active: Vec<FileBytes>,
+    /// For `Files`: files that finished since the last one.
+    pub finished: Vec<u32>,
+    /// For `Files`: files skipped since the last one.
+    pub skipped: Vec<u32>,
+    /// For `Listing`: the files of the batch, in order.
+    pub listing: Vec<ListedFile>,
+}
+
+#[derive(Clone)]
+pub struct FileBytes {
+    pub file: u32,
+    pub bytes: i64,
+}
+
+#[derive(Clone)]
+pub struct ListedFile {
+    pub path: String,
+    pub size: i64,
 }
 
 impl TransferEvent {
@@ -158,6 +186,10 @@ impl TransferEvent {
             total_bytes: 0,
             done_files: 0,
             total_files: 0,
+            active: Vec::new(),
+            finished: Vec::new(),
+            skipped: Vec::new(),
+            listing: Vec::new(),
         }
     }
 
@@ -199,6 +231,7 @@ struct Receiving {
 
 struct Sending {
     commands: mpsc::UnboundedSender<Command>,
+    stats: Arc<Stats>,
     _task: AbortOnDrop<()>,
 }
 
@@ -278,9 +311,11 @@ pub fn receive(dest_dir: String, journal_dir: String, events: StreamSink<Transfe
     };
     let running = receiver.clone();
     let ready = events.clone();
-    let task = engine
-        .runtime
-        .spawn(drive(move |stats, events| async move { running.run(approve, stats, Some(events)).await }, events));
+    let task = engine.runtime.spawn(drive(
+        Arc::default(),
+        move |stats, events| async move { running.run(approve, stats, Some(events)).await },
+        events,
+    ));
     *engine.receiving.lock().unwrap() = Some(Receiving { receiver, pending, _task: AbortOnDrop(task) });
     let _ = ready.add(TransferEvent::new(EventKind::Ready, None));
     Ok(())
@@ -394,6 +429,36 @@ pub fn disconnect() {
     }
 }
 
+/// Cancels batch `batch` on this phone's side of the connection: what moved of it is
+/// thrown away, the other phone is told, and later batches go on. Returns false when
+/// there is no connection.
+#[frb(sync)]
+pub fn cancel_batch(batch: u32, sending: bool) -> bool {
+    let Ok(engine) = engine() else { return false };
+    if sending {
+        let sending = engine.sending.lock().unwrap();
+        sending.as_ref().is_some_and(|s| s.commands.send(Command::CancelBatch(batch)).is_ok())
+    } else {
+        let receiving = engine.receiving.lock().unwrap();
+        receiving.as_ref().map(|r| r.receiver.cancel_batch(batch)).is_some()
+    }
+}
+
+/// Skips one file (`file` is its position in the batch) without touching the rest.
+/// Returns false when the other phone's version can't do this, so the app can say so.
+#[frb(sync)]
+pub fn skip_file(batch: u32, file: u32, sending: bool) -> bool {
+    let Ok(engine) = engine() else { return false };
+    if sending {
+        let sending = engine.sending.lock().unwrap();
+        let Some(sending) = sending.as_ref() else { return false };
+        sending.stats.peer_version() >= SKIP_VERSION && sending.commands.send(Command::SkipFile { batch, file }).is_ok()
+    } else {
+        let receiving = engine.receiving.lock().unwrap();
+        receiving.as_ref().is_some_and(|r| r.receiver.skip_file(batch, file))
+    }
+}
+
 /// A USB cable to another phone is ready: `fd` is a stream socket the engine now
 /// owns. `host` is true on the phone powering the cable, so the two ends differ.
 /// Streams the other phone opens go to Receive while it is open.
@@ -421,13 +486,15 @@ fn start_connection<L: Link + 'static>(peer: Peer<L>, events: StreamSink<Transfe
         ..Default::default()
     };
     let (commands, queue) = mpsc::unbounded_channel();
+    let stats: Arc<Stats> = Arc::default();
     let task = engine.runtime.spawn(drive(
+        stats.clone(),
         move |stats, events| async move {
             connect_peer(&engine.identity, &peer, &options, queue, stats, Some(events)).await
         },
         events,
     ));
-    *engine.sending.lock().unwrap() = Some(Sending { commands, _task: AbortOnDrop(task) });
+    *engine.sending.lock().unwrap() = Some(Sending { commands, stats, _task: AbortOnDrop(task) });
     Ok(())
 }
 
@@ -463,12 +530,11 @@ fn picked_files(_token: i64) -> Arc<dyn SourceOpener> {
 
 /// Runs a connection and streams its events to the app, with progress throttled
 /// to `PROGRESS_INTERVAL` and a final `Disconnected` or `Failed`.
-async fn drive<W, F>(work: W, sink: StreamSink<TransferEvent>)
+async fn drive<W, F>(stats: Arc<Stats>, work: W, sink: StreamSink<TransferEvent>)
 where
     W: FnOnce(Arc<Stats>, EventSender) -> F,
     F: Future<Output = Result<Summary>>,
 {
-    let stats = Arc::new(Stats::default());
     let (events_tx, mut events_rx) = mpsc::unbounded_channel();
     let work = work(stats.clone(), events_tx);
     tokio::pin!(work);
@@ -530,6 +596,16 @@ fn forward(sink: &StreamSink<TransferEvent>, event: Event) {
             TransferEvent { request_id: id as i64, ..TransferEvent::new(EventKind::RequestWithdrawn, None) }
         }
         Event::Note { text } => TransferEvent::new(EventKind::Note, Some(text)),
+        Event::Listing { batch, files } => TransferEvent {
+            listing: files.into_iter().map(|(path, size)| ListedFile { path, size: size as i64 }).collect(),
+            ..TransferEvent::batch(EventKind::Listing, batch, 0, 0)
+        },
+        Event::Files { batch, active, finished, skipped } => TransferEvent {
+            active: active.into_iter().map(|(file, bytes)| FileBytes { file, bytes: bytes as i64 }).collect(),
+            finished,
+            skipped,
+            ..TransferEvent::batch(EventKind::Files, batch, 0, 0)
+        },
     };
     let _ = sink.add(event);
 }

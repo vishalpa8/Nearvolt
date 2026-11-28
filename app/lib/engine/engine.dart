@@ -37,6 +37,14 @@ abstract interface class TransferEngine {
   /// connection as it is now.
   Stream<Connection> connect(Peer to);
 
+  /// Cancels a batch, sent or waiting, from this phone. The other phone is told, what
+  /// moved of it is thrown away and other batches go on.
+  bool cancelBatch(int batch);
+
+  /// Skips one file of a batch (its position in [Batch.rows]) and leaves the rest.
+  /// False when the other phone's Nearvolt is too old to do this.
+  bool skipFile(int batch, int file);
+
   /// Adds files to the open connection; they go after anything queued before.
   void queue(Selection what);
 
