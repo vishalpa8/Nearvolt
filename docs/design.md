@@ -78,9 +78,9 @@ Numbers in progress views use tabular figures so they don't jitter.
 
 Golden screenshots of each one are in [app/test/goldens](../app/test/goldens).
 
-1. **Home.** Two large cards, Send and Receive, a share button, top right, that opens
-   the phone's share sheet with where to get the app, next to "Check for updates"
-   (an icon instead of the words at very large text). A new version, found by that button or by the quiet check a few seconds
+1. **Home.** Two large cards, Send and Receive, "Check for updates" and, at the far right of the top bar, a share button that opens
+   the phone's share sheet with where to get the app (at very large text the update
+   button becomes an icon). A new version, found by that button or by the quiet check a few seconds
    after opening (and every 6 hours), is offered first and installed only on Update.
    Nothing looks for other phones until a way to connect is chosen.
 2. **Send.** An optional "Choose files" step, then "How do you want to connect?"

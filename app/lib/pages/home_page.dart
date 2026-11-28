@@ -138,12 +138,6 @@ class _HomePageState extends State<HomePage> {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // Anyone can be sent the link: it opens the phone's own share sheet.
-        IconButton(
-          onPressed: () => widget.engine.shareApp(shareText),
-          tooltip: 'Share Nearvolt',
-          icon: const Icon(Icons.share_rounded, color: AppColors.accent),
-        ),
         if (big)
           IconButton(
             onPressed: _updating ? null : _update,
@@ -152,6 +146,12 @@ class _HomePageState extends State<HomePage> {
           )
         else
           TextButton(onPressed: _updating ? null : _update, child: const Text('Check for updates')),
+        // Anyone can be sent the link: it opens the phone's own share sheet.
+        IconButton(
+          onPressed: () => widget.engine.shareApp(shareText),
+          tooltip: 'Share Nearvolt',
+          icon: const Icon(Icons.share_rounded, color: AppColors.accent),
+        ),
       ],
     );
   }
