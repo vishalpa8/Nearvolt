@@ -387,14 +387,11 @@ void main() {
     expect(lines.any((l) => l.startsWith('[tap] "Nearby phones')), isTrue, reason: lines.join('\n'));
     expect(lines.any((l) => l.startsWith('[screen] opened')), isTrue, reason: lines.join('\n'));
   });
-  testWidgets('a scanner that closes at once says so and leaves the other buttons working', (tester) async {
+  testWidgets('backing out of the scanner leaves the other buttons working', (tester) async {
     await openMethod(tester, 'Scan code');
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    expect(find.text(scannerClosedAtOnce), findsOneWidget);
-
     // Nothing stays locked: Nearby phones opens straight away.
-    await tester.pump(const Duration(seconds: 5));
     await go(tester, 'Nearby phones');
     expect(find.text('Nearby'), findsWidgets);
   });

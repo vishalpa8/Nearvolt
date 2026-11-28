@@ -448,7 +448,7 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
         const val SCANNER_SHOWN_MS = 1_500L
 
         /** How long the scanner may take to answer once the app is back in front. */
-        const val SCANNER_ANSWER_GRACE_MS = 3_000L
+        const val SCANNER_ANSWER_GRACE_MS = 1_500L
     }
 }
 

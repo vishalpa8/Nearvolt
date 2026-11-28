@@ -80,18 +80,13 @@ class _SendPageState extends State<SendPage> {
     // The camera stays closed until what a transfer needs is on.
     if (!await ensureReady(context, engine, Purpose.scan)) return;
     final String? ticket;
-    final shown = Stopwatch()..start();
     try {
       // A scanner that never answers must not leave the buttons locked for ever.
       ticket = await engine.scanCode().timeout(const Duration(minutes: 3), onTimeout: () => null);
     } on PlatformException catch (e) {
       return tell(friendlyPlatform(e));
     }
-    if (ticket == null) {
-      // Closing straight away is not someone changing their mind: say what to do instead.
-      if (shown.elapsed < const Duration(seconds: 4)) tell(scannerClosedAtOnce);
-      return;
-    }
+    if (ticket == null) return;
     final NearbyDevice device;
     try {
       device = engine.deviceFor(ticket);
