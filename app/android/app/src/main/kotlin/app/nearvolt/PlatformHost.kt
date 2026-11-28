@@ -286,13 +286,17 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
     private suspend fun scanUntilClosed(): String? = coroutineScope {
         val back = CompletableDeferred<Unit>()
         var paused = false
+        var backAt = 0L
         val watcher = object : DefaultLifecycleObserver {
             override fun onPause(owner: LifecycleOwner) {
                 paused = true
             }
 
             override fun onResume(owner: LifecycleOwner) {
-                if (paused) back.complete(Unit)
+                if (paused) {
+                    backAt = SystemClock.elapsedRealtime()
+                    back.complete(Unit)
+                }
             }
         }
         activity.lifecycle.addObserver(watcher)
@@ -305,6 +309,9 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
             select<String?> {
                 answer.onAwait {
                     silent.cancel()
+                    // Measured, so the wait can be cut further once real scans show how late a code can be.
+                    val late = if (backAt == 0L) "before the app was back" else "${SystemClock.elapsedRealtime() - backAt} ms after the app was back"
+                    AppLog.write("scanner", "the scanner answered $late")
                     it
                 }
                 silent.onAwait {
@@ -448,7 +455,7 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
         const val SCANNER_SHOWN_MS = 1_500L
 
         /** How long the scanner may take to answer once the app is back in front. */
-        const val SCANNER_ANSWER_GRACE_MS = 1_500L
+        const val SCANNER_ANSWER_GRACE_MS = 300L
     }
 }
 
