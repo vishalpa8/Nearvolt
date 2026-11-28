@@ -34,7 +34,7 @@ String friendlyFailure(FailureKind? kind, {String? peer, bool receiving = false}
     FailureKind.busy => '$lead is connected to another phone right now. Try again in a moment.',
     FailureKind.otherPhoneGone => "$lead isn't reachable any more. Check that their phone is on and nearby.",
     FailureKind.cannotReach =>
-      "Couldn't reach $who. Make sure both phones are on the same Wi-Fi, or use Scan code or Tap.",
+      "Couldn't reach $who. Check that their phone has Receive open, then try Scan code or Tap again.",
     FailureKind.oldVersion => '$lead has an older version of Nearvolt. Update it on both phones.',
     FailureKind.tooBig => "That's too much to send in one go. Try sending fewer files at a time.",
     FailureKind.other || null => _generic,

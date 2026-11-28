@@ -100,8 +100,7 @@ void main() {
         initial: const Connection(
           phase: LinkPhase.failed,
           peer: _longName,
-          error:
-              "Couldn't reach the other phone. Make sure both phones are on the same Wi-Fi, or use Scan code or Tap.",
+          error: "Couldn't reach the other phone. Check that their phone has Receive open, then try Scan code or Tap again.",
         ),
         sending: false,
       ),

@@ -1,5 +1,5 @@
 //! Pairing tickets: everything a sender needs to reach and trust a receiver,
-//! small enough for a QR code, an NFC tap or a Bluetooth read.
+//! small enough for a QR code or an NFC tap.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
@@ -23,9 +23,8 @@ pub type Nonce = [u8; 16];
 pub struct Ticket {
     /// Fingerprint of the receiver's certificate; the sender accepts no other.
     pub fingerprint: Fingerprint,
-    /// One-time secret proving the sender scanned or tapped this ticket. Tickets
-    /// shared over the air (local network, Bluetooth) leave it out, and both
-    /// devices confirm a short code instead.
+    /// One-time secret proving the sender scanned or tapped this ticket. A ticket
+    /// without it (USB has none) makes both devices confirm a short code instead.
     pub secret: Option<Secret>,
     pub addrs: Vec<SocketAddr>,
     pub name: String,
@@ -42,10 +41,9 @@ pub struct WifiDirect {
 }
 
 impl Ticket {
-    /// The same ticket without the secret, for sharing over the air.
-    /// The Wi-Fi Direct group's name and password stay out too: this ticket is
-    /// readable by everyone on the network and in Bluetooth range, and with the
-    /// password anyone could join the receiver's own network.
+    /// The same ticket without the secret or the Wi-Fi Direct group's name and
+    /// password: connecting from it goes through the code, as over USB. Nothing
+    /// broadcasts it; the tests use it for the code path.
     pub fn public(&self) -> Self {
         Self { secret: None, wifi: None, ..self.clone() }
     }
