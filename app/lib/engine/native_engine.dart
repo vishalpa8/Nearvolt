@@ -298,8 +298,10 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
         await _platform.stopTransferService();
         if (joined) await _platform.leaveWifi();
         if (_sending == live) _sending = null;
-        await out.close();
+        // Marked closed before the stream is closed: closing the stream waits for a cancel in
+        // progress, and that cancel waits for this, so the other order never finished.
         closed.complete();
+        unawaited(out.close());
       }
     }
 
@@ -396,8 +398,10 @@ class NativeEngine implements TransferEngine, NearvoltEvents {
           await _platform.stopReceiving();
           await _platform.stopTransferService();
         } finally {
-          await out.close();
+          // Marked closed before the stream is closed: closing the stream waits for a cancel in
+          // progress, and that cancel waits for this, so the other order never finished.
           closed.complete();
+          unawaited(out.close());
         }
       }
     }
