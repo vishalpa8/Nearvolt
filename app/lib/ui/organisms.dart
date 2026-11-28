@@ -158,7 +158,8 @@ class _ReceivePromptState extends State<_ReceivePrompt> {
   Widget _sheet(BuildContext context, Request request, TextTheme text, String? code) {
     return SafeArea(
       child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(Space.xl, 0, Space.xl, Space.xl),
+        // Room above the phone icon: with none, it sat right on the sheet's curved edge.
+        padding: const EdgeInsets.fromLTRB(Space.xl, Space.xl, Space.xl, Space.xl),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [

@@ -108,10 +108,15 @@ ThemeData buildTheme() {
       dragHandleColor: AppColors.border,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(Radii.sheet))),
     ),
+    // Dialogs speak in the same voice as the screens: without these they fell back to the
+    // system font and a thinner weight.
     dialogTheme: DialogThemeData(
       backgroundColor: AppColors.surface,
       surfaceTintColor: Colors.transparent,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(Radii.card)),
+      titleTextStyle: _text(20, 26, FontWeight.w600, letterSpacing: -0.2),
+      contentTextStyle: _text(15, 22, FontWeight.w400),
+      actionsPadding: const EdgeInsets.fromLTRB(Space.l, 0, Space.m, Space.m),
     ),
     dividerTheme: const DividerThemeData(color: AppColors.border, thickness: 1, space: 1),
   );

@@ -123,7 +123,12 @@ class _ConnectionPageState extends State<ConnectionPage> {
         ),
         actions: [
           TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Stay connected')),
-          TextButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Disconnect')),
+          // The one that ends something is red, so it is not mistaken for staying.
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: TextButton.styleFrom(foregroundColor: readableOn(AppColors.danger, AppColors.surface)),
+            child: const Text('Disconnect'),
+          ),
         ],
       ),
     );

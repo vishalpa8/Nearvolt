@@ -79,9 +79,16 @@ class PlatformHost(private val activity: MainActivity, private val events: Nearv
     private val location = context.getSystemService(LocationManager::class.java)
 
     private val name: String =
-        Settings.Global.getString(context.contentResolver, Settings.Global.DEVICE_NAME) ?: Build.MODEL
+        Settings.Global.getString(context.contentResolver, Settings.Global.DEVICE_NAME)?.takeIf { it.isNotBlank() }
+            ?: friendlyModel()
     private val kind: String =
         if (context.resources.configuration.smallestScreenWidthDp >= 600) "tablet" else "phone"
+
+    /** A phone that was never named is I2212 or SM-S938B: with its maker it means something to the other person. */
+    private fun friendlyModel(): String {
+        val maker = Build.MANUFACTURER.replaceFirstChar { it.uppercase() }
+        return if (Build.MODEL.startsWith(maker, ignoreCase = true)) Build.MODEL else "$maker ${Build.MODEL}"
+    }
 
     override fun deviceInfo() = DeviceInfo(
         name = name,

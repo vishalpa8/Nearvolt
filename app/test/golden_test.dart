@@ -125,6 +125,14 @@ void main() {
     });
   }
 
+  testWidgets('disconnect', (tester) async {
+    await phone(tester, connection(_connected));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Disconnect'));
+    await tester.pumpAndSettle();
+    await shoot('disconnect');
+  });
+
   testWidgets('cancelled', (tester) async {
     await phone(
       tester,

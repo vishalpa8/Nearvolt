@@ -171,7 +171,7 @@ class _SendPageState extends State<SendPage> {
           ChoiceTile(
             icon: Icons.qr_code_scanner_rounded,
             title: 'Scan code',
-            detail: "Point the camera at the code on the other phone's screen.",
+            detail: "Point the camera at the code on the other phone's screen. Connects at once.",
             onTap: () => _scan(context),
           ),
           ChoiceTile(
